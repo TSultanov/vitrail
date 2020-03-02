@@ -1,0 +1,12 @@
+## A task switcher for Windows that displays opened windows in a colorful grid
+
+This application is inspired by [XWinMosaic](https://github.com/soulthreads/xwinmosaic) and implemented entirely in [Zig](https://ziglang.org/).
+
+## Features
+- [x] Displaying opened windows in a grid and allowing switching between them
+- [ ] Showing virtual desktop number in the background of a tile
+- [ ] Support for showing windows only from current virtual desktop
+- [ ] Incremental search in the list of windows
+
+## Known issues
+- Icons and windows visibility states aren't resolved correctly for all applications
