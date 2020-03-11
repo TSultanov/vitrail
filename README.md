@@ -10,3 +10,9 @@ This application is inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 
 ## Known issues
 - Icons and windows visibility states aren't resolved correctly for all applications
+
+## Building
+- Clone this repository
+- Download latest master branch build of Zig from https://ziglang.org/download/ and extract it.
+- Open PowerShell in the directory with this repository
+- Run `.\path\to\zig.exe build`
