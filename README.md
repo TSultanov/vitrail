@@ -1,6 +1,6 @@
 ## A task switcher for Windows that displays opened windows in a colorful grid
 
-This application is inspired by [XWinMosaic](https://github.com/soulthreads/xwinmosaic) and implemented entirely in [Zig](https://ziglang.org/).
+This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwinmosaic) and implemented entirely in [Zig](https://ziglang.org/).
 
 ## Features
 - [x] Displaying opened windows in a grid and allowing switching between them
@@ -16,3 +16,6 @@ This application is inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 - Download latest master branch build of Zig from https://ziglang.org/download/ and extract it.
 - Open PowerShell in the directory with this repository
 - Run `.\path\to\zig.exe build`
+
+## Running
+Execute `.\zig-cache\bin\vitrail.exe`. Pressing `Alt-Space` opens the window grid.
