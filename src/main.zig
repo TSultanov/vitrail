@@ -177,6 +177,7 @@ fn shouldShowWindow(hwnd: w.HWND) bool {
     if (isAppWindow) return true;
     if (isToolWindow) return false;
     if (isNoActivate) return true;
+    if (!(owner == null or !ownerVisible)) return false;
 
     comptime var taskListDeletedProp = Window.toUtf16("ITaskList_Deleted") catch unreachable;
     var taskListDeleted = w.GetPropW(hwnd, taskListDeletedProp);
@@ -186,6 +187,18 @@ fn shouldShowWindow(hwnd: w.HWND) bool {
 
     comptime var coreWindowClass = Window.toUtf16("Windows.UI.Core.CoreWindow") catch unreachable;
     if(std.mem.eql(u16, class, coreWindowClass)) return false;
+
+    comptime var uwpAppClass = Window.toUtf16("ApplicationFrameWindow") catch unreachable;
+    var isUwpApp = std.mem.eql(u16, class, uwpAppClass);
+    comptime var cloakType = "ApplicationViewCloakType";
+    // if (isUwpApp) {
+    //     var cloakProp = w.GetProp(hwnd, cloakType);
+    //     if(cloakProp != null) {
+    //         var cloakStr = @ptrToInt(cloakProp.?);
+    //         if (cloakStr == '2') return true;
+    //     }
+    //     return false;
+    // }
 
     return true;
 }
