@@ -137,9 +137,9 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
         return 1;
     }
 
-    var pwi: w.WINDOWINFO = undefined;
-    _ = w.GetWindowInfo(hwnd, &pwi);
-    if((pwi.dwStyle & @intCast(c_ulong, w.WS_VISIBLE) != 0) and !(pwi.dwStyle & @intCast(c_ulong, w.WS_DISABLED) != 0) and (pwi.dwStyle & @intCast(c_ulong, w.WS_SYSMENU) != 0))
+    var shouldShow = shouldShowWindow(hwnd);
+
+    if(shouldShow)
     {
         var title = getWindowTitle(hwnd);
         var class = getWindowClass(hwnd);
@@ -148,6 +148,29 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
         layout.addChild(box);
     }
     return 1;
+}
+
+fn shouldShowWindow(hwnd: w.HWND) bool {
+    var pwi: w.WINDOWINFO = undefined;
+    _ = w.GetWindowInfo(hwnd, &pwi);
+
+    var titleLength = w.GetWindowTextLengthW(hwnd);
+
+    var isVisible = pwi.dwStyle & @intCast(c_ulong, w.WS_VISIBLE) != 0;
+    var hasTitle = titleLength > 0;
+    var isAppWindow = pwi.dwExStyle & @intCast(c_ulong, w.WS_EX_APPWINDOW) != 0;
+    var isToolWindow = (pwi.dwExStyle & @intCast(c_ulong, w.WS_EX_TOOLWINDOW) != 0);
+    var isNoActivate = pwi.dwExStyle & @intCast(c_ulong, w.WS_EX_NOACTIVATE) != 0;
+    var isDisabled = pwi.dwStyle & @intCast(c_ulong, w.WS_DISABLED) != 0;
+
+    if (!isVisible) return false;
+    if (!hasTitle) return false;
+    if (isDisabled) return false;
+    if (isAppWindow) return true;
+    if (isToolWindow) return false;
+    if (isNoActivate) return true;
+
+    return true;
 }
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
