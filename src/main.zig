@@ -108,16 +108,13 @@ fn getWindowClass(hwnd: w.HWND) []const u16 {
 }
 
 fn getWindowIcon(hwnd: w.HWND) w.HICON {
-    // std.debug.warn("WM_GETICON, sending message\n", .{});
-    // var dwResult: c_ulonglong = undefined;
-    // var iconAddr = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 1, &dwResult);
-    // std.debug.warn("WM_GETICON, sent message\n", .{});
-    // if(iconAddr != 0)
-    // {
-    //     std.debug.warn("WM_GETICON, iconAddr: {x}\n", .{iconAddr});
-    //     var icon: w.HICON = @intToPtr(w.HICON, @intCast(usize, iconAddr));
-    //     return icon;
-    // }
+    var iconAddr: c_ulonglong = undefined;
+    var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
+    if(lResult != 0 and iconAddr != 0)
+    {
+        var icon: w.HICON = @intToPtr(w.HICON, @intCast(usize, iconAddr));
+        return icon;
+    }
 
     var wndClassU = w.GetClassLongPtrW(hwnd, w.GCL_HICON);
     if(wndClassU != 0)
@@ -134,6 +131,7 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
     var currProcId = w.GetCurrentProcessId();
 
     if(procId == currProcId) {
+        std.debug.warn("Ignoring ourselves\n", .{});
         return 1;
     }
 
