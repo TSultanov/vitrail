@@ -151,6 +151,14 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
 }
 
 fn shouldShowWindow(hwnd: w.HWND) bool {
+    var owner = w.GetWindow(hwnd, w.GW_OWNER);
+    var ownerVisible = false;
+    if (owner != null) {
+        var ownerPwi: w.WINDOWINFO = undefined;
+        _ = w.GetWindowInfo(hwnd, &ownerPwi);
+        ownerVisible = ownerPwi.dwStyle & @intCast(c_ulong, w.WS_VISIBLE) != 0;
+    }
+
     var pwi: w.WINDOWINFO = undefined;
     _ = w.GetWindowInfo(hwnd, &pwi);
 
@@ -169,6 +177,15 @@ fn shouldShowWindow(hwnd: w.HWND) bool {
     if (isAppWindow) return true;
     if (isToolWindow) return false;
     if (isNoActivate) return true;
+
+    comptime var taskListDeletedProp = Window.toUtf16("ITaskList_Deleted") catch unreachable;
+    var taskListDeleted = w.GetPropW(hwnd, taskListDeletedProp);
+    if(taskListDeleted != null) return false;
+    
+    var class = getWindowClass(hwnd);
+
+    comptime var coreWindowClass = Window.toUtf16("Windows.UI.Core.CoreWindow") catch unreachable;
+    if(std.mem.eql(u16, class, coreWindowClass)) return false;
 
     return true;
 }
