@@ -208,16 +208,29 @@ fn shouldShowWindow(hwnd: w.HWND) bool {
     comptime var uwpAppClass = Window.toUtf16("ApplicationFrameWindow") catch unreachable;
     var isUwpApp = std.mem.eql(u16, class, uwpAppClass);
     comptime var cloakType = "ApplicationViewCloakType";
-    // if (isUwpApp) {
-    //     var cloakProp = w.GetProp(hwnd, cloakType);
-    //     if(cloakProp != null) {
-    //         var cloakStr = @ptrToInt(cloakProp.?);
-    //         if (cloakStr == '2') return true;
-    //     }
-    //     return false;
-    // }
+
+    if (isUwpApp) {
+        var validCloak: bool = false;
+        _ = w.EnumPropsExA(hwnd, verifyUwpCloak, @intCast(c_longlong, @ptrToInt(&validCloak)));
+        return validCloak;
+    }
 
     return true;
+}
+
+fn verifyUwpCloak(hwnd: w.HWND, str: w.LPSTR, handle: w.HANDLE, ptr: w.ULONG_PTR) callconv(.C) c_int {
+    comptime var cloakType = "ApplicationViewCloakType";
+    if(@ptrToInt(str) > 0xffff) {
+        var prop = std.mem.toSliceConst(u8, str);
+        if(std.mem.eql(u8, cloakType, prop)) {
+            if(@ptrToInt(handle) != 1) {
+                var pValidCloak = @intToPtr(*bool, ptr);
+                pValidCloak.* = true;
+            }
+            return 0;
+        }
+    }
+    return 1;
 }
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
