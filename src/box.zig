@@ -23,6 +23,7 @@ fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) ca
                 var hdc = w.BeginPaint(hwnd, &ps);
 
                 var hbrushBg = w.CreateSolidBrush(0);
+                defer _ = w.DeleteObject(hbrushBg);
                 _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
 
                 var colorFg: w.COLORREF = undefined;
@@ -33,6 +34,7 @@ fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) ca
                     colorFg = box.?.*.value.color;
                 }
                 var hbrushFg = w.CreateSolidBrush(colorFg);
+                defer _ = w.DeleteObject(hbrushFg);
                 var rect = box.?.*.value.window.getClientRect();
                 rect.left = 1;
                 rect.top = 1;
