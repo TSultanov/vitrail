@@ -123,15 +123,34 @@ fn getWindowIcon(hwnd: w.HWND) w.HICON {
         return icon;
     }
 
+    var fileIcon = extractIconFromExecutable(hwnd);
+    if(fileIcon != null) return fileIcon;
+
     return defaultIcon;
 }
 
+fn extractIconFromExecutable(hwnd: w.HWND) w.HICON {
+    var pid: w.DWORD = undefined;
+    _ = w.GetWindowThreadProcessId(hwnd, &pid);
+    var hProc = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
+
+    var fileName: *[1024]u16 = std.heap.c_allocator.create([1024]u16) catch unreachable;
+    defer std.heap.c_allocator.free(fileName);
+    for (fileName[0..1024]) |*b| b.* = 0;
+    var result = w.GetModuleFileNameW(@ptrCast(w.HMODULE, @alignCast(4, hProc)), fileName, 1024);
+    if(result == 0) return null;
+
+    var iconIndex: w.WORD = 0;
+    var icon = w.ExtractAssociatedIconW(globalHInstance, fileName, &iconIndex);
+    return icon;
+}
+
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
-    var procId = w.GetWindowThreadProcessId(hwnd, null);
+    var procId: w.DWORD = undefined;
+    _ = w.GetWindowThreadProcessId(hwnd, &procId);
     var currProcId = w.GetCurrentProcessId();
 
     if(procId == currProcId) {
-        std.debug.warn("Ignoring ourselves\n", .{});
         return 1;
     }
 
