@@ -133,7 +133,7 @@ fn extractIconFromExecutable(hwnd: w.HWND) w.HICON {
     var pid: w.DWORD = undefined;
     _ = w.GetWindowThreadProcessId(hwnd, &pid);
     var hProc = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
-
+    defer _ = w.CloseHandle(hProc);
     var fileName: *[1024]u16 = std.heap.c_allocator.create([1024]u16) catch unreachable;
     defer std.heap.c_allocator.free(fileName);
     for (fileName[0..1024]) |*b| b.* = 0;
