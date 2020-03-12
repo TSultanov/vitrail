@@ -211,5 +211,6 @@ pub const Box = struct {
     pub fn destroy(self: *Box) void {
         self.window.destroy();
         std.heap.c_allocator.destroy(self.title);
+        _ = w.DestroyIcon(self.icon);
     }
 };
