@@ -97,7 +97,7 @@ const Child = struct {
 pub const Layout = struct {
     //parent: Window,
     //window: Window,
-    children: std.ArrayList(Child),
+    children: *std.ArrayList(*Child),
     focusedIdx: usize = 0,
     focusedCol: usize = undefined,
     focusedRow: usize = undefined,
@@ -111,29 +111,35 @@ pub const Layout = struct {
         }
 
         var l: *Layout = std.heap.c_allocator.create(Layout) catch unreachable;
+        var children: *std.ArrayList(*Child) = std.heap.c_allocator.create(std.ArrayList(*Child)) catch unreachable;
+        children.* = std.ArrayList(*Child).init(std.heap.c_allocator);
         l.* = Layout{
-            .children = std.ArrayList(Child).init(std.heap.c_allocator),
+            .children = children,
         };
         layoutInstance = l;
         return l;
     }
 
-    pub fn addChild(self: *Layout, box: *Box) void {
-        var child = Child{
+    pub fn addChild(self: *Layout, box: *Box) !void {
+        var pChild = try std.heap.c_allocator.create(Child);
+        pChild.* = Child{
             .box = box,
         };
-        _ = self.children.append(child) catch unreachable;
+        _ = try self.children.append(pChild);
         box.window.hide();
     }
 
     pub fn removeChildren(self: *Layout) void {
-        //TODO: implement cleaning with proper windows destroying
-        for (self.children.span()) |*child| {
-            child.box.*.window.hide();
-            child.box.*.destroy();
+        for (self.children.span()) |child| {
+            child.*.box.*.window.hide();
+            child.*.box.*.destroy();
+            std.heap.c_allocator.destroy(child.*.box);
+            std.heap.c_allocator.destroy(child);
         }
         self.children.deinit();
-        self.children = std.ArrayList(Child).init(std.heap.c_allocator);
+        std.heap.c_allocator.destroy(self.children);
+        self.children = std.heap.c_allocator.create(std.ArrayList(*Child)) catch unreachable;
+        self.children.* = std.ArrayList(*Child).init(std.heap.c_allocator);
         std.heap.c_allocator.free(self.matrix.?);
         self.matrix = null;
         self.rows = 0;
@@ -165,7 +171,6 @@ pub const Layout = struct {
         self.children.at(self.focusedIdx).box.*.focus();
         self.focusedCol = self.children.at(self.focusedIdx).col;
         self.focusedRow = self.children.at(self.focusedIdx).row;
-        std.debug.warn("idx: {}\n", .{self.focusedIdx});
     }
 
     pub fn prev(self: *Layout) void {

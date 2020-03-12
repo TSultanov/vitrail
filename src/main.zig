@@ -162,7 +162,7 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
         var class = getWindowClass(hwnd);
         var icon: w.HICON = getWindowIcon(hwnd);
         var box = Box.create(globalHInstance, title, class, icon, hwnd) catch unreachable;
-        layout.addChild(box);
+        layout.addChild(box) catch unreachable;
     }
     return 1;
 }
