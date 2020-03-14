@@ -34,13 +34,11 @@ fn handleKeydown(wParam: w.WPARAM, lParam: w.LPARAM) void {
         },
         w.VK_ESCAPE => {
             layout.?.removeChildren() catch unreachable;
-            arena.deinit();
-            layout = null;
+            cleanup();
         },
         w.VK_RETURN => {
             layout.?.switchToSelection() catch unreachable;
-            arena.deinit();
-            layout = null;
+            cleanup();
         },
         else => {},
     }
@@ -96,6 +94,11 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
     }
 
     return 0;
+}
+
+fn cleanup() void {
+    arena.deinit();
+    layout = null;
 }
 
 fn showLayout() !void {
