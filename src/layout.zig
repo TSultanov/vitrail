@@ -167,6 +167,8 @@ pub const Layout = struct {
     }
 
     fn layout(self: *Layout) !void {
+        if (self.children.len == 0) return;
+
         for (self.children.span()) |*child| {
             child.*.box.*.window.hide();
         }
