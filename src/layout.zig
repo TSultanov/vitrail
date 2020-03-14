@@ -105,12 +105,13 @@ pub const Layout = struct {
     }
 
     pub fn prev(self: *Layout) void {
+        self.children.at(self.focusedIdx).box.*.unfocus();
         if (self.focusedIdx > 0) {
             self.focusedIdx -= 1;
         } else {
             self.focusedIdx = self.children.len - 1;
         }
-        self.children.at(self.focusedIdx).window.focus();
+        self.children.at(self.focusedIdx).box.*.focus();
         self.focusedCol = self.children.at(self.focusedIdx).col;
         self.focusedRow = self.children.at(self.focusedIdx).row;
     }

@@ -13,7 +13,12 @@ var arena: *std.heap.ArenaAllocator = undefined;
 fn handleKeydown(wParam: w.WPARAM, lParam: w.LPARAM) void {
     switch (wParam) {
         w.VK_TAB => {
-            layout.?.next();
+            var shiftPressed = w.GetKeyState(w.VK_SHIFT);
+            if(shiftPressed != 0) {
+                layout.?.prev();
+            } else {
+                layout.?.next();
+            }
         },
         w.VK_RIGHT => {
             layout.?.right();
