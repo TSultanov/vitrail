@@ -2,76 +2,12 @@ const std = @import("std");
 const w = @import("win32").c;
 usingnamespace @import("window.zig");
 const Box = @import("box.zig").Box;
+const Allocator = std.mem.Allocator;
 
 var classRegistered: bool = false;
 
 const chWidth: c_int = 150;
 const chHeight: c_int = 32;
-
-//var layouts = std.hash_map.AutoHashMap(w.HWND, *Layout).init(std.heap.c_allocator);
-
-var layoutInstance: ?*Layout = null;
-
-fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
-    if (layouts.contains(hwnd)) {
-        var l = layoutInstance;
-        return switch (uMsg) {
-            w.WM_DESTROY => {
-                w.PostQuitMessage(0);
-                return 0;
-            },
-            w.WM_CREATE => {
-                return 0;
-            },
-            w.WM_SIZE => {
-                l.layout();
-                return 0;
-            },
-            w.WM_PAINT => {
-                var ps: w.PAINTSTRUCT = undefined;
-                var hdc = w.BeginPaint(hwnd, &ps);
-
-                var hbrush = w.CreateSolidBrush(0x555555);
-
-                _ = w.FillRect(hdc, &ps.rcPaint, hbrush);
-
-                _ = w.EndPaint(hwnd, &ps);
-                return 0;
-            },
-            w.WM_KEYDOWN => {
-                std.debug.warn("Layout: WM_KEYDOWN: {}\n", .{wParam});
-                switch (wParam) {
-                    w.VK_TAB => {
-                        l.?.next();
-                    },
-                    w.VK_RIGHT => {
-                        l.?.right();
-                    },
-                    w.VK_LEFT => {
-                        l.?.left();
-                    },
-                    w.VK_UP => {
-                        l.?.up();
-                    },
-                    w.VK_DOWN => {
-                        l.?.down();
-                    },
-                    else => {
-                        return 0;
-                    },
-                }
-                return 0;
-            },
-            w.WM_COMMAND => {
-                std.debug.warn("Layout: WM_COMMAND: {}\n", .{wParam});
-                return 0;
-            },
-            else => w.DefWindowProcW(hwnd, uMsg, wParam, lParam),
-        };
-    } else {
-        return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
-    }
-}
 
 fn registerClass(hInstance: w.HINSTANCE, className: w.LPCWSTR) void {
     const wc: w.WNDCLASSW = .{
@@ -95,8 +31,6 @@ const Child = struct {
 };
 
 pub const Layout = struct {
-    //parent: Window,
-    //window: Window,
     children: *std.ArrayList(*Child),
     focusedIdx: usize = 0,
     focusedCol: usize = undefined,
@@ -104,24 +38,21 @@ pub const Layout = struct {
     matrix: ?[]?usize = null,
     rows: usize = 0,
     cols: usize = 0,
+    allocator: *Allocator,
 
-    pub fn create() *Layout {
-        if (layoutInstance != null) {
-            return layoutInstance.?;
-        }
-
-        var l: *Layout = std.heap.c_allocator.create(Layout) catch unreachable;
-        var children: *std.ArrayList(*Child) = std.heap.c_allocator.create(std.ArrayList(*Child)) catch unreachable;
-        children.* = std.ArrayList(*Child).init(std.heap.c_allocator);
+    pub fn create(allocator: *Allocator) !*Layout {
+        var l: *Layout = try allocator.create(Layout);
+        var children: *std.ArrayList(*Child) = try allocator.create(std.ArrayList(*Child));
+        children.* = std.ArrayList(*Child).init(allocator);
         l.* = Layout{
             .children = children,
+            .allocator = allocator,
         };
-        layoutInstance = l;
         return l;
     }
 
     pub fn addChild(self: *Layout, box: *Box) !void {
-        var pChild = try std.heap.c_allocator.create(Child);
+        var pChild = try self.allocator.create(Child);
         pChild.* = Child{
             .box = box,
         };
@@ -129,18 +60,18 @@ pub const Layout = struct {
         box.window.hide();
     }
 
-    pub fn removeChildren(self: *Layout) void {
+    pub fn removeChildren(self: *Layout) !void {
         for (self.children.span()) |child| {
             child.*.box.*.window.hide();
             child.*.box.*.destroy();
-            std.heap.c_allocator.destroy(child.*.box);
-            std.heap.c_allocator.destroy(child);
+            self.allocator.destroy(child.*.box);
+            self.allocator.destroy(child);
         }
         self.children.deinit();
-        std.heap.c_allocator.destroy(self.children);
-        self.children = std.heap.c_allocator.create(std.ArrayList(*Child)) catch unreachable;
-        self.children.* = std.ArrayList(*Child).init(std.heap.c_allocator);
-        std.heap.c_allocator.free(self.matrix.?);
+        self.allocator.destroy(self.children);
+        self.children = try self.allocator.create(std.ArrayList(*Child));
+        self.children.* = std.ArrayList(*Child).init(self.allocator);
+        self.allocator.free(self.matrix.?);
         self.matrix = null;
         self.rows = 0;
     }
@@ -149,15 +80,15 @@ pub const Layout = struct {
         return self.children.len != 0;
     }
 
-    pub fn switchToSelection(self: *Layout) void {
+    pub fn switchToSelection(self: *Layout) !void {
         var hwnd = self.children.at(self.focusedIdx).box.*.hwnd;
-        self.hide();
+        try self.hide();
 
         _ = w.SwitchToThisWindow(hwnd, 1);
     }
 
-    pub fn hide(self: *Layout) void {
-        self.removeChildren();
+    pub fn hide(self: *Layout) !void {
+        try self.removeChildren();
         self.focusedIdx = 0;
     }
 
@@ -234,7 +165,7 @@ pub const Layout = struct {
         }
     }
 
-    fn layout(self: *Layout) void {
+    fn layout(self: *Layout) !void {
         for (self.children.span()) |*child| {
             child.*.box.*.window.hide();
         }
@@ -258,9 +189,9 @@ pub const Layout = struct {
         var cur_row = @divFloor(rows, 2);
 
         if (self.matrix != null) {
-            std.heap.c_allocator.free(self.matrix.?);
+            self.allocator.free(self.matrix.?);
         }
-        self.matrix = std.heap.c_allocator.alloc(?usize, cols * rows) catch unreachable;
+        self.matrix = try self.allocator.alloc(?usize, cols * rows);
         for (self.matrix.?) |*elem| {
             elem.* = null;
         }

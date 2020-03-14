@@ -1,6 +1,7 @@
 const std = @import("std");
 const w = @import("win32").c;
-usingnamespace @import("window.zig");
+const Window = @import("window.zig").Window;
+const Allocator = std.mem.Allocator;
 
 var classRegistered: bool = false;
 
@@ -76,12 +77,13 @@ fn registerClass(hInstance: w.HINSTANCE, className: w.LPCWSTR) void {
 pub const Box = struct {
     window: Window,
     focused: bool = false,
-    title: w.LPCWSTR,
+    title: []const u16,
     color: w.COLORREF,
     colorFocused: w.COLORREF,
     font: w.HGDIOBJ,
     icon: w.HICON,
     hwnd: w.HWND,
+    allocator: *Allocator,
 
     pub fn focus(self: *Box) void {
         self.focused = true;
@@ -93,7 +95,7 @@ pub const Box = struct {
         self.window.redraw();
     }
 
-    pub fn create(hInstance: w.HINSTANCE, title: w.LPCWSTR, class: []const u16, icon: w.HICON, hwnd: w.HWND) !*Box {
+    pub fn create(hInstance: w.HINSTANCE, title: []const u16, class: []const u16, icon: w.HICON, hwnd: w.HWND, allocator: *Allocator) !*Box {
         comptime var className: w.LPCWSTR = try Window.toUtf16("MosaicBox");
 
         if (!classRegistered) {
@@ -107,20 +109,20 @@ pub const Box = struct {
         var font = w.GetStockObject(w.DEFAULT_GUI_FONT);
         _ = w.SendMessage(window.hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
 
-        var l: *Box = try std.heap.c_allocator.create(Box);
+        var l: *Box = try allocator.create(Box);
 
-        var err: []const u8 = "err"[0..];
-        var classUtf8 = std.unicode.utf16leToUtf8Alloc(std.heap.c_allocator, class) catch err[0..];
-        defer std.heap.c_allocator.free(classUtf8);
+        var classUtf8: [512]u8 = undefined;
+        _ = try std.unicode.utf16leToUtf8(classUtf8[0..], class);
 
         l.* = Box{
             .window = window,
             .title = title,
-            .color = createColor(classUtf8, false),
-            .colorFocused = createColor(classUtf8, true),
+            .color = createColor(classUtf8[0..], false),
+            .colorFocused = createColor(classUtf8[0..], true),
             .font = font,
             .icon = icon,
-            .hwnd = hwnd
+            .hwnd = hwnd,
+            .allocator = allocator
         };
         _ = try boxes.put(window.hwnd, l);
         return l;
@@ -212,7 +214,7 @@ pub const Box = struct {
 
     pub fn destroy(self: *Box) void {
         self.window.destroy();
-        std.heap.c_allocator.destroy(self.title);
+        _ = boxes.remove(self.hwnd);
         _ = w.DestroyIcon(self.icon);
     }
 };

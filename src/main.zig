@@ -3,33 +3,39 @@ const w = @import("win32").c;
 const Layout = @import("layout.zig").Layout;
 const Box = @import("box.zig").Box;
 const Window = @import("window.zig").Window;
+const si = @import("system_interaction.zig");
 
-var layout: *Layout = undefined;
+var layout: ?*Layout = undefined;
 var globalHInstance: w.HINSTANCE = undefined;
-var defaultIcon: w.HICON = undefined;
+var systemInteraction: si.SystemInteraction = undefined;
+var arena: *std.heap.ArenaAllocator = undefined;
 
 fn handleKeydown(wParam: w.WPARAM, lParam: w.LPARAM) void {
     switch (wParam) {
         w.VK_TAB => {
-            layout.next();
+            layout.?.next();
         },
         w.VK_RIGHT => {
-            layout.right();
+            layout.?.right();
         },
         w.VK_LEFT => {
-            layout.left();
+            layout.?.left();
         },
         w.VK_UP => {
-            layout.up();
+            layout.?.up();
         },
         w.VK_DOWN => {
-            layout.down();
+            layout.?.down();
         },
         w.VK_ESCAPE => {
-            layout.removeChildren();
+            layout.?.removeChildren() catch unreachable;
+            arena.deinit();
+            layout = null;
         },
         w.VK_RETURN => {
-            layout.switchToSelection();
+            layout.?.switchToSelection() catch unreachable;
+            arena.deinit();
+            layout = null;
         },
         else => {},
     }
@@ -56,16 +62,17 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
     globalHInstance = hInstance;
     _ = w.AllocConsole();
 
-    layout = Layout.create();
-
-    defaultIcon = w.LoadIconW(null, 32512);
-
     //Create invisible window just for message loop
     comptime var className: w.LPCWSTR = Window.toUtf16("MosaicSwitcher") catch unreachable;
     registerClass(hInstance, className);
     comptime var windowName: w.LPCWSTR = Window.toUtf16("MosaicSwitcher") catch unreachable;
     var invWindow = Window.create(0, className, windowName, w.WS_BORDER, 0, 0, 0, 0, null, null, hInstance, null);
     _ = w.SetWindowLong(invWindow.hwnd, w.GWL_STYLE, 0);
+
+    globalHInstance = hInstance;
+
+    arena = std.heap.c_allocator.create(std.heap.ArenaAllocator) catch unreachable;
+    defer std.heap.c_allocator.destroy(arena);
 
     installKeyboardHook();
 
@@ -75,7 +82,8 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
             handleKeydown(msg.wParam, msg.lParam);
         }
         else if (msg.message == w.WM_HOTKEY){
-            showLayout();
+            //TOOD: complain and die on error;
+            showLayout() catch unreachable;
         } else {
             _ = w.TranslateMessage(&msg);
             _ = w.DispatchMessage(&msg);
@@ -85,152 +93,20 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
     return 0;
 }
 
-fn showLayout() void {
-    if(!layout.isShowing()) {
-        _ = w.EnumWindows(enumWindowProc, 0);
-        layout.layout();
-    }
-}
-
-fn getWindowTitle(hwnd: w.HWND) w.LPCWSTR {
-    var title: *[512]u16 = std.heap.c_allocator.create([512]u16) catch unreachable;
-    for (title[0..512]) |*b| b.* = 0;
-    _ = w.GetWindowTextW(hwnd, title, 512);
-
-    return title;
-}
-
-fn getWindowClass(hwnd: w.HWND) []const u16 {
-    var class: *[512]u16 = std.heap.c_allocator.create([512]u16) catch unreachable;
-    for (class[0..512]) |*b| b.* = 0;
-    _ = w.RealGetWindowClassW(hwnd, class, 512);
-    return class;
-}
-
-fn getWindowIcon(hwnd: w.HWND) w.HICON {
-    var iconAddr: c_ulonglong = undefined;
-    var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
-    if(lResult != 0 and iconAddr != 0)
-    {
-        var icon: w.HICON = @intToPtr(w.HICON, @intCast(usize, iconAddr));
-        return icon;
-    }
-
-    var wndClassU = w.GetClassLongPtrW(hwnd, w.GCL_HICON);
-    if(wndClassU != 0)
-    {
-        var icon: w.HICON = @intToPtr(w.HICON, wndClassU);
-        return icon;
-    }
-
-    var fileIcon = extractIconFromExecutable(hwnd);
-    if(fileIcon != null) return fileIcon;
-
-    return defaultIcon;
-}
-
-fn extractIconFromExecutable(hwnd: w.HWND) w.HICON {
-    var pid: w.DWORD = undefined;
-    _ = w.GetWindowThreadProcessId(hwnd, &pid);
-    var hProc = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
-    defer _ = w.CloseHandle(hProc);
-    var fileName: *[1024]u16 = std.heap.c_allocator.create([1024]u16) catch unreachable;
-    defer std.heap.c_allocator.free(fileName);
-    for (fileName[0..1024]) |*b| b.* = 0;
-    var result = w.GetModuleFileNameW(@ptrCast(w.HMODULE, @alignCast(4, hProc)), fileName, 1024);
-    if(result == 0) return null;
-
-    var iconIndex: w.WORD = 0;
-    var icon = w.ExtractAssociatedIconW(globalHInstance, fileName, &iconIndex);
-    return icon;
-}
-
-fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
-    var procId: w.DWORD = undefined;
-    _ = w.GetWindowThreadProcessId(hwnd, &procId);
-    var currProcId = w.GetCurrentProcessId();
-
-    if(procId == currProcId) {
-        return 1;
-    }
-
-    var shouldShow = shouldShowWindow(hwnd);
-
-    if(shouldShow)
-    {
-        var title = getWindowTitle(hwnd);
-        var class = getWindowClass(hwnd);
-        var icon: w.HICON = getWindowIcon(hwnd);
-        var box = Box.create(globalHInstance, title, class, icon, hwnd) catch unreachable;
-        layout.addChild(box) catch unreachable;
-    }
-    return 1;
-}
-
-fn shouldShowWindow(hwnd: w.HWND) bool {
-    var owner = w.GetWindow(hwnd, w.GW_OWNER);
-    var ownerVisible = false;
-    if (owner != null) {
-        var ownerPwi: w.WINDOWINFO = undefined;
-        _ = w.GetWindowInfo(hwnd, &ownerPwi);
-        ownerVisible = ownerPwi.dwStyle & @intCast(c_ulong, w.WS_VISIBLE) != 0;
-    }
-
-    var pwi: w.WINDOWINFO = undefined;
-    _ = w.GetWindowInfo(hwnd, &pwi);
-
-    var titleLength = w.GetWindowTextLengthW(hwnd);
-
-    var isVisible = pwi.dwStyle & @intCast(c_ulong, w.WS_VISIBLE) != 0;
-    var hasTitle = titleLength > 0;
-    var isAppWindow = pwi.dwExStyle & @intCast(c_ulong, w.WS_EX_APPWINDOW) != 0;
-    var isToolWindow = (pwi.dwExStyle & @intCast(c_ulong, w.WS_EX_TOOLWINDOW) != 0);
-    var isNoActivate = pwi.dwExStyle & @intCast(c_ulong, w.WS_EX_NOACTIVATE) != 0;
-    var isDisabled = pwi.dwStyle & @intCast(c_ulong, w.WS_DISABLED) != 0;
-
-    if (!isVisible) return false;
-    if (!hasTitle) return false;
-    if (isDisabled) return false;
-    if (isAppWindow) return true;
-    if (isToolWindow) return false;
-    if (isNoActivate) return true;
-    if (!(owner == null or !ownerVisible)) return false;
-
-    comptime var taskListDeletedProp = Window.toUtf16("ITaskList_Deleted") catch unreachable;
-    var taskListDeleted = w.GetPropW(hwnd, taskListDeletedProp);
-    if(taskListDeleted != null) return false;
-    
-    var class = getWindowClass(hwnd);
-
-    comptime var coreWindowClass = Window.toUtf16("Windows.UI.Core.CoreWindow") catch unreachable;
-    if(std.mem.eql(u16, class, coreWindowClass)) return false;
-
-    comptime var uwpAppClass = Window.toUtf16("ApplicationFrameWindow") catch unreachable;
-    var isUwpApp = std.mem.eql(u16, class, uwpAppClass);
-    comptime var cloakType = "ApplicationViewCloakType";
-
-    if (isUwpApp) {
-        var validCloak: bool = false;
-        _ = w.EnumPropsExA(hwnd, verifyUwpCloak, @intCast(c_longlong, @ptrToInt(&validCloak)));
-        return validCloak;
-    }
-
-    return true;
-}
-
-fn verifyUwpCloak(hwnd: w.HWND, str: w.LPSTR, handle: w.HANDLE, ptr: w.ULONG_PTR) callconv(.C) c_int {
-    comptime var cloakType = "ApplicationViewCloakType";
-    if(@ptrToInt(str) > 0xffff) {
-        var prop = std.mem.toSliceConst(u8, str);
-        if(std.mem.eql(u8, cloakType, prop)) {
-            if(@ptrToInt(handle) != 1) {
-                var pValidCloak = @intToPtr(*bool, ptr);
-                pValidCloak.* = true;
+fn showLayout() !void {
+    if(layout == null) {
+        arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        systemInteraction = si.init(globalHInstance, &arena.allocator);
+        var desktopWindows = try systemInteraction.getWindowList();
+        layout = try Layout.create(&arena.allocator);
+        for (desktopWindows) |dWindow| {
+            if(dWindow.shouldShow) {
+                var box = try Box.create(globalHInstance, dWindow.title, dWindow.class, dWindow.icon, dWindow.hwnd, &arena.allocator);
+                try layout.?.addChild(box);
             }
-            return 0;
         }
+        try layout.?.layout();
     }
-    return 1;
 }
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
@@ -246,35 +122,6 @@ fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) ca
     };
 }
 
-fn altTabHook(nCode: w.INT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
-    var pkbhs: w.LPKBDLLHOOKSTRUCT = @intToPtr(w.LPKBDLLHOOKSTRUCT, @intCast(usize, lParam));
-
-    const LLKHF_UP = w.KF_UP >> 8;
-    const LLKHF_ALTDOWN = w.KF_ALTDOWN >> 8;
-
-
-    return switch (nCode) {
-        0 => {
-            //var isWinPressed = w.GetAsyncKeyState(w.VK_LWIN) & (1<<8) != 0;
-            if(pkbhs.*.vkCode == w.VK_CAPITAL and pkbhs.*.flags & LLKHF_ALTDOWN != 0) {
-                if (pkbhs.*.flags & LLKHF_UP == 0) {
-                    showLayout();
-                }
-                return 1;
-            }
-            if(layout.isShowing() and pkbhs.*.flags & LLKHF_UP == 0) {
-                handleKeydown(pkbhs.*.vkCode, 0);
-                return 1;
-            }
-            return w.CallNextHookEx(null, nCode, wParam, lParam);
-        },
-        else => {
-            return w.CallNextHookEx(null, nCode, wParam, lParam);
-        },
-    };
-}
-
 fn installKeyboardHook() void {
-    //_ = w.SetWindowsHookEx(w.WH_KEYBOARD_LL, altTabHook, null, 0);
     _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
 }
