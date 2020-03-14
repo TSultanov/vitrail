@@ -19,3 +19,6 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 
 ## Running
 Execute `.\zig-cache\bin\vitrail.exe`. Pressing `Alt-Space` opens the window grid.
+
+## Screenshot
+![Screenshot of the application](/docs/screenshot.png?raw=true)
