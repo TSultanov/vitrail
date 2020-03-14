@@ -132,7 +132,11 @@ pub const Box = struct {
         var rect = self.window.getClientRect();
         rect.left = 24;
         rect.right -= 2;
-        _ = w.SetTextColor(hdc, 0x00000000);
+        if(self.focused) {
+            _ = w.SetTextColor(hdc, 0x00ffffff);
+        } else {
+            _ = w.SetTextColor(hdc, 0x00000000);
+        }
         _ = w.SetBkMode(hdc, w.TRANSPARENT);
         _ = w.SelectObject(hdc, self.font);
         _ = w.DrawTextW(hdc, &self.title[0], -1, &rect, w.DT_SINGLELINE | w.DT_VCENTER | w.DT_LEFT);
