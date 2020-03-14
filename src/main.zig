@@ -63,7 +63,7 @@ fn registerClass(hInstance: w.HINSTANCE, className: w.LPCWSTR) void {
 
 pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
     globalHInstance = hInstance;
-    _ = w.AllocConsole();
+    _ = w.FreeConsole();
 
     //Create invisible window just for message loop
     comptime var className: w.LPCWSTR = Window.toUtf16("MosaicSwitcher") catch unreachable;
