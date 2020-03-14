@@ -17,6 +17,9 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 - Open PowerShell in the directory with this repository
 - Run `.\path\to\zig.exe build`
 
+## Downloading
+You can download recent build from the [releases page](https://github.com/ArtifTh/vitrail/releases).
+
 ## Running
 Execute `.\zig-cache\bin\vitrail.exe`. Pressing `Alt-Space` opens the window grid.
 
