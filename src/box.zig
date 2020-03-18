@@ -13,6 +13,12 @@ fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) ca
     if (boxes.contains(hwnd)) {
         var box = boxes.get(hwnd);
         return switch (uMsg) {
+            w.WM_LBUTTONDOWN => {
+                //Hacky way to switch to window and close ourselves, consider implementing it properly.
+                box.?.value.switchToWindow();
+                _ = w.PostMessageW(hwnd, w.WM_KEYDOWN, w.VK_ESCAPE, 0);
+                return 0;
+            },
             w.WM_DESTROY => {
                 return 0;
             },
