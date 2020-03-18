@@ -81,10 +81,8 @@ pub const Layout = struct {
     }
 
     pub fn switchToSelection(self: *Layout) !void {
-        var hwnd = self.children.at(self.focusedIdx).box.*.hwnd;
+        self.children.at(self.focusedIdx).box.*.switchToWindow();
         try self.hide();
-
-        _ = w.SwitchToThisWindow(hwnd, 1);
     }
 
     pub fn hide(self: *Layout) !void {

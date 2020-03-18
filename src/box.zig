@@ -95,6 +95,10 @@ pub const Box = struct {
         self.window.redraw();
     }
 
+    pub fn switchToWindow(self: Box) void {
+        _ = w.SwitchToThisWindow(self.hwnd, 1);
+    }
+
     pub fn create(hInstance: w.HINSTANCE, title: []const u16, class: []const u16, icon: w.HICON, hwnd: w.HWND, allocator: *Allocator) !*Box {
         comptime var className: w.LPCWSTR = try Window.toUtf16("MosaicBox");
 
