@@ -270,7 +270,6 @@ pub const Layout = struct {
             cur_row += 1;
         }
 
-        _ = w.SetForegroundWindow(self.children.at(self.focusedIdx).box.*.window.hwnd);
-        _ = w.SetActiveWindow(self.children.at(self.focusedIdx).box.*.window.hwnd);
+        _ = w.SwitchToThisWindow(self.children.at(self.focusedIdx).box.*.window.hwnd, 1);
     }
 };
