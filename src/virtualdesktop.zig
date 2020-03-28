@@ -5,7 +5,6 @@ const ComError = error {
     FailedToCreateComObject
 };
 
-//pub const CLXCTX = enum {
 const CLSCTX_INPROC_SERVER      = 0x1;
 const CLSCTX_INPROC_HANDLER     = 0x2;
 const CLSCTX_LOCAL_SERVER       = 0x4;
@@ -29,7 +28,6 @@ const CLSCTX_ACTIVATE_64_BIT_SERVER = 0x80000;
 const CLSCTX_INPROC         = CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER;
 const CLSCTX_SERVER         = CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER|CLSCTX_REMOTE_SERVER;
 const CLSCTX_ALL            = CLSCTX_SERVER|CLSCTX_INPROC_HANDLER;
-//};
 
 const CLSID_VirtualDesktopManager: w.CLSID = w.CLSID {
     .Data1 = 0xaa509086,
@@ -45,6 +43,27 @@ const IID_IVirtualDesktopManager: w.IID = w.IID {
     .Data4 = [8]u8 {0x8d, 0x04, 0xd8, 0x28, 0x79, 0xfb, 0x3f, 0x1b},
 };
 
+const IID_IServiceProvider: w.IID = w.IID {
+    .Data1 = 0x6D5140C1,
+    .Data2 = 0x7436,
+    .Data3 = 0x11CE,
+    .Data4 = [8]u8 {0x80, 0x34, 0x00, 0xAA, 0x00, 0x60, 0x09, 0xFA},
+};
+
+const CLSID_VirtualDesktopAPI_Unknown = w.CLSID {
+    .Data1 = 0xC5E0CDCA,
+    .Data2 = 0x7B6E,
+    .Data3 = 0x41B2,
+    .Data4 = [8]u8 {0x9F, 0xC4, 0xD9, 0x39, 0x75, 0xCC, 0x46, 0x7B},
+};
+
+const IID_IVirtualDesktopManagerInternal = w.IID {
+    .Data1 = 0xEF9F1A6C,
+    .Data2 = 0xD3CC,
+    .Data3 = 0x4358,
+    .Data4 = [8]u8 {0xB7, 0x12, 0xF8, 0x4B, 0x63, 0x5B, 0xEB, 0xE7},
+};
+
 const REFIID = [*c]const w.IID;
 
 const IVirtualDesktopManagerVtbl = extern struct {
@@ -58,6 +77,37 @@ const IVirtualDesktopManagerVtbl = extern struct {
 
 const IVirtualDesktopManager = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerVtbl,
+};
+
+const IApplicationView = @OpaqueType();
+
+const IVirtualDesktopVtbl = extern struct {
+    IsViewVisible: extern fn (This: [*c]IVirtualDesktop, pView: [*c]IApplicationView, pfVisible: [*c]c_int) callconv(.C) w.HRESULT,
+    GetID: extern fn (This: [*c]IVirtualDesktop, pGuid: [*c]w.GUID) callconv(.C) w.HRESULT,
+};
+
+const IVirtualDesktop = extern struct {
+    lpVtbl: [*c]IVirtualDesktopVtbl,
+};
+
+const AdjacentDesktop = enum {
+    LeftDirection = 3,
+    RightDirection = 4,
+};
+
+const IVirtualDesktopManagerInternalVtbl = extern struct {
+    GetCount: extern fn(This: [*c]IVirtualDesktopManagerInternal, pCount: [*c]c_int) callconv(.C) w.HRESULT,
+    MoveViewDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    GetCurrentDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, desktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    GetDesktops: extern fn(This: [*c]IVirtualDesktopManagerInternal, ppDesktops: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    GetAdjacentDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pDesktopReference: [*c]IVirtualDesktop, uDirection: AdjacentDesktop, ppAdjacentDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    SwitchDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    CreateDesktopW: extern fn(This: [*c]IVirtualDesktopManagerInternal, ppNewDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    RemoveDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pRemove: [*c]IVirtualDesktop, pFallbackDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+};
+
+const IVirtualDesktopManagerInternal = extern struct {
+    lpVtbl: [*c]IVirtualDesktopManagerInternalVtbl,
 };
 
 const IIVirtualDesktopManager = struct {
@@ -86,7 +136,6 @@ const IIVirtualDesktopManager = struct {
 pub fn create() !IIVirtualDesktopManager {
     var virtualDesktopManager: *IVirtualDesktopManager = undefined;
     var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
-    std.debug.warn("hr = {}, virtualDesktopManager.lpVtbl = {}\n", .{hr, virtualDesktopManager.lpVtbl.*});
     if (hr == 0) {
         return IIVirtualDesktopManager {
             .virtualDesktopManager = virtualDesktopManager
