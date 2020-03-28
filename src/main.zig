@@ -66,7 +66,8 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
     globalHInstance = hInstance;
     //_ = w.FreeConsole();
 
-    _ = w.CoInitializeEx(null, 0x2| 0x4);
+    var hr = w.CoInitializeEx(null, 0x2| 0x4);
+    std.debug.warn("hr = {}\n", .{hr});
 
     //Create invisible window just for message loop
     comptime var className: w.LPCWSTR = Window.toUtf16("MosaicSwitcher") catch unreachable;

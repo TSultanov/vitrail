@@ -1,3 +1,4 @@
+const std = @import("std");
 const w = @import("win32").c;
 
 const ComError = error {
@@ -60,31 +61,32 @@ const IVirtualDesktopManager = extern struct {
 };
 
 const IIVirtualDesktopManager = struct {
-    virtualDesktopManager: IVirtualDesktopManager,
+    virtualDesktopManager: *IVirtualDesktopManager,
 
     pub fn QueryInterface(self: *IIVirtualDesktopManager, riid: REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
-        return self.virtualDesktopManager.lpVtbl.*.QueryInterface(&self.virtualDesktopManager, riid, ppvObject);
+        return self.virtualDesktopManager.lpVtbl.*.QueryInterface(self.virtualDesktopManager, riid, ppvObject);
     }
     pub fn AddRef(self: *IIVirtualDesktopManager) w.ULONG {
-        return self.virtualDesktopManager.lpVtbl.*.AddRef(&self.virtualDesktopManager);
+        return self.virtualDesktopManager.lpVtbl.*.AddRef(self.virtualDesktopManager);
     }
     pub fn Release(self: *IIVirtualDesktopManager) w.ULONG {
-        return self.virtualDesktopManager.lpVtbl.*.Release(&self.virtualDesktopManager);
+        return self.virtualDesktopManager.lpVtbl.*.Release(self.virtualDesktopManager);
     }
     pub fn IsWindowOnCurrentVirtualDesktop(self: *IIVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]BOOL) w.HRESULT {
-        return self.virtualDesktopManager.lpVtbl.*.IsWindowOnCurrentVirtualDesktop(&self.virtualDesktopManager, topLevelWindow, onCurrentDesktop);
+        return self.virtualDesktopManager.lpVtbl.*.IsWindowOnCurrentVirtualDesktop(self.virtualDesktopManager, topLevelWindow, onCurrentDesktop);
     }
     pub fn GetWindowDesktopId(self: *IIVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
-        return self.virtualDesktopManager.lpVtbl.*.GetWindowDesktopId(&self.virtualDesktopManager, topLevelWindow, desktopId);
+        return self.virtualDesktopManager.lpVtbl.*.GetWindowDesktopId(self.virtualDesktopManager, topLevelWindow, desktopId);
     }
     pub fn MoveWindowToDesktop(self: *IIVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
-        return self.virtualDesktopManager.lpVtbl.*.MoveWindowToDesktop(&self.virtualDesktopManager, topLevelWindow, desktopId);
+        return self.virtualDesktopManager.lpVtbl.*.MoveWindowToDesktop(self.virtualDesktopManager, topLevelWindow, desktopId);
     }
 };
 
 pub fn create() !IIVirtualDesktopManager {
-    var virtualDesktopManager: IVirtualDesktopManager = undefined;
+    var virtualDesktopManager: *IVirtualDesktopManager = undefined;
     var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
+    std.debug.warn("hr = {}, virtualDesktopManager.lpVtbl = {}\n", .{hr, virtualDesktopManager.lpVtbl.*});
     if (hr == 0) {
         return IIVirtualDesktopManager {
             .virtualDesktopManager = virtualDesktopManager
