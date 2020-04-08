@@ -92,7 +92,7 @@ pub const Layout = struct {
 
     pub fn next(self: *Layout) void {
         self.children.at(self.focusedIdx).box.*.unfocus();
-        if (self.focusedIdx < self.children.len - 1) {
+        if (self.focusedIdx < self.children.items.len - 1) {
             self.focusedIdx += 1;
         } else {
             self.focusedIdx = 0;
@@ -107,7 +107,7 @@ pub const Layout = struct {
         if (self.focusedIdx > 0) {
             self.focusedIdx -= 1;
         } else {
-            self.focusedIdx = self.children.len - 1;
+            self.focusedIdx = self.children.items.len - 1;
         }
         self.children.at(self.focusedIdx).box.*.focus();
         self.focusedCol = self.children.at(self.focusedIdx).col;
@@ -165,7 +165,7 @@ pub const Layout = struct {
     }
 
     fn layout(self: *Layout) !void {
-        if (self.children.len == 0) return;
+        if (self.children.items.len == 0) return;
 
         for (self.children.span()) |*child| {
             child.*.box.*.window.hide();
@@ -177,7 +177,7 @@ pub const Layout = struct {
 
         var width = rect.right - rect.left;
         var height = rect.bottom - rect.top;
-        var rsize = self.children.len;
+        var rsize = self.children.items.len;
 
         var rows = @intCast(usize, @divFloor(height, chHeight));
         var cols = @intCast(usize, @divFloor(width, chWidth));

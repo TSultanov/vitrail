@@ -3,7 +3,7 @@ const w = @import("win32").c;
 const Allocator = std.mem.Allocator;
 
 pub fn toUtf16(str: []const u8) ![:0]u16 {
-    var buf: [512]u16 = undefined;
+    var buf: [512:0]u16 = undefined;
     _ = try std.unicode.utf8ToUtf16Le(&buf, str);
     return buf[0..:0];
 }
@@ -177,7 +177,7 @@ pub const SystemInteraction = struct {
 fn verifyUwpCloak(hwnd: w.HWND, str: w.LPSTR, handle: w.HANDLE, ptr: w.ULONG_PTR) callconv(.C) c_int {
     comptime var cloakType = "ApplicationViewCloakType";
     if(@ptrToInt(str) > 0xffff) {
-        var prop = std.mem.toSliceConst(u8, str);
+        var prop = std.mem.spanZ(str);
         if(std.mem.eql(u8, cloakType, prop)) {
             if(@ptrToInt(handle) != 1) {
                 var pValidCloak = @intToPtr(*bool, ptr);
