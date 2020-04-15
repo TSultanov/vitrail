@@ -81,7 +81,7 @@ pub const Layout = struct {
     }
 
     pub fn switchToSelection(self: *Layout) !void {
-        self.children.at(self.focusedIdx).box.*.switchToWindow();
+        self.children.items[self.focusedIdx].box.*.switchToWindow();
         try self.hide();
     }
 
@@ -91,70 +91,70 @@ pub const Layout = struct {
     }
 
     pub fn next(self: *Layout) void {
-        self.children.at(self.focusedIdx).box.*.unfocus();
+        self.children.items[self.focusedIdx].box.*.unfocus();
         if (self.focusedIdx < self.children.items.len - 1) {
             self.focusedIdx += 1;
         } else {
             self.focusedIdx = 0;
         }
-        self.children.at(self.focusedIdx).box.*.focus();
-        self.focusedCol = self.children.at(self.focusedIdx).col;
-        self.focusedRow = self.children.at(self.focusedIdx).row;
+        self.children.items[self.focusedIdx].box.*.focus();
+        self.focusedCol = self.children.items[self.focusedIdx].col;
+        self.focusedRow = self.children.items[self.focusedIdx].row;
     }
 
     pub fn prev(self: *Layout) void {
-        self.children.at(self.focusedIdx).box.*.unfocus();
+        self.children.items[self.focusedIdx].box.*.unfocus();
         if (self.focusedIdx > 0) {
             self.focusedIdx -= 1;
         } else {
             self.focusedIdx = self.children.items.len - 1;
         }
-        self.children.at(self.focusedIdx).box.*.focus();
-        self.focusedCol = self.children.at(self.focusedIdx).col;
-        self.focusedRow = self.children.at(self.focusedIdx).row;
+        self.children.items[self.focusedIdx].box.*.focus();
+        self.focusedCol = self.children.items[self.focusedIdx].col;
+        self.focusedRow = self.children.items[self.focusedIdx].row;
     }
 
     pub fn right(self: *Layout) void {
         if (self.focusedCol < self.cols and self.matrix.?[self.focusedRow * self.cols + self.focusedCol + 1] != null) {
-            self.children.at(self.focusedIdx).box.*.unfocus();
+            self.children.items[self.focusedIdx].box.*.unfocus();
 
             self.focusedCol += 1;
 
             self.focusedIdx = self.matrix.?[self.focusedRow * self.cols + self.focusedCol].?;
-            self.children.at(self.focusedIdx).box.*.focus();
+            self.children.items[self.focusedIdx].box.*.focus();
         }
     }
 
     pub fn left(self: *Layout) void {
         if (self.focusedCol >= 0 and self.matrix.?[self.focusedRow * self.cols + self.focusedCol - 1] != null) {
-            self.children.at(self.focusedIdx).box.*.unfocus();
+            self.children.items[self.focusedIdx].box.*.unfocus();
 
             self.focusedCol -= 1;
 
             self.focusedIdx = self.matrix.?[self.focusedRow * self.cols + self.focusedCol].?;
-            self.children.at(self.focusedIdx).box.*.focus();
+            self.children.items[self.focusedIdx].box.*.focus();
         }
     }
 
     pub fn down(self: *Layout) void {
         if (self.focusedRow >= 0 and self.matrix.?[(self.focusedRow - 1) * self.cols + self.focusedCol] != null) {
-            self.children.at(self.focusedIdx).box.*.unfocus();
+            self.children.items[self.focusedIdx].box.*.unfocus();
 
             self.focusedRow -= 1;
 
             self.focusedIdx = self.matrix.?[self.focusedRow * self.cols + self.focusedCol].?;
-            self.children.at(self.focusedIdx).box.*.focus();
+            self.children.items[self.focusedIdx].box.*.focus();
         }
     }
 
     pub fn up(self: *Layout) void {
         if (self.focusedRow < self.rows and self.matrix.?[(self.focusedRow + 1) * self.cols + self.focusedCol] != null) {
-            self.children.at(self.focusedIdx).box.*.unfocus();
+            self.children.items[self.focusedIdx].box.*.unfocus();
 
             self.focusedRow += 1;
 
             self.focusedIdx = self.matrix.?[self.focusedRow * self.cols + self.focusedCol].?;
-            self.children.at(self.focusedIdx).box.*.focus();
+            self.children.items[self.focusedIdx].box.*.focus();
         }
     }
 
@@ -209,17 +209,17 @@ pub const Layout = struct {
                 }
                 if (cur_x >= 0 and cur_x + chWidth <= width and cur_y >= 0 and cur_y + chHeight <= height) {
                     offset = 0;
-                    self.children.at(i).box.*.window.setSize(cur_x, cur_y, chWidth, chHeight);
-                    self.children.at(i).box.*.window.setSize(cur_x, cur_y, chWidth, chHeight);
-                    self.children.at(i).box.*.window.show();
-                    self.children.at(i).col = cur_col;
-                    self.children.at(i).row = cur_row;
+                    self.children.items[i].box.*.window.setSize(cur_x, cur_y, chWidth, chHeight);
+                    self.children.items[i].box.*.window.setSize(cur_x, cur_y, chWidth, chHeight);
+                    self.children.items[i].box.*.window.show();
+                    self.children.items[i].col = cur_col;
+                    self.children.items[i].row = cur_row;
                     var matIdx = cur_row * self.cols + cur_col;
                     if (matIdx < rows * cols) {
                         self.matrix.?[matIdx] = i;
                     }
                     if (i == self.focusedIdx) {
-                        self.children.at(i).box.*.focus();
+                        self.children.items[i].box.*.focus();
                         self.focusedCol = cur_col;
                         self.focusedRow = cur_row;
                     }
@@ -268,6 +268,6 @@ pub const Layout = struct {
             cur_row += 1;
         }
 
-        _ = w.SwitchToThisWindow(self.children.at(self.focusedIdx).box.*.window.hwnd, 1);
+        _ = w.SwitchToThisWindow(self.children.items[self.focusedIdx].box.*.window.hwnd, 1);
     }
 };
