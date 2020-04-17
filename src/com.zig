@@ -30,3 +30,4 @@ pub const CLSCTX_SERVER         = CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER|CLSCT
 pub const CLSCTX_ALL            = CLSCTX_SERVER|CLSCTX_INPROC_HANDLER;
 
 pub const REFIID = [*c]const w.IID;
+pub const REFGUID = [*c]const w.GUID;

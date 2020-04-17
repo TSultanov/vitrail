@@ -4,7 +4,10 @@ const Layout = @import("layout.zig").Layout;
 const Box = @import("box.zig").Box;
 const Window = @import("window.zig").Window;
 const si = @import("system_interaction.zig");
-const virtualdesktop = @import("virtualdesktop.zig");
+const virtualdesktopmanager = @import("virtualdesktopmanager.zig");
+const virtualdesktopmanagerinternal = @import("virtualdesktopmanagerinternal.zig");
+const immersiveshell = @import("immersiveshell.zig");
+const IVirtualDesktop = virtualdesktopmanagerinternal.IVirtualDesktop;
 
 var layout: ?*Layout = undefined;
 var globalHInstance: w.HINSTANCE = undefined;
@@ -112,9 +115,30 @@ fn showLayout() !void {
         arena.* = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         systemInteraction = si.init(globalHInstance, &arena.allocator);
 
-        var desktopManager = try virtualdesktop.create();
+        var desktopManager = try virtualdesktopmanager.create();
+        var serviceProvider = try immersiveshell.create();
+        var desktopManagerInternal = try virtualdesktopmanagerinternal.create(serviceProvider);
+
+        var dCount: c_int = undefined;
+        _ = desktopManagerInternal.GetCount(&dCount);
+        std.debug.warn("Desktop count: {}\n", .{dCount});
+
+        //TODO: implement IObjectArray
+        // var desktops: [*c]IVirtualDesktop = undefined;
+        // _ = desktopManagerInternal.GetDesktops(&desktops);
+
+        // var i: usize = 0;
+        // while(i < dCount)
+        // {
+        //     std.debug.warn("{}\n", .{i});
+        //     var desktopId: w.GUID = undefined;
+        //     _ = desktops[i].GetID(&desktopId);
+        //     std.debug.warn("{}: {}\n", .{i, desktopId});
+        //     i += 1;
+        // }
 
         var desktopWindows = try systemInteraction.getWindowList();
+
         layout = try Layout.create(&arena.allocator);
         for (desktopWindows) |dWindow| {
             if(dWindow.shouldShow) {
@@ -128,6 +152,8 @@ fn showLayout() !void {
         try layout.?.layout();
 
         _ = desktopManager.Release();
+        _ = desktopManagerInternal.Release();
+        _ = serviceProvider.Release();
     }
 }
 
