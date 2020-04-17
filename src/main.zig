@@ -70,9 +70,9 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
     std.debug.warn("hr = {}\n", .{hr});
 
     //Create invisible window just for message loop
-    comptime var className: w.LPCWSTR = Window.toUtf16("MosaicSwitcher") catch unreachable;
+    comptime var className: w.LPCWSTR = si.toUtf16("MosaicSwitcher") catch unreachable;
     registerClass(hInstance, className);
-    comptime var windowName: w.LPCWSTR = Window.toUtf16("MosaicSwitcher") catch unreachable;
+    comptime var windowName: w.LPCWSTR = si.toUtf16("MosaicSwitcher") catch unreachable;
     var invWindow = Window.create(0, className, windowName, w.WS_BORDER, 0, 0, 0, 0, null, null, hInstance, null);
     _ = w.SetWindowLong(invWindow.hwnd, w.GWL_STYLE, 0);
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const w = @import("win32").c;
 const Window = @import("window.zig").Window;
+const si = @import("system_interaction.zig");
 const Allocator = std.mem.Allocator;
 
 var classRegistered: bool = false;
@@ -106,13 +107,13 @@ pub const Box = struct {
     }
 
     pub fn create(hInstance: w.HINSTANCE, title: []const u16, class: []const u16, icon: w.HICON, hwnd: w.HWND, allocator: *Allocator) !*Box {
-        comptime var className: w.LPCWSTR = try Window.toUtf16("MosaicBox");
+        comptime var className: w.LPCWSTR = try si.toUtf16("MosaicBox");
 
         if (!classRegistered) {
             registerClass(hInstance, className);
         }
 
-        var windowTitle: w.LPCWSTR = try Window.toUtf16("Box");
+        var windowTitle: w.LPCWSTR = try si.toUtf16("Box");
 
         var window = Window.create(w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW, className, windowTitle, w.WS_BORDER, 0, 0, 200, 200, null, null, hInstance, null);
         _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
