@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 pub fn toUtf16(str: []const u8) ![:0]u16 {
     var buf: [512:0]u16 = undefined;
     _ = try std.unicode.utf8ToUtf16Le(&buf, str);
-    return buf[0..:0];
+    return buf[0..];
 }
 
 pub const DesktopWindow = struct {
