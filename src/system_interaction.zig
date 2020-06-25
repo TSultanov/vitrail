@@ -8,6 +8,10 @@ pub fn toUtf16(str: []const u8) ![:0]u16 {
     return buf[0..];
 }
 
+pub fn toUtf16const(str: []const u8) [:0]u16 {
+    return toUtf16(str) catch unreachable;
+}
+
 pub const DesktopWindow = struct {
     hwnd: w.HWND,
     title: []u16,

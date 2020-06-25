@@ -1,18 +1,59 @@
 const std = @import("std");
 const w = @import("win32").c;
+const toUtf16const = @import("system_interaction.zig").toUtf16const;
+
+fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
+    var wLong = w.GetWindowLongPtr(hwnd, w.GWLP_USERDATA);
+    if(wLong == 0) {
+        return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
+    }
+
+    var wndProc = @intToPtr(WndProc, @bitCast(usize, wLong));
+    return wndProc(hwnd, uMsg, wParam, lParam);
+}
+
+pub const WndProc = fn (hWnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) w.LRESULT;
+
+pub const WindowParameters = struct {
+    exStyle: w.DWORD = 0,
+    className: w.LPCWSTR = toUtf16const("Vitrail"),
+    title: w.LPCWSTR = toUtf16const("Window"),
+    style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
+    x: c_int = 100,
+    y: c_int = 100,
+    width: c_int = 100,
+    height: c_int = 100,
+    parent: ?Window = null,
+    menu: w.HMENU = null,
+    wndProc: WndProc
+};
 
 pub const Window = struct {
     hwnd: w.HWND,
-    title: w.LPCWSTR,
-    className: w.LPCWSTR,
     hInstance: w.HINSTANCE,
 
-    pub fn create(exStyle: w.DWORD, className: w.LPCWSTR, title: w.LPCWSTR, style: w.DWORD, x: c_int, y: c_int, width: c_int, height: c_int, parent: ?Window, menu: w.HMENU, hInstance: w.HINSTANCE, lpParam: w.LPVOID) Window {
-        var hwnd = w.CreateWindowExW(exStyle, className, title, style, x, y, width, height, if (parent == null) null else parent.?.hwnd, menu, hInstance, lpParam);
+    pub fn create(windowParameters: WindowParameters, hInstance: w.HINSTANCE) Window {
+        const wc: w.WNDCLASSW = .{
+            .style = 0,
+            .lpfnWndProc = WindowProc,
+            .cbClsExtra = 0,
+            .cbWndExtra = 0,
+            .hInstance = hInstance,
+            .hIcon = null,
+            .hCursor = w.LoadCursor(null, 32512),
+            .hbrBackground = null,
+            .lpszMenuName = null,
+            .lpszClassName = windowParameters.className,
+        };
+
+        _ = w.RegisterClassW(&wc);
+
+        var hwnd = w.CreateWindowExW(windowParameters.exStyle, windowParameters.className, windowParameters.title, windowParameters.style, windowParameters.x, windowParameters.y, windowParameters.width, windowParameters.height, if(windowParameters.parent) |p| p.hwnd else null, windowParameters.menu, hInstance, null);
+
+        _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(windowParameters.wndProc)));
+
         return Window{
             .hwnd = hwnd,
-            .title = title,
-            .className = className,
             .hInstance = hInstance,
         };
     }
@@ -80,7 +121,7 @@ pub const Window = struct {
 
         while (w.GetMessageW(&msg, self.hwnd, 0, 0) != 0) {
             _ = w.TranslateMessage(&msg);
-            _ = w.DispatchMessage(&msg);
+            _ = w.DispatchMessageW(&msg);
         }
     }
 };
