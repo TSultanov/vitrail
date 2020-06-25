@@ -8,6 +8,7 @@ const virtualdesktopmanager = @import("virtualdesktopmanager.zig");
 const virtualdesktopmanagerinternal = @import("virtualdesktopmanagerinternal.zig");
 const immersiveshell = @import("immersiveshell.zig");
 const IVirtualDesktop = virtualdesktopmanagerinternal.IVirtualDesktop;
+const IObjectArray = @import("objectarray.zig").IObjectArray;
 
 var layout: ?*Layout = undefined;
 var globalHInstance: w.HINSTANCE = undefined;
@@ -68,9 +69,11 @@ fn registerClass(hInstance: w.HINSTANCE, className: w.LPCWSTR) void {
 pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
     globalHInstance = hInstance;
     //_ = w.FreeConsole();
+    const stdin = std.io.getStdIn().inStream();
+    _ = stdin.readByte() catch unreachable;
 
-    var hr = w.CoInitializeEx(null, 0x2| 0x4);
-    std.debug.warn("hr = {}\n", .{hr});
+    var hr = w.CoInitializeEx(null, 0x2);
+    std.debug.warn("CoInitializeEx hr: {}\n", .{hr});
 
     //Create invisible window just for message loop
     comptime var className: w.LPCWSTR = si.toUtf16("MosaicSwitcher") catch unreachable;
@@ -119,23 +122,30 @@ fn showLayout() !void {
         var serviceProvider = try immersiveshell.create();
         var desktopManagerInternal = try virtualdesktopmanagerinternal.create(serviceProvider);
 
-        var dCount: c_int = undefined;
-        _ = desktopManagerInternal.GetCount(&dCount);
-        std.debug.warn("Desktop count: {}\n", .{dCount});
-
         //TODO: implement IObjectArray
-        // var desktops: [*c]IVirtualDesktop = undefined;
-        // _ = desktopManagerInternal.GetDesktops(&desktops);
+        var desktopsNullable: ?*IObjectArray = undefined;
+        var desktopsHr = desktopManagerInternal.GetDesktops(&desktopsNullable);
+        std.debug.warn("hr: {x}\n", .{desktopsHr});
 
-        // var i: usize = 0;
-        // while(i < dCount)
-        // {
-        //     std.debug.warn("{}\n", .{i});
-        //     var desktopId: w.GUID = undefined;
-        //     _ = desktops[i].GetID(&desktopId);
-        //     std.debug.warn("{}: {}\n", .{i, desktopId});
-        //     i += 1;
-        // }
+        var desktops = desktopsNullable orelse unreachable;
+        
+        var dCount: c_uint = undefined;
+        var countHr = desktops.GetCount(&dCount);
+        std.debug.warn("Desktop count: {}, hr: {x}\n", .{dCount, countHr});
+
+        var i: usize = 0;
+        while(i < dCount)
+        {
+            std.debug.warn("Desktop {} desktops: {x}\n", .{i, @ptrToInt(&desktops)});
+            var desktop = try desktops.GetAtGeneric(i, IVirtualDesktop);
+
+            std.debug.warn("desktop: {x}", .{desktop});
+
+            var desktopId: w.GUID = undefined;
+            _ = desktop.GetID(&desktopId);
+            std.debug.warn("{}: {}\n", .{i, desktopId});
+            i += 1;
+        }
 
         var desktopWindows = try systemInteraction.getWindowList();
 

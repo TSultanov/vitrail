@@ -2,6 +2,7 @@ const std = @import("std");
 const w = @import("win32").c;
 const com = @import("com.zig");
 const IServiceProvider = @import("immersiveshell.zig").IServiceProvider;
+const IObjectArray = @import("objectarray.zig").IObjectArray;
 
 //{F31574D6-B682-4CDC-BD56-1827860ABEC6}
 const IID_IVirtualDesktopManagerInternal = w.IID {
@@ -18,6 +19,14 @@ const CLSID_VirtualDesktopAPI_Unknown = w.CLSID {
     .Data4 = [8]u8 {0x9F, 0xC4, 0xD9, 0x39, 0x75, 0xCC, 0x46, 0x7B},
 };
 
+//{FF72FFDD-BE7E-43FC-9C03-AD81681E88E4}
+const IID_IVirtualDesktop = w.IID {
+    .Data1 = 0xFF72FFDD,
+    .Data2 = 0xBE7E,
+    .Data3 = 0x43FC,
+    .Data4 = [8]u8 {0x9C, 0x03, 0xAD, 0x81, 0x68, 0x1E, 0x88, 0xE4},
+};
+
 const IApplicationView = extern struct {
     unused: u8,
 };
@@ -32,8 +41,9 @@ const IVirtualDesktopVtbl = extern struct {
 
 pub const IVirtualDesktop = extern struct {
     lpVtbl: [*c]IVirtualDesktopVtbl,
+    iid: w.IID = IID_IVirtualDesktop,
 
-    pub fn QueryInterface(self: *IVirtualDesktop, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
+    pub fn QueryInterface(self: *IVirtualDesktop, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }
     pub fn AddRef(self: *IVirtualDesktop) w.ULONG {
@@ -56,16 +66,19 @@ const IVirtualDesktopManagerInternalVtbl = extern struct {
     Release: extern fn (This: [*c]IVirtualDesktopManagerInternal) callconv(.C) w.ULONG,
     GetCount: extern fn(This: [*c]IVirtualDesktopManagerInternal, pCount: [*c]c_int) callconv(.C) w.HRESULT,
     MoveViewDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    CanViewMoveDesktops: extern fn(This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pfCanViewMoveDesktops: [*c]c_int) callconv(.C) w.HRESULT,
     GetCurrentDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, desktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    GetDesktops: extern fn(This: [*c]IVirtualDesktopManagerInternal, ppDesktops: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    GetDesktops: extern fn(This: [*c]IVirtualDesktopManagerInternal, ppDesktops: [*c][*c]IObjectArray) callconv(.C) w.HRESULT,
     GetAdjacentDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pDesktopReference: [*c]IVirtualDesktop, uDirection: AdjacentDesktop, ppAdjacentDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
     SwitchDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
     CreateDesktopW: extern fn(This: [*c]IVirtualDesktopManagerInternal, ppNewDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
     RemoveDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, pRemove: [*c]IVirtualDesktop, pFallbackDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    FindDesktop: extern fn(This: [*c]IVirtualDesktopManagerInternal, desktopId: [*c]w.GUID, ppDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
 };
 
 const IVirtualDesktopManagerInternal = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerInternalVtbl,
+    iid: w.IID = IID_IVirtualDesktopManagerInternal,
 
     pub fn QueryInterface(self: *IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
@@ -85,7 +98,7 @@ const IVirtualDesktopManagerInternal = extern struct {
     pub fn GetCurrentDesktop(self: *IVirtualDesktopManagerInternal, desktop: [*c][*c]IVirtualDesktop) w.HRESULT {
         return self.lpVtbl.*.GetCurrentDesktop(self, desktop);
     }
-    pub fn GetDesktops(self: *IVirtualDesktopManagerInternal, ppDesktops: [*c][*c]IVirtualDesktop) w.HRESULT {
+    pub fn GetDesktops(self: *IVirtualDesktopManagerInternal, ppDesktops: [*c]?*IObjectArray) w.HRESULT {
         return self.lpVtbl.*.GetDesktops(self, ppDesktops);
     }
     pub fn GetAdjacentDesktop(self: *IVirtualDesktopManagerInternal, pDesktopReference: [*c]IVirtualDesktop, uDirection: AdjacentDesktop, ppAdjacentDesktop: [*c][*c]IVirtualDesktop) w.HRESULT {
