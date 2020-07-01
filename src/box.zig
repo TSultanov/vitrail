@@ -1,6 +1,8 @@
 const std = @import("std");
 const w = @import("win32").c;
 const Window = @import("window.zig").Window;
+const WindowParameters = @import("window.zig").WindowParameters;
+const WindowEventHandlers = @import("window.zig").WindowEventHandlers;
 const si = @import("system_interaction.zig");
 const Allocator = std.mem.Allocator;
 
@@ -10,79 +12,8 @@ var boxes = std.hash_map.AutoHashMap(w.HWND, *Box).init(std.heap.c_allocator);
 
 const color_offset = 100;
 
-fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
-    if (boxes.contains(hwnd)) {
-        var box = boxes.get(hwnd);
-        return switch (uMsg) {
-            w.WM_LBUTTONDOWN => {
-                //Hacky way to switch to window and close ourselves, consider implementing it properly.
-                box.?.value.switchToWindow();
-                _ = w.PostMessageW(hwnd, w.WM_KEYDOWN, w.VK_ESCAPE, 0);
-                return 0;
-            },
-            w.WM_DESTROY => {
-                return 0;
-            },
-            w.WM_CREATE => {
-                return 0;
-            },
-            w.WM_PAINT => {
-                var ps: w.PAINTSTRUCT = undefined;
-                var hdc = w.BeginPaint(hwnd, &ps);
-
-                var hbrushBg = w.CreateSolidBrush(0);
-                defer _ = w.DeleteObject(hbrushBg);
-                _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
-
-                var colorFg: w.COLORREF = undefined;
-
-                if (box.?.*.value.focused) {
-                    colorFg = box.?.*.value.colorFocused;
-                } else {
-                    colorFg = box.?.*.value.color;
-                }
-                var hbrushFg = w.CreateSolidBrush(colorFg);
-                defer _ = w.DeleteObject(hbrushFg);
-                var rect = box.?.*.value.window.getClientRect();
-                rect.left = 1;
-                rect.top = 1;
-                rect.right -= 1;
-                rect.bottom -= 1;
-                _ = w.FillRect(hdc, &rect, hbrushFg);
-
-                box.?.*.value.drawText(hdc);
-                box.?.*.value.drawIcon(hdc);
-
-                _ = w.EndPaint(hwnd, &ps);
-                _ = w.ReleaseDC(hwnd, hdc);
-                return 0;
-            },
-            else => w.DefWindowProcW(hwnd, uMsg, wParam, lParam),
-        };
-    } else {
-        return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
-    }
-}
-
-fn registerClass(hInstance: w.HINSTANCE, className: w.LPCWSTR) void {
-    const wc: w.WNDCLASSW = .{
-        .style = 0,
-        .lpfnWndProc = WindowProc,
-        .cbClsExtra = 0,
-        .cbWndExtra = 0,
-        .hInstance = hInstance,
-        .hIcon = null,
-        .hCursor = w.LoadCursor(null, 32512),
-        .hbrBackground = null,
-        .lpszMenuName = null,
-        .lpszClassName = className,
-    };
-
-    _ = w.RegisterClassW(&wc);
-}
-
 pub const Box = struct {
-    window: Window,
+    window: *Window,
     focused: bool = false,
     title: []const u16,
     color: w.COLORREF,
@@ -90,7 +21,8 @@ pub const Box = struct {
     font: w.HGDIOBJ,
     icon: w.HICON,
     hwnd: w.HWND,
-    allocator: *Allocator,
+
+    const Self = @This();
 
     pub fn focus(self: *Box) void {
         self.focused = true;
@@ -106,16 +38,68 @@ pub const Box = struct {
         _ = w.SwitchToThisWindow(self.hwnd, 1);
     }
 
+    pub fn onClick(window: Window) !void {
+        //Hacky way to switch to window and close ourselves, consider implementing it properly.
+        const self = @fieldParentPtr(Self, "window", window);
+        self.switchToWindow();
+        //_ = w.PostMessageW(hwnd, w.WM_KEYDOWN, w.VK_ESCAPE, 0);
+    }
+
+    pub fn onPaint(window: Window) !void {
+        const self = @fieldParentPtr(Self, "window", window);
+        var ps: w.PAINTSTRUCT = undefined;
+        var hdc = w.BeginPaint(window.hwnd, &ps);
+
+        var hbrushBg = w.CreateSolidBrush(0);
+        defer _ = w.DeleteObject(hbrushBg);
+        _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
+
+        var colorFg: w.COLORREF = undefined;
+
+        if (self.focused) {
+            colorFg = self.colorFocused;
+        } else {
+            colorFg = self.color;
+        }
+        var hbrushFg = w.CreateSolidBrush(colorFg);
+        defer _ = w.DeleteObject(hbrushFg);
+        var rect = self.window.getClientRect();
+        rect.left = 1;
+        rect.top = 1;
+        rect.right -= 1;
+        rect.bottom -= 1;
+        _ = w.FillRect(hdc, &rect, hbrushFg);
+
+        self.drawText(hdc);
+        self.drawIcon(hdc);
+
+        _ = w.EndPaint(window.hwnd, &ps);
+        _ = w.ReleaseDC(window.hwnd, hdc);
+    }
+
     pub fn create(hInstance: w.HINSTANCE, title: []const u16, class: []const u16, icon: w.HICON, hwnd: w.HWND, allocator: *Allocator) !*Box {
         comptime var className: w.LPCWSTR = try si.toUtf16("MosaicBox");
 
-        if (!classRegistered) {
-            registerClass(hInstance, className);
-        }
-
         var windowTitle: w.LPCWSTR = try si.toUtf16("Box");
 
-        var window = Window.create(w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW, className, windowTitle, w.WS_BORDER, 0, 0, 200, 200, null, null, hInstance, null);
+        var windowParameters = WindowParameters {
+            .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
+            .className = className,
+            .title = windowTitle,
+            .style = w.WS_BORDER,
+            .x = 0,
+            .y = 0,
+            .width = 200,
+            .height = 200,
+        };
+
+        var eventHandlers = WindowEventHandlers {
+            .onClick = onClick,
+            .onPaint = onPaint
+        };
+
+        var window = try Window.create(windowParameters, eventHandlers, hInstance, allocator);
+
         _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
         var font = w.GetStockObject(w.DEFAULT_GUI_FONT);
         _ = w.SendMessage(window.hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
@@ -133,7 +117,6 @@ pub const Box = struct {
             .font = font,
             .icon = icon,
             .hwnd = hwnd,
-            .allocator = allocator
         };
         _ = try boxes.put(window.hwnd, l);
         return l;
