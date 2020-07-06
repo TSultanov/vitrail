@@ -1,5 +1,6 @@
 usingnamespace @import("vitrail.zig");
 const MainWindow = @import("mainwindow.zig").MainWindow;
+const Button = @import("button.zig").Button;
 
 pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
     //const stdin = std.io.getStdIn().inStream();
@@ -10,7 +11,12 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
     defer arena.deinit();
 
     var main_window = MainWindow.create(hInstance, &arena.allocator) catch unreachable;
-    main_window.window.show();
+
+    var button = Button.create(hInstance, &arena.allocator) catch unreachable;
+    main_window.window.system_window.addChild(button.window.system_window) catch unreachable;
+
+    button.window.system_window.show();
+    main_window.window.system_window.show();
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {
