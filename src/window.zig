@@ -26,7 +26,7 @@ pub fn Window(comptime T: type) type {
             onResize: fn (widget: *T) anyerror!void = onResizeHandler,
             onCreate: fn(widget: *T) anyerror!void = defaultHandler,
             onDestroy: fn (widget: *T) anyerror!void = defaultHandler,
-            onPaint: fn (widget: *T) anyerror!void = defaultHandler,
+            onPaint: fn (widget: *T) anyerror!void = onPaintHandler,
         };
 
         fn defaultHandler(widget: *T) !void {}
@@ -35,6 +35,17 @@ pub fn Window(comptime T: type) type {
             for(widget.window.children.items) |wnd| {
                 widget.window.dockChild(wnd);
             }
+        }
+
+        fn onPaintHandler(widget: *T) !void {
+            var ps: w.PAINTSTRUCT = undefined;
+            var hdc = w.BeginPaint(widget.window.hwnd, &ps);
+            defer _ = w.EndPaint(widget.window.hwnd, &ps);
+            defer _ = w.ReleaseDC(widget.window.hwnd, hdc);
+            var color = w.GetSysColor(w.COLOR_WINDOW);
+            var hbrushBg = w.CreateSolidBrush(color);
+            defer _ = w.DeleteObject(hbrushBg);
+            _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
         }
 
         fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
