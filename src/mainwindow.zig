@@ -13,10 +13,7 @@ pub const MainWindow = struct {
         const windowConfig = Window(MainWindow).WindowParameters { .title = title  };
         const handlers = Window(MainWindow).WindowEventHandlers { .onDestroy = onDestroyHandler };
 
-        var widget = try allocator.create(MainWindow);
-        widget.* = MainWindow {
-            .window = try Window(MainWindow).create(windowConfig, handlers, hInstance, allocator, widget)
-        };
+        var widget = try Window(MainWindow).create(windowConfig, handlers, hInstance, allocator);
 
         return widget;
     }

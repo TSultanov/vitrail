@@ -76,7 +76,7 @@ pub fn Window(comptime T: type) type {
             }
         }
 
-        pub fn create(windowParameters: WindowParameters, eventHandlers: WindowEventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator, widget: *T) !*Window(T) {
+        pub fn create(windowParameters: WindowParameters, eventHandlers: WindowEventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*T {
             const wc: w.WNDCLASSW = .{
                 .style = 0,
                 .lpfnWndProc = WindowProc,
@@ -103,12 +103,18 @@ pub fn Window(comptime T: type) type {
                 .hInstance = hInstance,
                 .children = children,
                 .eventHandlers = eventHandlers,
-                .widget = widget
+                .widget = undefined
             };
 
             _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
 
-            return window;
+            var widget = try allocator.create(T);
+            widget.* = T {
+                .window = window
+            };
+            window.widget = widget;
+
+            return widget;
         }
 
         pub fn show(self: Window(T)) void {
