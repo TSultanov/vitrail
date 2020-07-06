@@ -1,19 +1,4 @@
-const std = @import("std");
-const w = @import("win32").c;
-const toUtf16const = @import("system_interaction.zig").toUtf16const;
-
-pub const WindowParameters = struct {
-    exStyle: w.DWORD = 0,
-    className: w.LPCWSTR = toUtf16const("Vitrail"),
-    title: w.LPCWSTR = toUtf16const("Window"),
-    style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
-    x: c_int = 100,
-    y: c_int = 100,
-    width: c_int = 640,
-    height: c_int = 480,
-    //parent: ?Window = null,
-    menu: w.HMENU = null,
-};
+usingnamespace @import("vitrail.zig");
 
 pub fn Window(comptime T: type) type {
     return struct {
@@ -23,18 +8,19 @@ pub fn Window(comptime T: type) type {
         eventHandlers: WindowEventHandlers,
         children: *std.ArrayList(*Window(T)),
         widget: *T,
+        pub const WindowParameters = struct {
+            exStyle: w.DWORD = 0,
+            className: w.LPCWSTR = toUtf16const("Vitrail"),
+            title: w.LPCWSTR = toUtf16const("Window"),
+            style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
+            x: c_int = 100,
+            y: c_int = 100,
+            width: c_int = 640,
+            height: c_int = 480,
+            //parent: ?Window = null,
+            menu: w.HMENU = null,
+        };
 
-        fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
-            var wLong = w.GetWindowLongPtr(hwnd, w.GWLP_USERDATA);
-            if(wLong == 0) {
-                return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
-            }
-
-            var window = @intToPtr(*Window(T), @bitCast(usize, wLong));
-
-            return window.wndProc(uMsg, wParam, lParam) catch return 1;
-        }
-        //pub const WndProc = fn (self: Window(T), uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) w.LRESULT;
         pub const WindowEventHandlers = struct {
             onClick: fn (widget: *T) anyerror!void = defaultHandler,
             onResize: fn (widget: *T) anyerror!void = onResizeHandler,
@@ -50,6 +36,18 @@ pub fn Window(comptime T: type) type {
                 widget.window.dockChild(wnd);
             }
         }
+
+        fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
+            var wLong = w.GetWindowLongPtr(hwnd, w.GWLP_USERDATA);
+            if(wLong == 0) {
+                return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
+            }
+
+            var window = @intToPtr(*Window(T), @bitCast(usize, wLong));
+
+            return window.wndProc(uMsg, wParam, lParam) catch return 1;
+        }
+
         pub fn wndProc(self: Window(T), uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w.LRESULT {
             switch(uMsg) {
                 w.WM_SIZE => {

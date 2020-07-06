@@ -1,7 +1,4 @@
-const std = @import("std");
-const w = @import("win32").c;
-const Box = @import("box.zig").Box;
-const system_interaction = @import("system_interaction.zig");
+usingnamespace @import("vitrail.zig");
 const MainWindow = @import("mainwindow.zig").MainWindow;
 
 pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
