@@ -9,8 +9,7 @@ pub const MainWindow = struct {
     }
 
     pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*MainWindow {
-        const title = toUtf16const("MainWindow");
-        const windowConfig = Window(MainWindow).WindowParameters { .title = title  };
+        const windowConfig = Window(MainWindow).WindowParameters { .title = toUtf16const("MainWindow") };
         const handlers = Window(MainWindow).WindowEventHandlers { .onDestroy = onDestroyHandler };
 
         var widget = try Window(MainWindow).create(windowConfig, handlers, hInstance, allocator);

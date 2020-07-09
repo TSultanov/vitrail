@@ -12,7 +12,7 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
 
     var main_window = MainWindow.create(hInstance, &arena.allocator) catch unreachable;
 
-    var button = Button.create(hInstance, &arena.allocator) catch unreachable;
+    var button = Button.create(hInstance, main_window.window.system_window, &arena.allocator) catch unreachable;
     main_window.window.system_window.addChild(button.window.system_window) catch unreachable;
 
     button.window.system_window.show();

@@ -3,7 +3,6 @@ usingnamespace @import("vitrail.zig");
 pub const SystemWindow = struct {
     hwnd: w.HWND,
     hInstance: w.HINSTANCE,
-    dock: bool = false,
     children: *std.ArrayList(@This()),
 
     pub fn dockChild(self: @This(), child: @This()) void {
@@ -74,8 +73,8 @@ pub fn Window(comptime T: type) type {
         widget: *T,
         pub const WindowParameters = struct {
             exStyle: w.DWORD = 0,
-            className: w.LPCWSTR = toUtf16const("Vitrail"),
-            title: w.LPCWSTR = toUtf16const("Window"),
+            className: [:0]u16 = toUtf16const("Vitrail"),
+            title: [:0]u16 = toUtf16const("Window"),
             style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
             x: c_int = 100,
             y: c_int = 100,
@@ -83,6 +82,7 @@ pub fn Window(comptime T: type) type {
             height: c_int = 480,
             parent: ?SystemWindow = null,
             menu: w.HMENU = null,
+            register_class: bool = true
         };
 
         pub const WindowEventHandlers = struct {
@@ -96,9 +96,7 @@ pub fn Window(comptime T: type) type {
         fn defaultHandler(widget: *T) !void {}
 
         fn onResizeHandler(widget: *T) !void {
-            for(widget.window.system_window.children.items) |wnd| {
-                widget.window.system_window.dockChild(wnd);
-            }
+
         }
 
         fn onPaintHandler(widget: *T) !void {
@@ -152,20 +150,22 @@ pub fn Window(comptime T: type) type {
         }
 
         pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*T {
-            const wc: w.WNDCLASSW = .{
-                .style = 0,
-                .lpfnWndProc = WindowProc,
-                .cbClsExtra = 0,
-                .cbWndExtra = 0,
-                .hInstance = hInstance,
-                .hIcon = null,
-                .hCursor = w.LoadCursor(null, 32512),
-                .hbrBackground = null,
-                .lpszMenuName = null,
-                .lpszClassName = window_parameters.className,
-            };
+            if(window_parameters.register_class) {
+                const wc: w.WNDCLASSW = .{
+                    .style = 0,
+                    .lpfnWndProc = WindowProc,
+                    .cbClsExtra = 0,
+                    .cbWndExtra = 0,
+                    .hInstance = hInstance,
+                    .hIcon = null,
+                    .hCursor = w.LoadCursor(null, 32512),
+                    .hbrBackground = null,
+                    .lpszMenuName = null,
+                    .lpszClassName = window_parameters.className,
+                };
 
-            _ = w.RegisterClassW(&wc);
+                _ = w.RegisterClassW(&wc);
+            }
 
             var parent: w.HWND = if (window_parameters.parent) |p| p.hwnd else null;
             var hwnd = w.CreateWindowExW(window_parameters.exStyle, window_parameters.className, window_parameters.title, window_parameters.style, window_parameters.x, window_parameters.y, window_parameters.width, window_parameters.height, parent, window_parameters.menu, hInstance, null);

@@ -8,8 +8,9 @@ pub fn toUtf16(str: []const u8) ![:0]u16 {
     return buf[0..];
 }
 
-pub fn toUtf16const(str: []const u8) [:0]u16 {
-    return toUtf16(str) catch unreachable;
+pub fn toUtf16const(comptime str: []const u8) [:0]u16 {
+    comptime var utf16str = toUtf16(str) catch unreachable;
+    return utf16str;
 }
 
 pub const DesktopWindow = struct {
