@@ -186,6 +186,8 @@ pub fn Window(comptime T: type) type {
             };
 
             _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
+            var font = w.GetStockObject(w.DEFAULT_GUI_FONT);
+            _ = w.SendMessage(hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
 
             var widget = try allocator.create(T);
             widget.* = T {
