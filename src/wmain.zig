@@ -2,10 +2,27 @@ usingnamespace @import("vitrail.zig");
 const MainWindow = @import("mainwindow.zig").MainWindow;
 const Button = @import("button.zig").Button;
 
+const tagINITCOMMONCONTROLSEX = extern struct {
+  dwSize: w.DWORD,
+  dwICC: w.DWORD
+};
+
+const INITCOMMONCONTROLSEX = tagINITCOMMONCONTROLSEX;
+const LPINITCOMMONCONTROLSEX = [*c]tagINITCOMMONCONTROLSEX;
+
+extern "Comctl32" fn InitCommonControlsEx(picce: [*c]INITCOMMONCONTROLSEX) callconv(.C) w.BOOL;
+
 pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
     //const stdin = std.io.getStdIn().inStream();
     //_ = stdin.readByte() catch unreachable;
     var hr = w.CoInitializeEx(null, 0x2);
+
+    var picce = INITCOMMONCONTROLSEX {
+        .dwSize = @sizeOf(INITCOMMONCONTROLSEX),
+        .dwICC = 0xff
+    };
+
+    _ = InitCommonControlsEx(&picce);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
