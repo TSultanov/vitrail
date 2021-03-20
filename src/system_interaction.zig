@@ -13,11 +13,15 @@ pub fn toUtf16const(comptime str: []const u8) [:0]u16 {
     return utf16str;
 }
 
+pub fn toUtf8(str: []u16, allocator: *Allocator) ![]u8 {
+    return try std.unicode.utf16leToUtf8Alloc(allocator, str);
+}
+
 pub const DesktopWindow = struct {
     hwnd: w.HWND,
     title: []u16,
     class: []u16,
-    icon: w.HICON,
+    icon: w.HICON_a1,
     shouldShow: bool,
 };
 
@@ -52,21 +56,21 @@ pub const SystemInteraction = struct {
         var hwndList = std.ArrayList(w.HWND).init(self.allocator);
         _ = w.EnumWindows(enumWindowProc, @intCast(c_longlong, @ptrToInt(&hwndList)));
         var windowList = std.ArrayList(DesktopWindow).init(self.allocator);
-        for (hwndList.span()) |hwnd| {
+        for (hwndList.items) |hwnd| {
             try windowList.append(try self.hwndToDesktopWindow(hwnd));
         }
-        return windowList.span();
+        return windowList.items;
     }
 
     fn hwndToDesktopWindow(self: @This(), hwnd: w.HWND) !DesktopWindow {
         var shouldShow = self.shouldShowWindow(hwnd);
         var title = try self.getWindowTitle(hwnd);
         var class = try self.getWindowClass(hwnd);
-        var icon: w.HICON = try self.getWindowIcon(hwnd);
+        var icon: w.HICON_a1 = try self.getWindowIcon(hwnd);
         var dwindow = DesktopWindow {
             .hwnd = hwnd,
             .title = title,
-            .class = class[0..],
+            .class = class,
             .icon = icon,
             .shouldShow = try shouldShow,
         };
@@ -76,8 +80,7 @@ pub const SystemInteraction = struct {
     fn getWindowTitle(self: @This(), hwnd: w.HWND) ![]u16 {
         var title: []u16 = try self.allocator.alloc(u16, 512);
         for (title[0..512]) |*b| b.* = 0;
-        _ = w.GetWindowTextW(hwnd, &title[0], 512);
-
+        _ = w.GetWindowTextW(hwnd, &title[0], 511);
         return title;
     }
 
@@ -85,33 +88,33 @@ pub const SystemInteraction = struct {
         var class: []u16 = try self.allocator.alloc(u16, 512);
         for (class[0..512]) |*b| b.* = 0;
         
-        _ = w.RealGetWindowClassW(hwnd, &class[0], 512);
+        _ = w.RealGetWindowClassW(hwnd, &class[0], 511);
         return class;
     }
 
-    fn getWindowIcon(self: @This(), hwnd: w.HWND) !w.HICON {
+    fn getWindowIcon(self: @This(), hwnd: w.HWND) !w.HICON_a1 {
         var iconAddr: c_ulonglong = undefined;
         var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
         if(lResult != 0 and iconAddr != 0)
         {
-            var icon: w.HICON = @intToPtr(w.HICON, @intCast(usize, iconAddr));
+            var icon: w.HICON_a1 = @intToPtr(w.HICON_a1, @intCast(usize, iconAddr));
             return icon;
         }
 
-        var wndClassU = w.GetClassLongPtrW(hwnd, w.GCL_HICON);
-        if(wndClassU != 0)
+        var wndClassLongPtr = w.GetClassLongPtrW(hwnd, w.GCLP_HICON);
+        if(wndClassLongPtr != 0)
         {
-            var icon: w.HICON = @intToPtr(w.HICON, wndClassU);
+            var icon: w.HICON_a1 = @intToPtr(w.HICON_a1, wndClassLongPtr);
             return icon;
         }
 
         var fileIcon = try self.extractIconFromExecutable(hwnd);
-        if(fileIcon != null) return fileIcon;
+        if(fileIcon != null) return fileIcon.?;
 
-        return w.LoadIconW(null, 32512);
+        return @ptrCast(w.HICON_a1, w.LoadIconW(null, 32512));
     }
 
-    fn extractIconFromExecutable(self: @This(), hwnd: w.HWND) !w.HICON {
+    fn extractIconFromExecutable(self: @This(), hwnd: w.HWND) !?w.HICON_a1 {
         var pid: w.DWORD = undefined;
         _ = w.GetWindowThreadProcessId(hwnd, &pid);
         var hProc = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
@@ -123,7 +126,7 @@ pub const SystemInteraction = struct {
         if(result == 0) return null;
 
         var iconIndex: w.WORD = 0;
-        var icon = w.ExtractAssociatedIconW(self.hInstance, fileName, &iconIndex);
+        var icon = @ptrCast(w.HICON_a1, w.ExtractAssociatedIconW(self.hInstance, fileName, &iconIndex));
         return icon;
     }
 

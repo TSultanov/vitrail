@@ -34,14 +34,11 @@ pub const IObjectArray = extern struct {
         var iid = std.meta.fieldInfo(T, .iid).default_value orelse return ObjectArrayError.InvalidType;
 
         var object: ?*c_void = undefined;
-        std.debug.warn("IObjectArray GetAtGeneric iid: {x}\n", .{@ptrToInt(&iid)});
         var hr = self.lpVtbl.*.GetAt(self, @intCast(w.UINT, uiIndex), &iid, &object);
-        std.debug.warn("IObjectArray GetAtGeneric hr: {x}\n", .{@bitCast(u32, hr)});
 
         if(hr == 0) {
             return @ptrCast(*T, @alignCast(@alignOf(T), object.?));
         } else {
-            std.debug.warn("IObjectArray GetAtGeneric hr: {x}\n", .{@bitCast(u32, hr)});
             return ObjectArrayError.Unknown;
         }
     }

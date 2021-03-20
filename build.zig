@@ -8,6 +8,7 @@ pub fn build(b: *Builder) void {
     exe.linkSystemLibrary("c");
     exe.linkSystemLibrary("gdi32");
     exe.linkSystemLibrary("user32");
+    exe.linkSystemLibrary("Shell32");
     exe.linkSystemLibrary("kernel32");
     exe.linkSystemLibrary("ComCtl32");
     exe.linkSystemLibrary("Ole32");
