@@ -1,7 +1,5 @@
+const w = @import("windows.zig");
 const std = @import("std");
-const w = = @cImport({
-    @cInclude("windows.h");
-});
 const com = @import("com.zig");
 
 const CLSID_VirtualDesktopManager: w.CLSID = w.CLSID {
@@ -19,12 +17,12 @@ const IID_IVirtualDesktopManager: w.IID = w.IID {
 };
 
 const IVirtualDesktopManagerVtbl = extern struct {
-    QueryInterface: extern fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
-    AddRef: extern fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
-    Release: extern fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
-    IsWindowOnCurrentVirtualDesktop: extern fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) callconv(.C) w.HRESULT,
-    GetWindowDesktopId: extern fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
-    MoveWindowToDesktop: extern fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
+    QueryInterface: fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    AddRef: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
+    Release: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
+    IsWindowOnCurrentVirtualDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) callconv(.C) w.HRESULT,
+    GetWindowDesktopId: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
+    MoveWindowToDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
 };
 
 const IVirtualDesktopManager = extern struct {

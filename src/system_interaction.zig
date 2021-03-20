@@ -1,7 +1,5 @@
+const w = @import("windows.zig");
 const std = @import("std");
-const w = @cImport({
-    @cInclude("windows.h");
-});
 const Allocator = std.mem.Allocator;
 
 pub fn toUtf16(str: []const u8) ![:0]u16 {

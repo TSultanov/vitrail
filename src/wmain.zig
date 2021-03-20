@@ -1,5 +1,5 @@
 usingnamespace @import("vitrail.zig");
-const MainWindow = @import("mainwindow.zig").MainWindow;
+const MainController = @import("maincontroller.zig").MainController;
 
 //pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
 pub export fn main() void {
@@ -18,8 +18,7 @@ pub export fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var main_window = MainWindow.create(hInstanceWinApi, &arena.allocator) catch unreachable;
-    main_window.window.system_window.show();
+    var main_window = MainController.init(hInstanceWinApi, &arena.allocator) catch unreachable;
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {

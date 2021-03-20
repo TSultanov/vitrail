@@ -1,7 +1,5 @@
+const w = @import("windows.zig");
 const std = @import("std");
-const w = = @cImport({
-    @cInclude("windows.h");
-});
 const com = @import("com.zig");
 
 const IID_IServiceProvider: w.IID = w.IID {
@@ -19,10 +17,10 @@ const CLSID_ImmersiveShell = w.CLSID {
 };
 
 const IServiceProviderVtbl = extern struct {
-    QueryInterface: extern fn (This: [*c]IServiceProvider, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
-    AddRef: extern fn (This: [*c]IServiceProvider) callconv(.C) w.ULONG,
-    Release: extern fn (This: [*c]IServiceProvider) callconv(.C) w.ULONG,
-    QueryService: extern fn (This: [*c]IServiceProvider, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryInterface: fn (This: [*c]IServiceProvider, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    AddRef: fn (This: [*c]IServiceProvider) callconv(.C) w.ULONG,
+    Release: fn (This: [*c]IServiceProvider) callconv(.C) w.ULONG,
+    QueryService: fn (This: [*c]IServiceProvider, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
 };
 
 pub const IServiceProvider = extern struct {

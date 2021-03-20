@@ -1,7 +1,5 @@
+const w = @import("windows.zig");
 const std = @import("std");
-const w = = @cImport({
-    @cInclude("windows.h");
-});
 const Layout = @import("layout.zig").Layout;
 const Box = @import("box.zig").Box;
 const Window = @import("window.zig").Window;

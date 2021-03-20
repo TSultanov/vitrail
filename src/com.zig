@@ -1,8 +1,5 @@
+const w = @import("windows.zig");
 const std = @import("std");
-const w = = @cImport({
-    @cInclude("windows.h");
-    @cInclude("commctrl.h");
-});
 pub const ComError = error {
     FailedToCreateComObject
 };
@@ -31,5 +28,5 @@ pub const CLSCTX_INPROC         = CLSCTX_INPROC_SERVER|CLSCTX_INPROC_HANDLER;
 pub const CLSCTX_SERVER         = CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER|CLSCTX_REMOTE_SERVER;
 pub const CLSCTX_ALL            = CLSCTX_SERVER|CLSCTX_INPROC_HANDLER;
 
-pub const REFIID = [*c]const w.IID;
-pub const REFGUID = [*c]const w.GUID;
+pub const REFIID = ?*const w.IID;
+pub const REFGUID = ?*const w.GUID;
