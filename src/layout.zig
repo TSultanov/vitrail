@@ -1,5 +1,7 @@
 const std = @import("std");
-const w = @import("win32").c;
+const w = = @cImport({
+    @cInclude("windows.h");
+});
 usingnamespace @import("window.zig");
 const Box = @import("box.zig").Box;
 const Allocator = std.mem.Allocator;

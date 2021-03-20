@@ -1,5 +1,7 @@
 const std = @import("std");
-const w = @import("win32").c;
+const w = = @cImport({
+    @cInclude("windows.h");
+});
 const com = @import("com.zig");
 const IServiceProvider = @import("immersiveshell.zig").IServiceProvider;
 const IObjectArray = @import("objectarray.zig").IObjectArray;

@@ -1,5 +1,7 @@
 const std = @import("std");
-const w = @import("win32").c;
+const w = = @cImport({
+    @cInclude("windows.h");
+});
 const Window = @import("window.zig").Window;
 const WindowParameters = @import("window.zig").WindowParameters;
 const WindowEventHandlers = @import("window.zig").WindowEventHandlers;

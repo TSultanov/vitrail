@@ -1,38 +1,24 @@
 usingnamespace @import("vitrail.zig");
 const MainWindow = @import("mainwindow.zig").MainWindow;
-const Button = @import("button.zig").Button;
 
-const tagINITCOMMONCONTROLSEX = extern struct {
-  dwSize: w.DWORD,
-  dwICC: w.DWORD
-};
-
-const INITCOMMONCONTROLSEX = tagINITCOMMONCONTROLSEX;
-const LPINITCOMMONCONTROLSEX = [*c]tagINITCOMMONCONTROLSEX;
-
-extern "Comctl32" fn InitCommonControlsEx(picce: [*c]INITCOMMONCONTROLSEX) callconv(.C) w.BOOL;
-
-pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
+//pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
+pub export fn main() void {
+    const hInstanceWinApi = w.GetModuleHandleW(null);//@ptrCast(w.HINSTANCE, @alignCast(4, hInstance));
     //const stdin = std.io.getStdIn().inStream();
     //_ = stdin.readByte() catch unreachable;
     var hr = w.CoInitializeEx(null, 0x2);
 
-    var picce = INITCOMMONCONTROLSEX {
-        .dwSize = @sizeOf(INITCOMMONCONTROLSEX),
+    var picce = w.INITCOMMONCONTROLSEX {
+        .dwSize = @sizeOf(w.INITCOMMONCONTROLSEX),
         .dwICC = 0xff
     };
 
-    _ = InitCommonControlsEx(&picce);
+    _ = w.InitCommonControlsEx(&picce);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var main_window = MainWindow.create(hInstance, &arena.allocator) catch unreachable;
-
-    var button = Button.create(hInstance, main_window.window.system_window, &arena.allocator) catch unreachable;
-    main_window.window.system_window.addChild(button.window.system_window) catch unreachable;
-
-    button.window.system_window.show();
+    var main_window = MainWindow.create(hInstanceWinApi, &arena.allocator) catch unreachable;
     main_window.window.system_window.show();
 
     var msg: w.MSG = undefined;
@@ -41,5 +27,5 @@ pub export fn WinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLi
         _ = w.DispatchMessageW(&msg);
     }
 
-    return 0;
+    return;// 0;
 }

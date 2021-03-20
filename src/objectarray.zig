@@ -1,5 +1,7 @@
 const std = @import("std");
-const w = @import("win32").c;
+const w = = @cImport({
+    @cInclude("windows.h");
+});
 const com = @import("com.zig");
 
 pub const ObjectArrayError = error {
