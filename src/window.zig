@@ -40,6 +40,7 @@ pub fn redraw(self: Self) !void {
 
 pub fn setSize(self: Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
     try w.mapFailure(w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOZORDER));
+    try self.resize();
 }
 
 pub fn getRect(self: Self) !w.RECT {
@@ -72,7 +73,19 @@ pub fn destroy(self: Self) !void {
     try w.mapFailure(w.DestroyWindow(self.hwnd));
 }
 
-pub const WindowParameters = struct { exStyle: w.DWORD = 0, className: [:0]u16 = toUtf16const("Vitrail"), title: [:0]u16 = toUtf16const("Window"), style: w.DWORD = w.WS_OVERLAPPEDWINDOW, x: c_int = 100, y: c_int = 100, width: c_int = 640, height: c_int = 480, parent: ?*Self = null, menu: w.HMENU = null, register_class: bool = true };
+pub const WindowParameters = struct {
+    exStyle: w.DWORD = 0,
+    className: [:0]u16 = toUtf16const("Vitrail"),
+    title: [:0]u16 = toUtf16const("Window"),
+    style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
+    x: c_int = 100,
+    y: c_int = 100,
+    width: c_int = 640,
+    height: c_int = 480,
+    parent: ?*Self = null,
+    menu: w.HMENU = null,
+    register_class: bool = true,
+};
 
 fn defaultHandler(window: Self) !void {}
 
@@ -85,11 +98,18 @@ pub const WindowEventHandlers = struct {
 };
 
 fn onResizeHandler(window: Self) !void {
-    for (window.children.items) |child| {
-        if (child.docked) {
-            try child.dock();
-        }
+    if(window.docked)
+    {
+        try window.dock();
     }
+
+    for (window.children.items) |child| {
+        try child.resize();
+    }
+}
+
+fn resize(self: Self) !void {
+    try self.event_handlers.onResize(self);
 }
 
 fn onPaintHandler(window: Self) !void {
@@ -167,7 +187,13 @@ pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHa
     children.* = std.ArrayList(*Self).init(allocator);
 
     var window = try allocator.create(Self);
-    window.* = Self{ .hwnd = hwnd, .hInstance = hInstance, .children = children, .event_handlers = event_handlers, .parent = window_parameters.parent };
+    window.* = Self {
+        .hwnd = hwnd,
+        .hInstance = hInstance,
+        .children = children,
+        .event_handlers = event_handlers,
+        .parent = window_parameters.parent,
+    };
 
     _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
     var font = w.GetStockObject(w.DEFAULT_GUI_FONT);
