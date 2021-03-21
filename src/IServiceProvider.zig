@@ -41,7 +41,7 @@ pub const IServiceProvider = extern struct {
 
     pub fn create() !*IServiceProvider {
         var serviceProvider: *IServiceProvider = undefined;
-        var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, com.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*c_void, @ptrToInt(&serviceProvider)));
+        var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, w.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*c_void, @ptrToInt(&serviceProvider)));
         if (hr == 0) {
             return serviceProvider;
         } else {

@@ -49,7 +49,7 @@ pub const IVirtualDesktopManager = extern struct {
 
     pub fn create() !*IVirtualDesktopManager {
         var virtualDesktopManager: *IVirtualDesktopManager = undefined;
-        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, com.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
+        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, w.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
         if (hr == 0) {
             return virtualDesktopManager;
         } else {
