@@ -13,13 +13,12 @@ pub const MainController = struct {
         try createWidgets(main_window, hInstance, allocator);
 
         main_window.window.show();
-        return @This() {
+        return @This(){
             .window = main_window,
         };
     }
-    
-    pub fn createWidgets(main_window: MainWindow, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !void
-    {
+
+    pub fn createWidgets(main_window: MainWindow, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !void {
         var desktopManager = try com.IVirtualDesktopManager.create();
         defer _ = desktopManager.Release();
         var serviceProvider = try com.IServiceProvider.create();
@@ -34,17 +33,16 @@ pub const MainController = struct {
 
         var desktops = desktopsNullable orelse unreachable;
         defer _ = desktops.Release();
-        
+
         var dCount: c_uint = undefined;
         var countHr = desktops.GetCount(&dCount);
-        std.debug.warn("Desktop count: {}, hr: {x}\n", .{dCount, countHr});
+        std.debug.warn("Desktop count: {}, hr: {x}\n", .{ dCount, countHr });
 
         var desktopsMap = std.hash_map.AutoHashMap(w.GUID, usize).init(allocator);
 
         var i: usize = 0;
-        while(i < dCount)
-        {
-            std.debug.warn("Desktop {} desktops: {x}\n", .{i, @ptrToInt(&desktops)});
+        while (i < dCount) {
+            std.debug.warn("Desktop {} desktops: {x}\n", .{ i, @ptrToInt(&desktops) });
             var desktop = try desktops.GetAtGeneric(i, com.IVirtualDesktop);
 
             std.debug.warn("desktop: {x}", .{desktop});
@@ -52,7 +50,7 @@ pub const MainController = struct {
             var desktopId: w.GUID = undefined;
             _ = desktop.GetID(&desktopId);
             try desktopsMap.put(desktopId, i);
-            std.debug.warn("{}: {}\n", .{i, desktopId});
+            std.debug.warn("{}: {}\n", .{ i, desktopId });
             i += 1;
         }
 
@@ -60,15 +58,14 @@ pub const MainController = struct {
 
         var windows = try si.getWindowList();
 
-        for(windows) |window| {
+        for (windows) |window| {
             var desktopId: w.GUID = undefined;
             _ = desktopManager.GetWindowDesktopId(window.hwnd, &desktopId);
 
-            if(desktopId.Data1 != 0 and desktopId.Data2 != 0 and desktopId.Data3 != 0)
-            {
+            if (desktopId.Data1 != 0 and desktopId.Data2 != 0 and desktopId.Data3 != 0) {
                 var desktopNumber = desktopsMap.get(desktopId);
 
-                std.debug.warn("Window \"{s}\", shouldShow: {any}, desktop {}\n", .{toUtf8(window.title, allocator), window.shouldShow, desktopNumber});
+                std.debug.warn("Window \"{s}\", shouldShow: {any}, desktop {}\n", .{ toUtf8(window.title, allocator), window.shouldShow, desktopNumber });
             }
         }
     }

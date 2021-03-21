@@ -2,18 +2,18 @@ const w = @import("windows.zig");
 const std = @import("std");
 const com = @import("com.zig");
 
-const CLSID_VirtualDesktopManager: w.CLSID = w.CLSID {
+const CLSID_VirtualDesktopManager: w.CLSID = w.CLSID{
     .Data1 = 0xaa509086,
     .Data2 = 0x5ca9,
     .Data3 = 0x4c25,
-    .Data4 = [8]u8 {0x8f, 0x95, 0x58, 0x9d, 0x3c, 0x07, 0xb4, 0x8a},
+    .Data4 = [8]u8{ 0x8f, 0x95, 0x58, 0x9d, 0x3c, 0x07, 0xb4, 0x8a },
 };
 
-const IID_IVirtualDesktopManager: w.IID = w.IID {
+const IID_IVirtualDesktopManager: w.IID = w.IID{
     .Data1 = 0xa5cd92ff,
     .Data2 = 0x29be,
     .Data3 = 0x454c,
-    .Data4 = [8]u8 {0x8d, 0x04, 0xd8, 0x28, 0x79, 0xfb, 0x3f, 0x1b},
+    .Data4 = [8]u8{ 0x8d, 0x04, 0xd8, 0x28, 0x79, 0xfb, 0x3f, 0x1b },
 };
 
 const IVirtualDesktopManagerVtbl = extern struct {
@@ -27,7 +27,7 @@ const IVirtualDesktopManagerVtbl = extern struct {
 
 pub const IVirtualDesktopManager = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerVtbl,
-        
+
     pub fn QueryInterface(self: *IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }

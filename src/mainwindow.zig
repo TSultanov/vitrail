@@ -10,10 +10,8 @@ fn onDestroyHandler(window: Window) !void {
 }
 
 pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !Self {
-    const windowConfig = Window.WindowParameters { .title = toUtf16const("MainWindow") };
-    const handlers = Window.WindowEventHandlers { .onDestroy = onDestroyHandler };
+    const windowConfig = Window.WindowParameters{ .title = toUtf16const("MainWindow") };
+    const handlers = Window.WindowEventHandlers{ .onDestroy = onDestroyHandler };
 
-    return Self {
-        .window = try Window.create(windowConfig, handlers, hInstance, allocator)
-    };
+    return Self{ .window = try Window.create(windowConfig, handlers, hInstance, allocator) };
 }

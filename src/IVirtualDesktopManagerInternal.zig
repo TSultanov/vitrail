@@ -5,26 +5,26 @@ const IServiceProvider = @import("IServiceProvider.zig").IServiceProvider;
 const IObjectArray = @import("IObjectArray.zig").IObjectArray;
 
 //{F31574D6-B682-4CDC-BD56-1827860ABEC6}
-const IID_IVirtualDesktopManagerInternal = w.IID {
+const IID_IVirtualDesktopManagerInternal = w.IID{
     .Data1 = 0xF31574D6,
     .Data2 = 0xB682,
     .Data3 = 0x4CDC,
-    .Data4 = [8]u8 {0xBD, 0x56, 0x18, 0x27, 0x86, 0x0A, 0xBE, 0xC6},
+    .Data4 = [8]u8{ 0xBD, 0x56, 0x18, 0x27, 0x86, 0x0A, 0xBE, 0xC6 },
 };
 
-const CLSID_VirtualDesktopAPI_Unknown = w.CLSID {
+const CLSID_VirtualDesktopAPI_Unknown = w.CLSID{
     .Data1 = 0xC5E0CDCA,
     .Data2 = 0x7B6E,
     .Data3 = 0x41B2,
-    .Data4 = [8]u8 {0x9F, 0xC4, 0xD9, 0x39, 0x75, 0xCC, 0x46, 0x7B},
+    .Data4 = [8]u8{ 0x9F, 0xC4, 0xD9, 0x39, 0x75, 0xCC, 0x46, 0x7B },
 };
 
 //{FF72FFDD-BE7E-43FC-9C03-AD81681E88E4}
-const IID_IVirtualDesktop = w.IID {
+const IID_IVirtualDesktop = w.IID{
     .Data1 = 0xFF72FFDD,
     .Data2 = 0xBE7E,
     .Data3 = 0x43FC,
-    .Data4 = [8]u8 {0x9C, 0x03, 0xAD, 0x81, 0x68, 0x1E, 0x88, 0xE4},
+    .Data4 = [8]u8{ 0x9C, 0x03, 0xAD, 0x81, 0x68, 0x1E, 0x88, 0xE4 },
 };
 
 const IApplicationView = extern struct {
@@ -64,16 +64,16 @@ const IVirtualDesktopManagerInternalVtbl = extern struct {
     QueryInterface: fn (This: [*c]IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
     AddRef: fn (This: [*c]IVirtualDesktopManagerInternal) callconv(.C) w.ULONG,
     Release: fn (This: [*c]IVirtualDesktopManagerInternal) callconv(.C) w.ULONG,
-    GetCount: fn(This: [*c]IVirtualDesktopManagerInternal, pCount: [*c]c_int) callconv(.C) w.HRESULT,
-    MoveViewDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    CanViewMoveDesktops: fn(This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pfCanViewMoveDesktops: [*c]c_int) callconv(.C) w.HRESULT,
-    GetCurrentDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, desktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    GetDesktops: fn(This: [*c]IVirtualDesktopManagerInternal, ppDesktops: [*c][*c]IObjectArray) callconv(.C) w.HRESULT,
-    GetAdjacentDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, pDesktopReference: [*c]IVirtualDesktop, uDirection: AdjacentDesktop, ppAdjacentDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    SwitchDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    CreateDesktopW: fn(This: [*c]IVirtualDesktopManagerInternal, ppNewDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    RemoveDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, pRemove: [*c]IVirtualDesktop, pFallbackDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
-    FindDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, desktopId: [*c]w.GUID, ppDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    GetCount: fn (This: [*c]IVirtualDesktopManagerInternal, pCount: [*c]c_int) callconv(.C) w.HRESULT,
+    MoveViewDesktop: fn (This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    CanViewMoveDesktops: fn (This: [*c]IVirtualDesktopManagerInternal, pView: [*c]IApplicationView, pfCanViewMoveDesktops: [*c]c_int) callconv(.C) w.HRESULT,
+    GetCurrentDesktop: fn (This: [*c]IVirtualDesktopManagerInternal, desktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    GetDesktops: fn (This: [*c]IVirtualDesktopManagerInternal, ppDesktops: [*c][*c]IObjectArray) callconv(.C) w.HRESULT,
+    GetAdjacentDesktop: fn (This: [*c]IVirtualDesktopManagerInternal, pDesktopReference: [*c]IVirtualDesktop, uDirection: AdjacentDesktop, ppAdjacentDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    SwitchDesktop: fn (This: [*c]IVirtualDesktopManagerInternal, pDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    CreateDesktopW: fn (This: [*c]IVirtualDesktopManagerInternal, ppNewDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    RemoveDesktop: fn (This: [*c]IVirtualDesktopManagerInternal, pRemove: [*c]IVirtualDesktop, pFallbackDesktop: [*c]IVirtualDesktop) callconv(.C) w.HRESULT,
+    FindDesktop: fn (This: [*c]IVirtualDesktopManagerInternal, desktopId: [*c]w.GUID, ppDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
 };
 
 pub const IVirtualDesktopManagerInternal = extern struct {
@@ -130,4 +130,3 @@ const AdjacentDesktop = enum(c_int) {
     LeftDirection = 3,
     RightDirection = 4,
 };
-

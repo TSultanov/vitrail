@@ -10,7 +10,7 @@ docked: bool = false,
 parent: ?*Self,
 
 pub fn dock(self: Self) void {
-    if(self.parent) |parent| {
+    if (self.parent) |parent| {
         var rect = parent.getRect();
         self.setSize(0, 0, rect.right - rect.left, rect.bottom - rect.top);
     }
@@ -52,7 +52,7 @@ pub fn getClientRect(self: Self) w.RECT {
     var rect: w.RECT = undefined;
     _ = w.GetClientRect(self.hwnd, &rect);
     return rect;
-}    
+}
 
 pub fn addChild(self: Self, child: Self) !void {
     try self.children.append(child);
@@ -72,34 +72,21 @@ pub fn destroy(self: Self) void {
     _ = w.DestroyWindow(self.hwnd);
 }
 
-pub const WindowParameters = struct {
-    exStyle: w.DWORD = 0,
-    className: [:0]u16 = toUtf16const("Vitrail"),
-    title: [:0]u16 = toUtf16const("Window"),
-    style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
-    x: c_int = 100,
-    y: c_int = 100,
-    width: c_int = 640,
-    height: c_int = 480,
-    parent: ?*Self = null,
-    menu: w.HMENU = null,
-    register_class: bool = true
-};
+pub const WindowParameters = struct { exStyle: w.DWORD = 0, className: [:0]u16 = toUtf16const("Vitrail"), title: [:0]u16 = toUtf16const("Window"), style: w.DWORD = w.WS_OVERLAPPEDWINDOW, x: c_int = 100, y: c_int = 100, width: c_int = 640, height: c_int = 480, parent: ?*Self = null, menu: w.HMENU = null, register_class: bool = true };
 
 fn defaultHandler(window: Self) !void {}
 
 pub const WindowEventHandlers = struct {
     onClick: fn (window: Self) anyerror!void = defaultHandler,
     onResize: fn (window: Self) anyerror!void = onResizeHandler,
-    onCreate: fn(window: Self) anyerror!void = defaultHandler,
+    onCreate: fn (window: Self) anyerror!void = defaultHandler,
     onDestroy: fn (window: Self) anyerror!void = defaultHandler,
     onPaint: fn (window: Self) anyerror!void = onPaintHandler,
 };
 
 fn onResizeHandler(window: Self) !void {
     for (window.children.items) |child| {
-        if(child.docked)
-        {
+        if (child.docked) {
             child.dock();
         }
     }
@@ -118,7 +105,7 @@ fn onPaintHandler(window: Self) !void {
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
     var wLong = w.GetWindowLongPtr(hwnd, w.GWLP_USERDATA);
-    if(wLong == 0) {
+    if (wLong == 0) {
         return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
 
@@ -128,7 +115,7 @@ fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) ca
 }
 
 pub fn wndProc(self: Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w.LRESULT {
-    switch(uMsg) {
+    switch (uMsg) {
         w.WM_SIZE => {
             try self.event_handlers.onResize(self);
             return 0;
@@ -151,12 +138,12 @@ pub fn wndProc(self: Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w.
         },
         else => {
             return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);
-        }
+        },
     }
 }
 
 pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
-    if(window_parameters.register_class) {
+    if (window_parameters.register_class) {
         const wc: w.WNDCLASSW = .{
             .style = 0,
             .lpfnWndProc = WindowProc,
@@ -180,13 +167,7 @@ pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHa
     children.* = std.ArrayList(*Self).init(allocator);
 
     var window = try allocator.create(Self);
-    window.* = Self {
-        .hwnd = hwnd,
-        .hInstance = hInstance,
-        .children = children,
-        .event_handlers = event_handlers,
-        .parent = window_parameters.parent
-    };
+    window.* = Self{ .hwnd = hwnd, .hInstance = hInstance, .children = children, .event_handlers = event_handlers, .parent = window_parameters.parent };
 
     _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
     var font = w.GetStockObject(w.DEFAULT_GUI_FONT);

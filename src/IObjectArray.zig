@@ -2,10 +2,7 @@ const w = @import("windows.zig");
 const std = @import("std");
 const com = @import("com.zig");
 
-pub const ObjectArrayError = error {
-    InvalidType,
-    Unknown
-};
+pub const ObjectArrayError = error{ InvalidType, Unknown };
 
 pub const IObjectArrayVtbl = extern struct {
     QueryInterface: fn (This: [*c]IObjectArray, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
@@ -17,7 +14,7 @@ pub const IObjectArrayVtbl = extern struct {
 
 pub const IObjectArray = extern struct {
     lpVtbl: [*c]IObjectArrayVtbl,
-    
+
     pub fn QueryInterface(self: *IObjectArray, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }
@@ -36,7 +33,7 @@ pub const IObjectArray = extern struct {
         var object: ?*c_void = undefined;
         var hr = self.lpVtbl.*.GetAt(self, @intCast(w.UINT, uiIndex), &iid, &object);
 
-        if(hr == 0) {
+        if (hr == 0) {
             return @ptrCast(*T, @alignCast(@alignOf(T), object.?));
         } else {
             return ObjectArrayError.Unknown;

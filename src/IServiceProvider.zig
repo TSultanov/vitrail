@@ -2,18 +2,18 @@ const w = @import("windows.zig");
 const std = @import("std");
 const com = @import("com.zig");
 
-const IID_IServiceProvider: w.IID = w.IID {
+const IID_IServiceProvider: w.IID = w.IID{
     .Data1 = 0x6D5140C1,
     .Data2 = 0x7436,
     .Data3 = 0x11CE,
-    .Data4 = [8]u8 {0x80, 0x34, 0x00, 0xAA, 0x00, 0x60, 0x09, 0xFA},
+    .Data4 = [8]u8{ 0x80, 0x34, 0x00, 0xAA, 0x00, 0x60, 0x09, 0xFA },
 };
 
-const CLSID_ImmersiveShell = w.CLSID {
+const CLSID_ImmersiveShell = w.CLSID{
     .Data1 = 0xC2F03A33,
     .Data2 = 0x21F5,
     .Data3 = 0x47FA,
-    .Data4 = [8]u8 {0xB4, 0xBB, 0x15, 0x63, 0x62, 0xA2, 0xF2, 0x39},
+    .Data4 = [8]u8{ 0xB4, 0xBB, 0x15, 0x63, 0x62, 0xA2, 0xF2, 0x39 },
 };
 
 const IServiceProviderVtbl = extern struct {
@@ -39,7 +39,6 @@ pub const IServiceProvider = extern struct {
         return self.lpVtbl.*.QueryService(self, guidService, riid, ppvObject);
     }
 
-    
     pub fn create() !*IServiceProvider {
         var serviceProvider: *IServiceProvider = undefined;
         var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, com.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*c_void, @ptrToInt(&serviceProvider)));
