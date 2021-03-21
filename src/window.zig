@@ -119,7 +119,7 @@ fn onPaintHandler(window: Self) !void {
     defer _ = w.ReleaseDC(window.hwnd, hdc);
     var color = w.GetSysColor(w.COLOR_WINDOW);
     var hbrushBg = w.CreateSolidBrush(color);
-    defer w.mapFailure(w.DeleteObject(hbrushBg)) catch unreachable;
+    defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
