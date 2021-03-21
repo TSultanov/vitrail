@@ -1,5 +1,7 @@
 const w = @import("windows.zig");
 const std = @import("std");
+const com = @import("ComInterface.zig");
+
 const Allocator = std.mem.Allocator;
 
 pub fn toUtf16(str: []const u8) ![:0]u16 {
@@ -23,6 +25,7 @@ pub const DesktopWindow = struct {
     class: []u16,
     icon: w.HICON_a1,
     shouldShow: bool,
+    desktopNumber: ?usize
 };
 
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
@@ -53,29 +56,60 @@ pub const SystemInteraction = struct {
     hInstance: w.HINSTANCE,
 
     pub fn getWindowList(self: @This()) ![]DesktopWindow {
+        var desktopManager = try com.IVirtualDesktopManager.create();
+        defer _ = desktopManager.Release();
+        var serviceProvider = try com.IServiceProvider.create();
+        defer _ = serviceProvider.Release();
+        var desktopManagerInternal = try com.IVirtualDesktopManagerInternal.create(serviceProvider);
+        defer _ = desktopManagerInternal.Release();
+
+        var desktopsNullable: ?*com.IObjectArray = undefined;
+        var desktopsHr = desktopManagerInternal.GetDesktops(&desktopsNullable);
+
+        var desktops = desktopsNullable orelse unreachable;
+        defer _ = desktops.Release();
+
+        var dCount: c_uint = undefined;
+        var countHr = desktops.GetCount(&dCount);
+
+        var desktopsMap = std.hash_map.AutoHashMap(w.GUID, usize).init(self.allocator);
+
+        var i: usize = 0;
+        while (i < dCount) {
+            var desktop = try desktops.GetAtGeneric(i, com.IVirtualDesktop);
+            var desktopId: w.GUID = undefined;
+            _ = desktop.GetID(&desktopId);
+            try desktopsMap.put(desktopId, i);
+            i += 1;
+        }   
+
         var hwndList = std.ArrayList(w.HWND).init(self.allocator);
         _ = w.EnumWindows(enumWindowProc, @intCast(c_longlong, @ptrToInt(&hwndList)));
         var windowList = std.ArrayList(DesktopWindow).init(self.allocator);
         for (hwndList.items) |hwnd| {
-            try windowList.append(try self.hwndToDesktopWindow(hwnd));
+            var shouldShow = try self.shouldShowWindow(hwnd);
+            var title = try self.getWindowTitle(hwnd);
+            var class = try self.getWindowClass(hwnd);
+            var icon: w.HICON_a1 = try self.getWindowIcon(hwnd);
+
+            var desktopId: w.GUID = undefined;
+            _ = desktopManager.GetWindowDesktopId(hwnd, &desktopId);
+
+            if(shouldShow)
+            {
+                try windowList.append(DesktopWindow{
+                    .hwnd = hwnd,
+                    .title = title,
+                    .class = class,
+                    .icon = icon,
+                    .shouldShow = shouldShow,
+                    .desktopNumber = desktopsMap.get(desktopId)
+                });
+            }
         }
         return windowList.items;
     }
 
-    fn hwndToDesktopWindow(self: @This(), hwnd: w.HWND) !DesktopWindow {
-        var shouldShow = self.shouldShowWindow(hwnd);
-        var title = try self.getWindowTitle(hwnd);
-        var class = try self.getWindowClass(hwnd);
-        var icon: w.HICON_a1 = try self.getWindowIcon(hwnd);
-        var dwindow = DesktopWindow{
-            .hwnd = hwnd,
-            .title = title,
-            .class = class,
-            .icon = icon,
-            .shouldShow = try shouldShow,
-        };
-        return dwindow;
-    }
 
     fn getWindowTitle(self: @This(), hwnd: w.HWND) ![]u16 {
         var title: []u16 = try self.allocator.alloc(u16, 512);
