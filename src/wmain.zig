@@ -1,5 +1,5 @@
 usingnamespace @import("vitrail.zig");
-const MainController = @import("maincontroller.zig").MainController;
+const MainController = @import("MainController.zig");
 
 //pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
 pub export fn main() void {
