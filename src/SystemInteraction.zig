@@ -19,14 +19,7 @@ pub fn toUtf8(str: []u16, allocator: *Allocator) ![]u8 {
     return try std.unicode.utf16leToUtf8Alloc(allocator, str);
 }
 
-pub const DesktopWindow = struct {
-    hwnd: w.HWND,
-    title: []u16,
-    class: []u16,
-    icon: w.HICON_a1,
-    shouldShow: bool,
-    desktopNumber: ?usize
-};
+pub const DesktopWindow = struct { hwnd: w.HWND, title: []u16, class: []u16, icon: w.HICON_a1, shouldShow: bool, desktopNumber: ?usize };
 
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
     var windows: *std.ArrayList(w.HWND) = @intToPtr(*std.ArrayList(w.HWND), @intCast(usize, lParam));
@@ -81,7 +74,7 @@ pub const SystemInteraction = struct {
             _ = desktop.GetID(&desktopId);
             try desktopsMap.put(desktopId, i);
             i += 1;
-        }   
+        }
 
         var hwndList = std.ArrayList(w.HWND).init(self.allocator);
         _ = w.EnumWindows(enumWindowProc, @intCast(c_longlong, @ptrToInt(&hwndList)));
@@ -95,21 +88,12 @@ pub const SystemInteraction = struct {
             var desktopId: w.GUID = undefined;
             _ = desktopManager.GetWindowDesktopId(hwnd, &desktopId);
 
-            if(shouldShow)
-            {
-                try windowList.append(DesktopWindow{
-                    .hwnd = hwnd,
-                    .title = title,
-                    .class = class,
-                    .icon = icon,
-                    .shouldShow = shouldShow,
-                    .desktopNumber = desktopsMap.get(desktopId)
-                });
+            if (shouldShow) {
+                try windowList.append(DesktopWindow{ .hwnd = hwnd, .title = title, .class = class, .icon = icon, .shouldShow = shouldShow, .desktopNumber = desktopsMap.get(desktopId) });
             }
         }
         return windowList.items;
     }
-
 
     fn getWindowTitle(self: @This(), hwnd: w.HWND) ![]u16 {
         var title: []u16 = try self.allocator.alloc(u16, 512);
