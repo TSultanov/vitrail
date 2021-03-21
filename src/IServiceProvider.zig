@@ -38,14 +38,15 @@ pub const IServiceProvider = extern struct {
     pub fn QueryService(self: *IServiceProvider, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
         return self.lpVtbl.*.QueryService(self, guidService, riid, ppvObject);
     }
-};
 
-pub fn create() !*IServiceProvider {
-    var serviceProvider: *IServiceProvider = undefined;
-    var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, com.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*c_void, @ptrToInt(&serviceProvider)));
-    if (hr == 0) {
-        return serviceProvider;
-    } else {
-        return com.ComError.FailedToCreateComObject;
+    
+    pub fn create() !*IServiceProvider {
+        var serviceProvider: *IServiceProvider = undefined;
+        var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, com.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*c_void, @ptrToInt(&serviceProvider)));
+        if (hr == 0) {
+            return serviceProvider;
+        } else {
+            return com.ComError.FailedToCreateComObject;
+        }
     }
-}
+};

@@ -1,5 +1,5 @@
 usingnamespace @import("vitrail.zig");
-pub const Window = @import("window.zig");
+pub const Window = @import("Window.zig");
 
 const Self = @This();
 

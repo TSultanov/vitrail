@@ -25,7 +25,7 @@ const IVirtualDesktopManagerVtbl = extern struct {
     MoveWindowToDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
 };
 
-const IVirtualDesktopManager = extern struct {
+pub const IVirtualDesktopManager = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerVtbl,
         
     pub fn QueryInterface(self: *IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
@@ -46,14 +46,14 @@ const IVirtualDesktopManager = extern struct {
     pub fn MoveWindowToDesktop(self: *IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
         return self.lpVtbl.*.MoveWindowToDesktop(self, topLevelWindow, desktopId);
     }
-};
 
-pub fn create() !*IVirtualDesktopManager {
-    var virtualDesktopManager: *IVirtualDesktopManager = undefined;
-    var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, com.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
-    if (hr == 0) {
-        return virtualDesktopManager;
-    } else {
-        return com.ComError.FailedToCreateComObject;
+    pub fn create() !*IVirtualDesktopManager {
+        var virtualDesktopManager: *IVirtualDesktopManager = undefined;
+        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, com.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
+        if (hr == 0) {
+            return virtualDesktopManager;
+        } else {
+            return com.ComError.FailedToCreateComObject;
+        }
     }
-}
+};

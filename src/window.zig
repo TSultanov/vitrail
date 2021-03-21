@@ -6,10 +6,14 @@ hwnd: w.HWND,
 hInstance: w.HINSTANCE,
 children: *std.ArrayList(*Self),
 event_handlers: WindowEventHandlers,
+docked: bool = false,
+parent: ?*Self,
 
-pub fn dockChild(self: Self, child: Self) void {
-    var rect = self.getRect();
-    child.setSize(0, 0, rect.right - rect.left, rect.bottom - rect.top);
+pub fn dock(self: Self) void {
+    if(self.parent) |parent| {
+        var rect = parent.getRect();
+        self.setSize(0, 0, rect.right - rect.left, rect.bottom - rect.top);
+    }
 }
 
 pub fn show(self: Self) void {
@@ -55,7 +59,8 @@ pub fn addChild(self: Self, child: Self) !void {
     child.setParent(self);
 }
 
-pub fn setParent(self: Self, parent: Self) void {
+pub fn setParent(self: *Self, parent: Self) void {
+    self.parent = parent;
     _ = w.SetParent(self.hwnd, parent.hwnd);
 }
 
@@ -76,7 +81,7 @@ pub const WindowParameters = struct {
     y: c_int = 100,
     width: c_int = 640,
     height: c_int = 480,
-    parent: ?Self = null,
+    parent: ?*Self = null,
     menu: w.HMENU = null,
     register_class: bool = true
 };
@@ -92,7 +97,12 @@ pub const WindowEventHandlers = struct {
 };
 
 fn onResizeHandler(window: Self) !void {
-
+    for (window.children.items) |child| {
+        if(child.docked)
+        {
+            child.dock();
+        }
+    }
 }
 
 fn onPaintHandler(window: Self) !void {
@@ -174,7 +184,8 @@ pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHa
         .hwnd = hwnd,
         .hInstance = hInstance,
         .children = children,
-        .event_handlers = event_handlers
+        .event_handlers = event_handlers,
+        .parent = window_parameters.parent
     };
 
     _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));

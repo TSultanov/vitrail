@@ -1,8 +1,8 @@
 const w = @import("windows.zig");
 const std = @import("std");
 const com = @import("com.zig");
-const IServiceProvider = @import("immersiveshell.zig").IServiceProvider;
-const IObjectArray = @import("objectarray.zig").IObjectArray;
+const IServiceProvider = @import("IServiceProvider.zig").IServiceProvider;
+const IObjectArray = @import("IObjectArray.zig").IObjectArray;
 
 //{F31574D6-B682-4CDC-BD56-1827860ABEC6}
 const IID_IVirtualDesktopManagerInternal = w.IID {
@@ -76,7 +76,7 @@ const IVirtualDesktopManagerInternalVtbl = extern struct {
     FindDesktop: fn(This: [*c]IVirtualDesktopManagerInternal, desktopId: [*c]w.GUID, ppDesktop: [*c][*c]IVirtualDesktop) callconv(.C) w.HRESULT,
 };
 
-const IVirtualDesktopManagerInternal = extern struct {
+pub const IVirtualDesktopManagerInternal = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerInternalVtbl,
     iid: w.IID = IID_IVirtualDesktopManagerInternal,
 
@@ -113,6 +113,17 @@ const IVirtualDesktopManagerInternal = extern struct {
     pub fn RemoveDesktop(self: *IVirtualDesktopManagerInternal, pRemove: [*c]IVirtualDesktop, pFallbackDesktop: [*c]IVirtualDesktop) w.HRESULT {
         return self.lpVtbl.*.RemoveDesktop(self, pRemove, pFallbackDesktop);
     }
+
+    pub fn create(serviceProvider: *IServiceProvider) !*IVirtualDesktopManagerInternal {
+        var virtualDesktopManagerInternal: *IVirtualDesktopManagerInternal = undefined;
+        var hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &IID_IVirtualDesktopManagerInternal, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManagerInternal)));
+        if (hr == 0) {
+            return virtualDesktopManagerInternal;
+        } else {
+            std.debug.warn("virtualDesktopManagerInternal hr: {x}\n", .{@bitCast(u32, hr)});
+            return com.ComError.FailedToCreateComObject;
+        }
+    }
 };
 
 const AdjacentDesktop = enum(c_int) {
@@ -120,13 +131,3 @@ const AdjacentDesktop = enum(c_int) {
     RightDirection = 4,
 };
 
-pub fn create(serviceProvider: *IServiceProvider) !*IVirtualDesktopManagerInternal {
-    var virtualDesktopManagerInternal: *IVirtualDesktopManagerInternal = undefined;
-    var hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &IID_IVirtualDesktopManagerInternal, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManagerInternal)));
-    if (hr == 0) {
-        return virtualDesktopManagerInternal;
-    } else {
-        std.debug.warn("virtualDesktopManagerInternal hr: {x}\n", .{@bitCast(u32, hr)});
-        return com.ComError.FailedToCreateComObject;
-    }
-}

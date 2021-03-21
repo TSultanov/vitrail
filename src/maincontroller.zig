@@ -1,15 +1,8 @@
 usingnamespace @import("vitrail.zig");
-const MainWindow = @import("mainwindow.zig");
-//const Button = @import("button.zig").Button;
-
-const virtualdesktopmanager = @import("virtualdesktopmanager.zig");
-const virtualdesktopmanagerinternal = @import("virtualdesktopmanagerinternal.zig");
-const immersiveshell = @import("immersiveshell.zig");
-const IVirtualDesktop = virtualdesktopmanagerinternal.IVirtualDesktop;
-const IObjectArray = @import("objectarray.zig").IObjectArray;
-
-const system_interaction = @import("system_interaction.zig");
-
+const com = @import("ComInterface.zig");
+const MainWindow = @import("MainWindow.zig");
+const Button = @import("Button.zig");
+const SystemInteraction = @import("SystemInteraction.zig");
 
 pub const MainController = struct {
     window: MainWindow,
@@ -27,14 +20,14 @@ pub const MainController = struct {
     
     pub fn createWidgets(main_window: MainWindow, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !void
     {
-        var desktopManager = try virtualdesktopmanager.create();
+        var desktopManager = try com.IVirtualDesktopManager.create();
         defer _ = desktopManager.Release();
-        var serviceProvider = try immersiveshell.create();
+        var serviceProvider = try com.IServiceProvider.create();
         defer _ = serviceProvider.Release();
-        var desktopManagerInternal = try virtualdesktopmanagerinternal.create(serviceProvider);
+        var desktopManagerInternal = try com.IVirtualDesktopManagerInternal.create(serviceProvider);
         defer _ = desktopManagerInternal.Release();
 
-        var desktopsNullable: ?*IObjectArray = undefined;
+        var desktopsNullable: ?*com.IObjectArray = undefined;
         var desktopsHr = desktopManagerInternal.GetDesktops(&desktopsNullable);
 
         std.debug.warn("hr: {x}\n", .{desktopsHr});
@@ -52,7 +45,7 @@ pub const MainController = struct {
         while(i < dCount)
         {
             std.debug.warn("Desktop {} desktops: {x}\n", .{i, @ptrToInt(&desktops)});
-            var desktop = try desktops.GetAtGeneric(i, IVirtualDesktop);
+            var desktop = try desktops.GetAtGeneric(i, com.IVirtualDesktop);
 
             std.debug.warn("desktop: {x}", .{desktop});
 
@@ -63,7 +56,7 @@ pub const MainController = struct {
             i += 1;
         }
 
-        var si = system_interaction.init(hInstance, allocator);
+        var si = SystemInteraction.init(hInstance, allocator);
 
         var windows = try si.getWindowList();
 
