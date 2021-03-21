@@ -119,8 +119,8 @@ fn onPaintHandler(window: Self) !void {
     defer _ = w.ReleaseDC(window.hwnd, hdc);
     var color = w.GetSysColor(w.COLOR_WINDOW);
     var hbrushBg = w.CreateSolidBrush(color);
+    defer w.mapFailure(w.DeleteObject(hbrushBg)) catch unreachable;
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
-    try w.mapFailure(w.DeleteObject(hbrushBg));
 }
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
