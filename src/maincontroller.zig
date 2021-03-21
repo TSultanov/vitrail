@@ -1,6 +1,6 @@
 usingnamespace @import("vitrail.zig");
-const MainWindow = @import("mainwindow.zig").MainWindow;
-const Button = @import("button.zig").Button;
+const MainWindow = @import("mainwindow.zig");
+//const Button = @import("button.zig").Button;
 
 const virtualdesktopmanager = @import("virtualdesktopmanager.zig");
 const virtualdesktopmanagerinternal = @import("virtualdesktopmanagerinternal.zig");
@@ -12,20 +12,20 @@ const system_interaction = @import("system_interaction.zig");
 
 
 pub const MainController = struct {
-    window: *MainWindow,
+    window: MainWindow,
 
     pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !MainController {
         var main_window = try MainWindow.create(hInstance, allocator);
 
         try createWidgets(main_window, hInstance, allocator);
 
-        main_window.window.system_window.show();
+        main_window.window.show();
         return @This() {
             .window = main_window,
         };
     }
     
-    pub fn createWidgets(main_window: *MainWindow, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !void
+    pub fn createWidgets(main_window: MainWindow, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !void
     {
         var desktopManager = try virtualdesktopmanager.create();
         defer _ = desktopManager.Release();

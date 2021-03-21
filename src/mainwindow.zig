@@ -1,19 +1,19 @@
 usingnamespace @import("vitrail.zig");
-pub const Window = @import("window.zig").Window;
+pub const Window = @import("window.zig");
 
-pub const MainWindow = struct {
-    window: *Window(MainWindow),
+const Self = @This();
 
-    fn onDestroyHandler(widget: *MainWindow) !void {
-        _ = w.PostQuitMessage(0);
-    }
+window: *Window,
 
-    pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*MainWindow {
-        const windowConfig = Window(MainWindow).WindowParameters { .title = toUtf16const("MainWindow") };
-        const handlers = Window(MainWindow).WindowEventHandlers { .onDestroy = onDestroyHandler };
+fn onDestroyHandler(window: Window) !void {
+    _ = w.PostQuitMessage(0);
+}
 
-        var widget = try Window(MainWindow).create(windowConfig, handlers, hInstance, allocator);
+pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !Self {
+    const windowConfig = Window.WindowParameters { .title = toUtf16const("MainWindow") };
+    const handlers = Window.WindowEventHandlers { .onDestroy = onDestroyHandler };
 
-        return widget;
-    }
-};
+    return Self {
+        .window = try Window.create(windowConfig, handlers, hInstance, allocator)
+    };
+}
