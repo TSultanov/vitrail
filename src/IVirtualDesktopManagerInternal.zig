@@ -1,7 +1,7 @@
 const w = @import("windows.zig");
 const std = @import("std");
 const com = @import("com.zig");
-const IServiceProvider = @import("IServiceProvider.zig").IServiceProvider;
+const IServiceProvider = @import("IServiceProvider.zig");
 const IObjectArray = @import("IObjectArray.zig").IObjectArray;
 
 //{F31574D6-B682-4CDC-BD56-1827860ABEC6}
