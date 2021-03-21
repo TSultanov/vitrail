@@ -9,23 +9,23 @@ event_handlers: WindowEventHandlers,
 docked: bool = false,
 parent: ?*Self,
 
-pub fn dock(self: Self) void {
+pub fn dock(self: Self) !void {
     if (self.parent) |parent| {
-        var rect = parent.getRect();
-        self.setSize(0, 0, rect.right - rect.left, rect.bottom - rect.top);
+        var rect = try parent.getRect();
+        try self.setSize(0, 0, rect.right - rect.left, rect.bottom - rect.top);
     }
 }
 
-pub fn show(self: Self) void {
-    _ = w.ShowWindow(self.hwnd, w.SW_SHOW);
+pub fn show(self: Self) bool {
+    return w.ShowWindow(self.hwnd, w.SW_SHOW) != 0;
 }
 
-pub fn hide(self: Self) void {
-    _ = w.ShowWindow(self.hwnd, w.SW_HIDE);
+pub fn hide(self: Self) bool {
+    return w.ShowWindow(self.hwnd, w.SW_HIDE) != 0;
 }
 
 pub fn update(self: Self) void {
-    _ = w.UpdateWindow(self.hwnd);
+    try w.mapFailure(w.UpdateWindow(self.hwnd));
 }
 
 pub fn getRgn(self: Self) w.HRGN {
@@ -34,42 +34,42 @@ pub fn getRgn(self: Self) w.HRGN {
     return rgn;
 }
 
-pub fn redraw(self: Self) void {
-    _ = w.RedrawWindow(self.hwnd, null, null, w.RDW_INVALIDATE | w.RDW_UPDATENOW);
+pub fn redraw(self: Self) !void {
+    try w.mapFailure(w.RedrawWindow(self.hwnd, null, null, w.RDW_INVALIDATE | w.RDW_UPDATENOW));
 }
 
-pub fn setSize(self: Self, x: c_int, y: c_int, cx: c_int, cy: c_int) void {
-    _ = w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOZORDER);
+pub fn setSize(self: Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
+    try w.mapFailure(w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOZORDER));
 }
 
-pub fn getRect(self: Self) w.RECT {
+pub fn getRect(self: Self) !w.RECT {
     var rect: w.RECT = undefined;
-    _ = w.GetWindowRect(self.hwnd, &rect);
+    try w.mapFailure(w.GetWindowRect(self.hwnd, &rect));
     return rect;
 }
 
 pub fn getClientRect(self: Self) w.RECT {
     var rect: w.RECT = undefined;
-    _ = w.GetClientRect(self.hwnd, &rect);
+    try w.mapFailure(w.GetClientRect(self.hwnd, &rect));
     return rect;
 }
 
 pub fn addChild(self: Self, child: Self) !void {
     try self.children.append(child);
-    child.setParent(self);
+    try child.setParent(self);
 }
 
-pub fn setParent(self: *Self, parent: Self) void {
+pub fn setParent(self: *Self, parent: Self) !void {
     self.parent = parent;
-    _ = w.SetParent(self.hwnd, parent.hwnd);
+    try w.mapFailure(w.SetParent(self.hwnd, parent.hwnd));
 }
 
-pub fn focus(self: Self) void {
-    _ = w.SetFocus(self.hwnd);
+pub fn focus(self: Self) !void {
+    try w.mapFailure(w.SetFocus(self.hwnd));
 }
 
-pub fn destroy(self: Self) void {
-    _ = w.DestroyWindow(self.hwnd);
+pub fn destroy(self: Self) !void {
+    try w.mapFailure(w.DestroyWindow(self.hwnd));
 }
 
 pub const WindowParameters = struct { exStyle: w.DWORD = 0, className: [:0]u16 = toUtf16const("Vitrail"), title: [:0]u16 = toUtf16const("Window"), style: w.DWORD = w.WS_OVERLAPPEDWINDOW, x: c_int = 100, y: c_int = 100, width: c_int = 640, height: c_int = 480, parent: ?*Self = null, menu: w.HMENU = null, register_class: bool = true };
@@ -87,7 +87,7 @@ pub const WindowEventHandlers = struct {
 fn onResizeHandler(window: Self) !void {
     for (window.children.items) |child| {
         if (child.docked) {
-            child.dock();
+            try child.dock();
         }
     }
 }
@@ -99,8 +99,8 @@ fn onPaintHandler(window: Self) !void {
     defer _ = w.ReleaseDC(window.hwnd, hdc);
     var color = w.GetSysColor(w.COLOR_WINDOW);
     var hbrushBg = w.CreateSolidBrush(color);
-    defer _ = w.DeleteObject(hbrushBg);
-    _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
+    try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
+    try w.mapFailure(w.DeleteObject(hbrushBg));
 }
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
@@ -157,7 +157,7 @@ pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHa
             .lpszClassName = window_parameters.className,
         };
 
-        _ = w.RegisterClassW(&wc);
+        try w.mapErr(w.RegisterClassW(&wc));
     }
 
     var parent: w.HWND = if (window_parameters.parent) |p| p.hwnd else null;

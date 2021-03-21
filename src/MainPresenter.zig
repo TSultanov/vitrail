@@ -13,7 +13,7 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !Self {
 
     try createWidgets(main_window, hInstance, allocator);
 
-    main_window.window.show();
+    _ = main_window.window.show();
     return Self{
         .window = main_window,
     };
