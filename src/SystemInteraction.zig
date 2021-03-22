@@ -96,7 +96,7 @@ pub const SystemInteraction = struct {
     }
 
     fn getWindowTitle(self: @This(), hwnd: w.HWND) ![:0]u16 {
-        const length = w.GetWindowTextLengthW(hwnd);
+        const length = w.GetWindowTextLengthW(hwnd) + 1;
         const title: [:0]u16 = try self.allocator.allocSentinel(u16, @intCast(usize, length), 0);
         std.mem.set(u16, title, 0);
         _ = w.GetWindowTextW(hwnd, title, length);

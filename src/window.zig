@@ -40,7 +40,6 @@ pub fn redraw(self: Self) !void {
 
 pub fn setSize(self: *Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
     try w.mapFailure(w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOZORDER));
-    try self.resize();
 }
 
 pub fn getRect(self: Self) !w.RECT {
@@ -112,7 +111,6 @@ fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
 }
 
 fn resize(self: *Self) !void {
-    std.debug.warn("Resize {*}\n", .{self.hwnd});
     try self.event_handlers.onResize(self.event_handlers, self);
 }
 

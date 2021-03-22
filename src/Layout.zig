@@ -20,7 +20,7 @@ const chHeight: c_int = 32;
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     if(window.docked)
     {
-        //try window.dock();
+        try window.dock();
     }
 
     const rect = try window.getRect();
@@ -66,18 +66,19 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
 pub fn clear(self: *Self) !void {
     //var wnd: ?*Window = self.window.children.popOrNull();
 
-    // while (self.window.children.popOrNull()) |window|
-    // {
-    //     if (window) |*wnd|
-    //     {
-    //         wnd.destroy();
-    //         self.allocator.free(w);
-    //     }
-    // }
+    while (self.window.children.popOrNull()) |window|
+    {
+        try window.destroy();
+        self.allocator.destroy(window);
+    }
 }
 
 fn layout(self: *Self) !void {
     if (self.window.children.items.len == 0) return;
+
+    for (self.window.children.items) |child| {
+        _ = child.hide();
+    }
 
     var rect = try self.window.getRect();
 
@@ -117,7 +118,7 @@ fn layout(self: *Self) !void {
                 offset = 0;
                 try self.window.children.items[i].setSize(cur_x, cur_y, chWidth, chHeight);
                 try self.window.children.items[i].setSize(cur_x, cur_y, chWidth, chHeight);
-                //window.children.items[i].window.show();
+                _ = self.window.children.items[i].show();
                 var matIdx = cur_row * self.cols + cur_col;
                 if (matIdx < rows * cols) {
                     self.matrix.?[matIdx] = i;
