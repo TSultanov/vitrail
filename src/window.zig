@@ -5,11 +5,11 @@ const Self = @This();
 hwnd: w.HWND,
 hInstance: w.HINSTANCE,
 children: *std.ArrayList(*Self),
-event_handlers: WindowEventHandlers,
+event_handlers: *EventHandlers,
 docked: bool = false,
 parent: ?*Self,
 
-pub fn dock(self: Self) !void {
+pub fn dock(self: *Self) !void {
     if (self.parent) |parent| {
         var rect = try parent.getRect();
         try self.setSize(0, 0, rect.right - rect.left, rect.bottom - rect.top);
@@ -38,7 +38,7 @@ pub fn redraw(self: Self) !void {
     try w.mapFailure(w.RedrawWindow(self.hwnd, null, null, w.RDW_INVALIDATE | w.RDW_UPDATENOW));
 }
 
-pub fn setSize(self: Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
+pub fn setSize(self: *Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
     try w.mapFailure(w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOZORDER));
     try self.resize();
 }
@@ -66,7 +66,10 @@ pub fn setParent(self: *Self, parent: Self) !void {
 }
 
 pub fn focus(self: Self) !void {
-    try w.mapFailure(w.SetFocus(self.hwnd));
+    var hwnd = w.SetFocus(self.hwnd);
+    if(hwnd == 0) {
+        return error.Failure;
+    }
 }
 
 pub fn destroy(self: Self) !void {
@@ -87,17 +90,17 @@ pub const WindowParameters = struct {
     register_class: bool = true,
 };
 
-fn defaultHandler(window: Self) !void {}
+fn defaultHandler(event_handlers: *EventHandlers, window: *Self) !void {}
 
-pub const WindowEventHandlers = struct {
-    onClick: fn (window: Self) anyerror!void = defaultHandler,
-    onResize: fn (window: Self) anyerror!void = onResizeHandler,
-    onCreate: fn (window: Self) anyerror!void = defaultHandler,
-    onDestroy: fn (window: Self) anyerror!void = defaultHandler,
-    onPaint: fn (window: Self) anyerror!void = onPaintHandler,
+pub const EventHandlers = struct {
+    onClick: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onResize: fn (self: *EventHandlers, window: *Self) anyerror!void = onResizeHandler,
+    onCreate: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onDestroy: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onPaint: fn (self: *EventHandlers, window: *Self) anyerror!void = onPaintHandler,
 };
 
-fn onResizeHandler(window: Self) !void {
+fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
     if(window.docked)
     {
         try window.dock();
@@ -108,11 +111,12 @@ fn onResizeHandler(window: Self) !void {
     }
 }
 
-fn resize(self: Self) !void {
-    try self.event_handlers.onResize(self);
+fn resize(self: *Self) !void {
+    std.debug.warn("Resize {*}\n", .{self.hwnd});
+    try self.event_handlers.onResize(self.event_handlers, self);
 }
 
-fn onPaintHandler(window: Self) !void {
+fn onPaintHandler(event_handlers: *EventHandlers, window: *Self) !void {
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
@@ -134,26 +138,26 @@ fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) ca
     return window.wndProc(uMsg, wParam, lParam) catch return 1;
 }
 
-pub fn wndProc(self: Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w.LRESULT {
+pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w.LRESULT {
     switch (uMsg) {
         w.WM_SIZE => {
-            try self.event_handlers.onResize(self);
+            try self.event_handlers.onResize(self.event_handlers, self);
             return 0;
         },
         w.WM_LBUTTONDOWN => {
-            try self.event_handlers.onClick(self);
+            try self.event_handlers.onClick(self.event_handlers, self);
             return 0;
         },
         w.WM_CREATE => {
-            try self.event_handlers.onCreate(self);
+            try self.event_handlers.onCreate(self.event_handlers, self);
             return 0;
         },
         w.WM_DESTROY => {
-            try self.event_handlers.onDestroy(self);
+            try self.event_handlers.onDestroy(self.event_handlers, self);
             return 0;
         },
         w.WM_PAINT => {
-            try self.event_handlers.onPaint(self);
+            try self.event_handlers.onPaint(self.event_handlers, self);
             return 0;
         },
         else => {
@@ -162,7 +166,7 @@ pub fn wndProc(self: Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w.
     }
 }
 
-pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
+pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     if (window_parameters.register_class) {
         const wc: w.WNDCLASSW = .{
             .style = 0,
@@ -194,6 +198,10 @@ pub fn create(window_parameters: WindowParameters, event_handlers: WindowEventHa
         .event_handlers = event_handlers,
         .parent = window_parameters.parent,
     };
+
+    if(window.parent) |p| {
+        try p.children.append(window);
+    }
 
     _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
     var font = w.GetStockObject(w.DEFAULT_GUI_FONT);

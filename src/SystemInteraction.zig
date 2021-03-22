@@ -19,7 +19,7 @@ pub fn toUtf8(str: []u16, allocator: *Allocator) ![]u8 {
     return try std.unicode.utf16leToUtf8Alloc(allocator, str);
 }
 
-pub const DesktopWindow = struct { hwnd: w.HWND, title: []u16, class: []u16, icon: w.HICON_a1, shouldShow: bool, desktopNumber: ?usize };
+pub const DesktopWindow = struct { hwnd: w.HWND, title: [:0]u16, class: [:0]u16, icon: w.HICON_a1, shouldShow: bool, desktopNumber: ?usize };
 
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
     var windows: *std.ArrayList(w.HWND) = @intToPtr(*std.ArrayList(w.HWND), @intCast(usize, lParam));
@@ -95,18 +95,18 @@ pub const SystemInteraction = struct {
         return windowList.items;
     }
 
-    fn getWindowTitle(self: @This(), hwnd: w.HWND) ![]u16 {
-        var title: []u16 = try self.allocator.alloc(u16, 512);
-        for (title[0..512]) |*b| b.* = 0;
-        _ = w.GetWindowTextW(hwnd, &title[0], 511);
+    fn getWindowTitle(self: @This(), hwnd: w.HWND) ![:0]u16 {
+        const length = w.GetWindowTextLengthW(hwnd);
+        const title: [:0]u16 = try self.allocator.allocSentinel(u16, @intCast(usize, length), 0);
+        std.mem.set(u16, title, 0);
+        _ = w.GetWindowTextW(hwnd, title, length);
         return title;
     }
 
-    fn getWindowClass(self: @This(), hwnd: w.HWND) ![]u16 {
-        var class: []u16 = try self.allocator.alloc(u16, 512);
-        for (class[0..512]) |*b| b.* = 0;
-
-        _ = w.RealGetWindowClassW(hwnd, &class[0], 511);
+    fn getWindowClass(self: @This(), hwnd: w.HWND) ![:0]u16 {
+        const class: [:0]u16 = try self.allocator.allocSentinel(u16, 512, 0);
+        std.mem.set(u16, class, 0);
+        _ = w.RealGetWindowClassW(hwnd, class, 511);
         return class;
     }
 

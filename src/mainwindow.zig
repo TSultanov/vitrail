@@ -1,24 +1,61 @@
 usingnamespace @import("vitrail.zig");
 pub const Window = @import("Window.zig");
 pub const Layout = @import("Layout.zig");
+pub const Button = @import("Button.zig");
+pub const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
 
 window: *Window,
-layout: Layout,
+layout: *Layout,
+event_handlers: Window.EventHandlers,
+desktop_windows: []DesktopWindow,
+hInstance: w.HINSTANCE,
+allocator: *std.mem.Allocator,
+click_handler: Button.EventHandlers = .{
+    .onClick = onClickHandler
+},
 
-fn onDestroyHandler(window: Window) !void {
+fn onClickHandler(buttonEventHandler: *Button.EventHandlers, button: *Button) !void {
+    const self = @fieldParentPtr(Self, "click_handler", buttonEventHandler);
+
+    std.debug.warn("Click!", .{});
+}
+
+fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     _ = w.PostQuitMessage(0);
 }
 
-pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !Self {
+pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters{ .title = toUtf16const("MainWindow") };
-    const handlers = Window.WindowEventHandlers{ .onDestroy = onDestroyHandler };
 
-    var window = try Window.create(windowConfig, handlers, hInstance, allocator);
-
-    return Self {
-        .window = window,
-        .layout = try Layout.create(hInstance, window, allocator)
+    var self = try allocator.create(Self);
+    self.* = .{
+        .window = undefined,
+        .layout = undefined,
+        .event_handlers = .{ .onDestroy = onDestroyHandler },
+        .desktop_windows = undefined,
+        .hInstance = hInstance,
+        .allocator = allocator
     };
+
+    var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
+    self.window = window;
+
+    self.layout = try Layout.create(hInstance, window, allocator);
+
+    return self;
+}
+
+pub fn setDesktopWindows(self: *Self, desktopWindows: []DesktopWindow) !void {
+    self.desktop_windows = desktopWindows;
+    try self.updateBoxes();
+}
+
+fn updateBoxes(self: *Self) !void {
+    try self.layout.clear();
+
+    for (self.desktop_windows) |dw| {
+        var button = Button.create(self.hInstance, self.layout.window, dw.title, &self.click_handler, self.allocator);
+    }
 }
