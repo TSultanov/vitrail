@@ -48,7 +48,7 @@ pub fn getRect(self: Self) !w.RECT {
     return rect;
 }
 
-pub fn getClientRect(self: Self) w.RECT {
+pub fn getClientRect(self: Self) !w.RECT {
     var rect: w.RECT = undefined;
     try w.mapFailure(w.GetClientRect(self.hwnd, &rect));
     return rect;
@@ -91,12 +91,16 @@ pub const WindowParameters = struct {
 
 fn defaultHandler(event_handlers: *EventHandlers, window: *Self) !void {}
 
+fn defaultParamHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {}
+
 pub const EventHandlers = struct {
     onClick: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onResize: fn (self: *EventHandlers, window: *Self) anyerror!void = onResizeHandler,
     onCreate: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDestroy: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onPaint: fn (self: *EventHandlers, window: *Self) anyerror!void = onPaintHandler,
+    onCommand: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onNotify: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
 };
 
 fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
@@ -156,6 +160,14 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_PAINT => {
             try self.event_handlers.onPaint(self.event_handlers, self);
+            return 0;
+        },
+        w.WM_COMMAND => {
+            try self.event_handlers.onCommand(self.event_handlers, self, wParam, lParam);
+            return 0;
+        },
+        w.WM_NOTIFY => {
+            try self.event_handlers.onNotify(self.event_handlers, self);
             return 0;
         },
         else => {

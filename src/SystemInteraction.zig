@@ -106,7 +106,7 @@ pub const SystemInteraction = struct {
     fn getWindowClass(self: @This(), hwnd: w.HWND) ![:0]u16 {
         const class: [:0]u16 = try self.allocator.allocSentinel(u16, 512, 0);
         std.mem.set(u16, class, 0);
-        _ = w.RealGetWindowClassW(hwnd, class, 511);
+        _ = w.GetClassNameW(hwnd, class, 511);
         return class;
     }
 

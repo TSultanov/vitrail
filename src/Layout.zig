@@ -14,8 +14,9 @@ cols: usize = 0,
 allocator: *std.mem.Allocator,
 event_handlers: Window.EventHandlers,
 
-const chWidth: c_int = 150;
-const chHeight: c_int = 32;
+const chWidth: c_int = 151;
+const chHeight: c_int = 33;
+const margin: c_int = 1;
 
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     if(window.docked)
@@ -36,7 +37,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     defer _ = w.EndPaint(window.hwnd, &ps);
     defer _ = w.ReleaseDC(window.hwnd, hdc);
     //var color = w.GetSysColor(w.COLOR_WINDOW);
-    var hbrushBg = w.CreateSolidBrush(0x00008800);
+    var hbrushBg = w.CreateSolidBrush(0x00000000);
     defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
@@ -116,8 +117,7 @@ fn layout(self: *Self) !void {
             }
             if (cur_x >= 0 and cur_x + chWidth <= width and cur_y >= 0 and cur_y + chHeight <= height) {
                 offset = 0;
-                try self.window.children.items[i].setSize(cur_x, cur_y, chWidth, chHeight);
-                try self.window.children.items[i].setSize(cur_x, cur_y, chWidth, chHeight);
+                try self.window.children.items[i].setSize(cur_x, cur_y, chWidth - margin, chHeight - margin);
                 _ = self.window.children.items[i].show();
                 var matIdx = cur_row * self.cols + cur_col;
                 if (matIdx < rows * cols) {

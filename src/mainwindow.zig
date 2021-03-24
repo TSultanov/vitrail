@@ -1,7 +1,7 @@
 usingnamespace @import("vitrail.zig");
 pub const Window = @import("Window.zig");
 pub const Layout = @import("Layout.zig");
-pub const Button = @import("Button.zig");
+pub const Tile = @import("Tile.zig");
 pub const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
@@ -12,12 +12,12 @@ event_handlers: Window.EventHandlers,
 desktop_windows: []DesktopWindow,
 hInstance: w.HINSTANCE,
 allocator: *std.mem.Allocator,
-click_handler: Button.EventHandlers = .{
+click_handler: Tile.EventHandlers = .{
     .onClick = onClickHandler
 },
 
-fn onClickHandler(buttonEventHandler: *Button.EventHandlers, button: *Button) !void {
-    const self = @fieldParentPtr(Self, "click_handler", buttonEventHandler);
+fn onClickHandler(tile_event_handlers: *Tile.EventHandlers, button: *Tile) !void {
+    const self = @fieldParentPtr(Self, "click_handler", tile_event_handlers);
 
     std.debug.warn("Click!", .{});
 }
@@ -56,6 +56,6 @@ fn updateBoxes(self: *Self) !void {
     try self.layout.clear();
 
     for (self.desktop_windows) |dw| {
-        var button = Button.create(self.hInstance, self.layout.window, dw.title, &self.click_handler, self.allocator);
+        var button = Tile.create(self.hInstance, self.layout.window, dw, &self.click_handler, self.allocator);
     }
 }
