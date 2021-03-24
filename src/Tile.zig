@@ -7,6 +7,7 @@ const Self = @This();
 
 const color_offset = 100;
 
+allocator: *std.mem.Allocator,
 window: *Window,
 event_handlers: Window.EventHandlers,
 tile_event_handlers: *EventHandlers,
@@ -15,6 +16,8 @@ desktopWindow: DesktopWindow,
 color: w.COLORREF,
 colorFocused: w.COLORREF,
 font: w.HGDIOBJ,
+desktopFont: w.HGDIOBJ,
+desktopNumberString: [:0]u16,
 
 pub const EventHandlers = struct {
     onClick: fn (self: *EventHandlers, tile: *Self) anyerror!void,
@@ -49,6 +52,7 @@ pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     // rect.bottom -= 1;
     _ = w.FillRect(hdc, &rect, hbrushFg);
 
+    try self.drawDesktopNo(hdc);
     try self.drawText(hdc);
     try self.drawIcon(hdc);
 }
@@ -63,15 +67,32 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
         .register_class = true
     };
 
+    //defer allocator.destroy(desktopNumber);
+    var desktopNumberUtf16 = blk: {
+        // if(desktopWindow.desktopNumber) |dn| {
+            var desktopNumber = try std.fmt.allocPrint(allocator, "{d}", .{desktopWindow.desktopNumber.? + 1});
+            break :blk try std.unicode.utf8ToUtf16LeWithNull(allocator, desktopNumber);
+        // }
+        // else
+        // {
+        //     break :blk ([_:0]u16 {0}**1)[0..:0];
+        // }
+    };
+
     var self = try allocator.create(Self);
     self.* = .{
+        .allocator = allocator,
         .window = undefined,
         .tile_event_handlers = eventHandlers,
         .selected = false,
         .desktopWindow = desktopWindow,
         .color = createColor(desktopWindow.class, false),
         .colorFocused = createColor(desktopWindow.class, true),
+        .desktopNumberString = desktopNumberUtf16,
         .font = w.GetStockObject(w.DEFAULT_GUI_FONT),
+        .desktopFont = w.CreateFontW(42, 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
+                        w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
+                        w.DEFAULT_PITCH | w.FF_DONTCARE, toUtf16const("Segoe UI")),
         .event_handlers = .{
             .onClick = onClick,
             .onPaint = onPaint
@@ -82,6 +103,19 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
     self.window = window;
 
     return self;
+}
+
+pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
+    var rect = try self.window.getClientRect();
+    if(self.selected) {
+        _ = w.SetTextColor(hdc, 0x00000000);
+    } else {
+        _ = w.SetTextColor(hdc, 0x00ffffff);
+    }
+    _ = w.SetBkMode(hdc, w.TRANSPARENT);
+    _ = w.SelectObject(hdc, self.desktopFont);
+
+    _ = w.DrawTextW(hdc, self.desktopNumberString, -1, &rect, w.DT_SINGLELINE | w.DT_VCENTER | w.DT_CENTER);
 }
 
 pub fn drawText(self: Self, hdc: w.HDC) !void {
