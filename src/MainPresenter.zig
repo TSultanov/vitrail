@@ -25,7 +25,14 @@ pub fn createWidgets(main_window: *MainWindow, hInstance: w.HINSTANCE, allocator
     var windows = try si.getWindowList();
 
     for (windows) |window| {
-        std.debug.warn("Window \"{s}\", shouldShow: {any}, desktop {}\n", .{ toUtf8(window.title, allocator), window.shouldShow, window.desktopNumber });
+        var titleUtf8 = try toUtf8(window.title, allocator);
+        defer allocator.free(titleUtf8);
+        var classUtf8 = try toUtf8(window.class, allocator);
+        defer allocator.free(classUtf8);
+
+        var executableNameUtf8: []u8 = if(window.executableName) |en| try toUtf8(en, allocator) else "";
+
+        std.debug.warn("Window \"{s}\", class: \"{s}\", executableName: \"{s}\", desktop {}\n", .{ titleUtf8, classUtf8, executableNameUtf8, window.desktopNumber });
     }
 
     try main_window.setDesktopWindows(windows);

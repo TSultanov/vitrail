@@ -14,9 +14,9 @@ cols: usize = 0,
 allocator: *std.mem.Allocator,
 event_handlers: Window.EventHandlers,
 
-const chWidth: c_int = 151;
-const chHeight: c_int = 33;
-const margin: c_int = 1;
+const chWidth: c_int = 101;
+const chHeight: c_int = 101;
+const margin: c_int = -1;
 
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     if(window.docked)

@@ -27,7 +27,11 @@ fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !voi
 }
 
 pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
-    const windowConfig = Window.WindowParameters{ .title = toUtf16const("MainWindow") };
+    const windowConfig = Window.WindowParameters { 
+        .width = 1024,
+        .height = 768,
+        .title = toUtf16const("MainWindow")
+    };
 
     var self = try allocator.create(Self);
     self.* = .{

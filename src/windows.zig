@@ -1,9 +1,13 @@
 pub usingnamespace @cImport({
     @cInclude("windows.h");
     @cInclude("commctrl.h");
+    @cInclude("psapi.h");
+    @cInclude("shlwapi.h");
+    @cInclude("shlobj.h");
+    @cInclude("shlobj_core.h");
 });
 
-pub const HICON_a1 = *opaque {};
+//pub const HICON_a1 = *opaque {};
 
 pub const WinApiError = error{GenericError, Failure};
 

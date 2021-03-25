@@ -5,7 +5,8 @@ const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
 
-const color_offset = 100;
+const color_offset = 0;
+const desktop_no_font_size = 32;
 
 allocator: *std.mem.Allocator,
 window: *Window,
@@ -36,20 +37,18 @@ pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     defer _ = w.EndPaint(self.window.hwnd, &ps);
     defer _ = w.ReleaseDC(self.window.hwnd, hdc);
 
-    var colorFg: w.COLORREF = undefined;
+    var hbrushBg = w.CreateSolidBrush(0);
+    defer _ = w.DeleteObject(hbrushBg);
+    _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
 
-    if (self.selected) {
-        colorFg = self.colorFocused;
-    } else {
-        colorFg = self.color;
-    }
+    var colorFg: w.COLORREF = if (self.selected) self.colorFocused else self.color;
     var hbrushFg = w.CreateSolidBrush(colorFg);
     defer _ = w.DeleteObject(hbrushFg);
     var rect = try self.window.getClientRect();
-    // rect.left = 1;
-    // rect.top = 1;
-    // rect.right -= 1;
-    // rect.bottom -= 1;
+    rect.left = 1;
+    rect.top = 1;
+    rect.right -= 1;
+    rect.bottom -= 1;
     _ = w.FillRect(hdc, &rect, hbrushFg);
 
     try self.drawDesktopNo(hdc);
@@ -69,14 +68,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
 
     //defer allocator.destroy(desktopNumber);
     var desktopNumberUtf16 = blk: {
-        // if(desktopWindow.desktopNumber) |dn| {
             var desktopNumber = try std.fmt.allocPrint(allocator, "{d}", .{desktopWindow.desktopNumber.? + 1});
             break :blk try std.unicode.utf8ToUtf16LeWithNull(allocator, desktopNumber);
-        // }
-        // else
-        // {
-        //     break :blk ([_:0]u16 {0}**1)[0..:0];
-        // }
     };
 
     var self = try allocator.create(Self);
@@ -86,11 +79,11 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
         .tile_event_handlers = eventHandlers,
         .selected = false,
         .desktopWindow = desktopWindow,
-        .color = createColor(desktopWindow.class, false),
-        .colorFocused = createColor(desktopWindow.class, true),
+        .color = if (desktopWindow.executableName) |en| createColor(en, false) else createColor(desktopWindow.class, false),
+        .colorFocused = if (desktopWindow.executableName) |en| createColor(en, true) else createColor(desktopWindow.class, true),
         .desktopNumberString = desktopNumberUtf16,
         .font = w.GetStockObject(w.DEFAULT_GUI_FONT),
-        .desktopFont = w.CreateFontW(42, 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
+        .desktopFont = w.CreateFontW(desktop_no_font_size, 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
                         w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
                         w.DEFAULT_PITCH | w.FF_DONTCARE, toUtf16const("Segoe UI")),
         .event_handlers = .{
@@ -107,6 +100,10 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
 
 pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getClientRect();
+    rect.left = 5;
+    rect.right -= 5;
+    rect.bottom -= 5;
+
     if(self.selected) {
         _ = w.SetTextColor(hdc, 0x00000000);
     } else {
@@ -115,13 +112,14 @@ pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
     _ = w.SetBkMode(hdc, w.TRANSPARENT);
     _ = w.SelectObject(hdc, self.desktopFont);
 
-    _ = w.DrawTextW(hdc, self.desktopNumberString, -1, &rect, w.DT_SINGLELINE | w.DT_VCENTER | w.DT_CENTER);
+    _ = w.DrawTextW(hdc, self.desktopNumberString, -1, &rect, w.DT_SINGLELINE | w.DT_TOP | w.DT_RIGHT | w.DT_WORD_ELLIPSIS);
 }
 
 pub fn drawText(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getClientRect();
-    rect.left = 24;
-    rect.right -= 2;
+    rect.left = 5;
+    rect.right -= 5;
+    rect.bottom -= 5;
     if(self.selected) {
         _ = w.SetTextColor(hdc, 0x00ffffff);
     } else {
@@ -129,14 +127,29 @@ pub fn drawText(self: Self, hdc: w.HDC) !void {
     }
     _ = w.SetBkMode(hdc, w.TRANSPARENT);
     _ = w.SelectObject(hdc, self.font);
-    _ = w.DrawTextW(hdc, self.desktopWindow.title, -1, &rect, w.DT_SINGLELINE | w.DT_VCENTER | w.DT_LEFT);
+    _ = w.DrawTextW(hdc, self.desktopWindow.title, -1, &rect, w.DT_SINGLELINE | w.DT_BOTTOM | w.DT_CENTER | w.DT_WORD_ELLIPSIS);
 }
 
 pub fn drawIcon(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getRect();
-    var height = rect.bottom - rect.top;
-    var padding = @divFloor(height - 16, 2);
-    //_ = w.DrawIconEx(hdc, 4, padding, self.desktopWindow.icon, 16, 16, 0, null, w.DI_NORMAL);
+
+    const margin_top = 14;
+    const margin_left = 14;
+    const margin_right = 14;
+    const margin_bot = 26;
+
+    rect.top += margin_top;
+    rect.bottom -= margin_bot;
+    rect.left += margin_left;
+    rect.right -= margin_right;
+
+    const center_x = @divFloor((rect.right - rect.left), 2) + margin_left;
+    const center_y = @divFloor((rect.bottom - rect.top), 2) + margin_top;
+    const icon_size = std.math.min((rect.bottom - rect.top), (rect.right - rect.left));
+
+    var icon_x = center_x - @divFloor(icon_size, 2);
+    var icon_y = center_y - @divFloor(icon_size, 2);
+    _ = w.DrawIconEx(hdc, icon_x, icon_y, self.desktopWindow.icon, icon_size, icon_size, 0, null, w.DI_NORMAL);
 }
 
 fn createColor(text: []const u16, focused: bool) w.COLORREF {
@@ -173,14 +186,16 @@ fn getCrc16(a: []const u16, len: usize) u16 {
     var i: usize = 0;
     while (i < len) : (i += 1) {
         var j: usize = 8;
+        data = 0xff & a[i];
         while (j > 0) : (j -= 1)
         {
-            data = 0xff & a[j];
             if ((crc & 0x0001) ^ (data & 0x0001) != 0) {
                 crc = (crc >> 1) ^ crc16_poly;
             } else {
                 crc >>= 1;
             }
+
+            data >>= 1;
         }
     }
 

@@ -19,7 +19,25 @@ pub fn toUtf8(str: []u16, allocator: *Allocator) ![]u8 {
     return try std.unicode.utf16leToUtf8Alloc(allocator, str);
 }
 
-pub const DesktopWindow = struct { hwnd: w.HWND, title: [:0]u16, class: [:0]u16, icon: w.HICON_a1, shouldShow: bool, desktopNumber: ?usize };
+pub const DesktopWindow = struct {
+    hwnd: w.HWND,
+    title: [:0]u16,
+    class: [:0]u16,
+    icon: w.HICON,
+    executablePath: ?[:0]u16,
+    executableName: ?[:0]u16,
+    shouldShow: bool,
+    desktopNumber: ?usize,
+    originalAllocator: *std.mem.Allocator,
+
+    pub fn destroy() !void {
+        try originalAllocator.free(title);
+        try originalAllocator.free(class);
+        if (executableName) |fname| try originalAllocator.free(fname);
+
+        _ = w.DestroyIcon(icon);
+    }
+};
 
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
     var windows: *std.ArrayList(w.HWND) = @intToPtr(*std.ArrayList(w.HWND), @intCast(usize, lParam));
@@ -83,13 +101,30 @@ pub const SystemInteraction = struct {
             var shouldShow = try self.shouldShowWindow(hwnd);
             var title = try self.getWindowTitle(hwnd);
             var class = try self.getWindowClass(hwnd);
-            var icon: w.HICON_a1 = try self.getWindowIcon(hwnd);
+            var icon: w.HICON = try self.getWindowIcon(hwnd);
 
             var desktopId: w.GUID = undefined;
             _ = desktopManager.GetWindowDesktopId(hwnd, &desktopId);
 
+            var executablePath = try self.getWindowFilePath(hwnd);
+            var executableName: ?[:0]u16 = null;
+            if (executablePath) |ep| {
+                var name: [*:0]u16 = w.PathFindFileNameW(ep);
+                executableName = std.mem.spanZ(name);
+            }
+
             if (shouldShow) {
-                try windowList.append(DesktopWindow{ .hwnd = hwnd, .title = title, .class = class, .icon = icon, .shouldShow = shouldShow, .desktopNumber = desktopsMap.get(desktopId) });
+                try windowList.append(DesktopWindow {
+                     .hwnd = hwnd,
+                     .title = title,
+                     .class = class,
+                     .icon = icon,
+                     .executablePath = executablePath,
+                     .executableName = executableName,
+                     .shouldShow = shouldShow,
+                     .desktopNumber = desktopsMap.get(desktopId),
+                     .originalAllocator = self.allocator
+                });
             }
         }
         return windowList.items;
@@ -110,40 +145,55 @@ pub const SystemInteraction = struct {
         return class;
     }
 
-    fn getWindowIcon(self: @This(), hwnd: w.HWND) !w.HICON_a1 {
+    fn getWindowIcon(self: @This(), hwnd: w.HWND) !w.HICON {
         var iconAddr: c_ulonglong = undefined;
-        var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
-        if (lResult != 0 and iconAddr != 0) {
-            var icon: w.HICON_a1 = @intToPtr(w.HICON_a1, @intCast(usize, iconAddr));
-            return icon;
-        }
+        // var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
+        // if (lResult != 0 and iconAddr != 0) {
+        //     var icon: w.HICON = @intToPtr(w.HICON, @intCast(usize, iconAddr));
+        //     return icon;
+        // }
 
-        var wndClassLongPtr = w.GetClassLongPtrW(hwnd, w.GCLP_HICON);
-        if (wndClassLongPtr != 0) {
-            var icon: w.HICON_a1 = @intToPtr(w.HICON_a1, wndClassLongPtr);
-            return icon;
-        }
+        // var wndClassLongPtr = w.GetClassLongPtrW(hwnd, w.GCLP_HICON);
+        // if (wndClassLongPtr != 0) {
+        //     var icon: w.HICON = @intToPtr(w.HICON, wndClassLongPtr);
+        //     return icon;
+        // }
 
         var fileIcon = try self.extractIconFromExecutable(hwnd);
         if (fileIcon != null) return fileIcon.?;
 
-        return @ptrCast(w.HICON_a1, w.LoadIconW(null, 32512));
+        return @ptrCast(w.HICON, w.LoadIconW(null, 32512));
     }
 
-    fn extractIconFromExecutable(self: @This(), hwnd: w.HWND) !?w.HICON_a1 {
+    fn getWindowFilePath(self: @This(), hwnd: w.HWND) !?[:0]u16 {
         var pid: w.DWORD = undefined;
         _ = w.GetWindowThreadProcessId(hwnd, &pid);
-        var hProc = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
+        var hProc: w.HANDLE = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
         defer _ = w.CloseHandle(hProc);
-        var fileName: *[1024]u16 = try self.allocator.create([1024]u16);
-        defer self.allocator.free(fileName);
-        for (fileName[0..1024]) |*b| b.* = 0;
-        var result = w.GetModuleFileNameW(@ptrCast(w.HMODULE, @alignCast(4, hProc)), fileName, 1024);
-        if (result == 0) return null;
+        const fileName: [:0]u16 = try self.allocator.allocSentinel(u16, 1024, 0);
+        std.mem.set(u16, fileName, 0);
+        var fileNameSize: u32 = 1024;
+        var result = w.QueryFullProcessImageNameW(hProc, 0, fileName, &fileNameSize);
+        if (result == 0) {
+            return null;
+        }
+        else {
+            return fileName;
+        }
+    }
 
-        var iconIndex: w.WORD = 0;
-        var icon = @ptrCast(w.HICON_a1, w.ExtractAssociatedIconW(self.hInstance, fileName, &iconIndex));
-        return icon;
+    fn extractIconFromExecutable(self: @This(), hwnd: w.HWND) !?w.HICON {
+        var windowFileName = try self.getWindowFilePath(hwnd);
+        if(windowFileName) |fileName| {
+            defer self.allocator.free(fileName);
+            var iconIndex: w.WORD = 0;
+            var largeIcon: w.HICON = undefined;
+            var smallIcon: w.HICON = undefined;
+            _ = w.SHDefExtractIconW(fileName, iconIndex, 0, &largeIcon, &smallIcon, 0); //TODO: process errors
+            return largeIcon;
+        }
+
+        return null;
     }
 
     fn shouldShowWindow(self: @This(), hwnd: w.HWND) !bool {
