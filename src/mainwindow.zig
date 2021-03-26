@@ -19,7 +19,7 @@ click_handler: Tile.EventHandlers = .{
 fn onClickHandler(tile_event_handlers: *Tile.EventHandlers, button: *Tile) !void {
     const self = @fieldParentPtr(Self, "click_handler", tile_event_handlers);
 
-    std.debug.warn("Click!", .{});
+    std.debug.warn("Click!\n", .{});
 }
 
 fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {

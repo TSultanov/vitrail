@@ -2,12 +2,15 @@ usingnamespace @import("vitrail.zig");
 
 const Self = @This();
 
+const defaultDpi = 96;
+
 hwnd: w.HWND,
 hInstance: w.HINSTANCE,
 children: *std.ArrayList(*Self),
 event_handlers: *EventHandlers,
 docked: bool = false,
 parent: ?*Self,
+dpi: u32,
 
 pub fn dock(self: *Self) !void {
     if (self.parent) |parent| {
@@ -40,6 +43,10 @@ pub fn redraw(self: Self) !void {
 
 pub fn setSize(self: *Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
     try w.mapFailure(w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOZORDER));
+}
+
+pub fn setSizeScaled(self: *Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
+    try w.mapFailure(w.SetWindowPos(self.hwnd, 0, self.scaleDpi(x), self.scaleDpi(y), self.scaleDpi(cx), self.scaleDpi(cy), w.SWP_NOZORDER));
 }
 
 pub fn getRect(self: Self) !w.RECT {
@@ -101,7 +108,14 @@ pub const EventHandlers = struct {
     onPaint: fn (self: *EventHandlers, window: *Self) anyerror!void = onPaintHandler,
     onCommand: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onNotify: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onDpiChange: fn(self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = onDpiChangeHandler,
 };
+
+pub fn onDpiChangeHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    window.dpi = w.GetDpiForWindow(window.hwnd);
+    const rect = @intToPtr(*w.RECT, @intCast(usize, lParam));
+    try window.setSize(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+}
 
 fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
     if(window.docked)
@@ -170,6 +184,10 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             try self.event_handlers.onNotify(self.event_handlers, self);
             return 0;
         },
+        w.WM_DPICHANGED => {
+            try self.event_handlers.onDpiChange(self.event_handlers, self, wParam, lParam);
+            return 0;
+        },
         else => {
             return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);
         },
@@ -207,15 +225,27 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
         .children = children,
         .event_handlers = event_handlers,
         .parent = window_parameters.parent,
+        .dpi = w.GetDpiForWindow(hwnd),
     };
 
     if(window.parent) |p| {
         try p.children.append(window);
     }
 
+    var rect = try window.getRect();
+    try window.setSize(rect.left, rect.top, window.scaleDpi(rect.right - rect.left), window.scaleDpi(rect.bottom - rect.top));
+
     _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
     var font = w.GetStockObject(w.DEFAULT_GUI_FONT);
     _ = w.SendMessage(hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
 
     return window;
+}
+
+pub fn scaleDpi(self: Self, x: i32) i32 {
+    return w.MulDiv(x, @intCast(i32, self.dpi), defaultDpi);
+}
+
+pub fn unscaleDpi(self: Self, x: i32) i32 {
+    return w.MulDiv(x, defaultDpi, @intCast(i32, self.dpi));
 }

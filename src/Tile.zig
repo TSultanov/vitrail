@@ -45,15 +45,24 @@ pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var hbrushFg = w.CreateSolidBrush(colorFg);
     defer _ = w.DeleteObject(hbrushFg);
     var rect = try self.window.getClientRect();
-    rect.left = 1;
-    rect.top = 1;
-    rect.right -= 1;
-    rect.bottom -= 1;
+    rect.left = window.scaleDpi(1);
+    rect.top = window.scaleDpi(1);
+    rect.right -= window.scaleDpi(1);
+    rect.bottom -= window.scaleDpi(1);
     _ = w.FillRect(hdc, &rect, hbrushFg);
 
     try self.drawDesktopNo(hdc);
     try self.drawText(hdc);
     try self.drawIcon(hdc);
+}
+
+pub fn onDpiChange(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    window.dpi = w.GetDpiForWindow(window.hwnd);
+    const rect = @intToPtr(*w.RECT, @intCast(usize, lParam));
+    try window.setSize(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+
+    const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    try self.setFonts();
 }
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, eventHandlers: *EventHandlers, allocator: *std.mem.Allocator) !*Self {
@@ -82,27 +91,35 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
         .color = if (desktopWindow.executableName) |en| createColor(en, false) else createColor(desktopWindow.class, false),
         .colorFocused = if (desktopWindow.executableName) |en| createColor(en, true) else createColor(desktopWindow.class, true),
         .desktopNumberString = desktopNumberUtf16,
-        .font = w.GetStockObject(w.DEFAULT_GUI_FONT),
-        .desktopFont = w.CreateFontW(desktop_no_font_size, 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
-                        w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
-                        w.DEFAULT_PITCH | w.FF_DONTCARE, toUtf16const("Segoe UI")),
+        .font = undefined,
+        .desktopFont = undefined,
         .event_handlers = .{
             .onClick = onClick,
-            .onPaint = onPaint
+            .onPaint = onPaint,
+            .onDpiChange = onDpiChange,
         },
     };
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
 
+    try self.setFonts();
+
     return self;
+}
+
+fn setFonts(self: *Self) !void {
+    self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
+    self.desktopFont = w.CreateFontW(self.window.scaleDpi(desktop_no_font_size), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
+                        w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
+                        w.DEFAULT_PITCH | w.FF_DONTCARE, toUtf16const("Segoe UI"));
 }
 
 pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getClientRect();
-    rect.left = 5;
-    rect.right -= 5;
-    rect.bottom -= 5;
+    rect.left = self.window.scaleDpi(5);
+    rect.right -= self.window.scaleDpi(5);
+    rect.bottom -= self.window.scaleDpi(5);
 
     if(self.selected) {
         _ = w.SetTextColor(hdc, 0x00000000);
@@ -117,9 +134,9 @@ pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
 
 pub fn drawText(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getClientRect();
-    rect.left = 5;
-    rect.right -= 5;
-    rect.bottom -= 5;
+    rect.left = self.window.scaleDpi(5);
+    rect.right -= self.window.scaleDpi(5);
+    rect.bottom -= self.window.scaleDpi(5);
     if(self.selected) {
         _ = w.SetTextColor(hdc, 0x00ffffff);
     } else {
@@ -133,10 +150,10 @@ pub fn drawText(self: Self, hdc: w.HDC) !void {
 pub fn drawIcon(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getRect();
 
-    const margin_top = 14;
-    const margin_left = 14;
-    const margin_right = 14;
-    const margin_bot = 26;
+    const margin_top = self.window.scaleDpi(14);
+    const margin_left = self.window.scaleDpi(14);
+    const margin_right = self.window.scaleDpi(14);
+    const margin_bot = self.window.scaleDpi(26);
 
     rect.top += margin_top;
     rect.bottom -= margin_bot;

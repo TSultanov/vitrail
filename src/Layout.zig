@@ -24,8 +24,6 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
         try window.dock();
     }
 
-    const rect = try window.getRect();
-
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
     try self.layout();
@@ -37,7 +35,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     defer _ = w.EndPaint(window.hwnd, &ps);
     defer _ = w.ReleaseDC(window.hwnd, hdc);
     //var color = w.GetSysColor(w.COLOR_WINDOW);
-    var hbrushBg = w.CreateSolidBrush(0x00000000);
+    var hbrushBg = w.CreateSolidBrush(0x00008800);
     defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
@@ -81,19 +79,23 @@ fn layout(self: *Self) !void {
         _ = child.hide();
     }
 
+    const chWidthScaled = self.window.scaleDpi(chWidth);
+    const chHeightScaled: c_int = self.window.scaleDpi(chHeight);
+    const marginScaled: c_int = self.window.scaleDpi(margin);
+
     var rect = try self.window.getRect();
 
     var width = rect.right - rect.left;
     var height = rect.bottom - rect.top;
     var rsize = self.window.children.items.len;
 
-    var rows = @intCast(usize, @divFloor(height, chHeight));
-    var cols = @intCast(usize, @divFloor(width, chWidth));
+    var rows = @intCast(usize, @divFloor(height, chHeightScaled));
+    var cols = @intCast(usize, @divFloor(width, chWidthScaled));
     self.rows = rows;
     self.cols = cols;
 
-    var cur_x = @divFloor(width, 2) - @divFloor(chWidth, 2);
-    var cur_y = @divFloor(height, 2) - @divFloor(chHeight, 2);
+    var cur_x = @divFloor(width, 2) - @divFloor(chWidthScaled, 2);
+    var cur_y = @divFloor(height, 2) - @divFloor(chHeightScaled, 2);
     var cur_col = @divFloor(cols, 2);
     var cur_row = @divFloor(rows, 2);
 
@@ -107,7 +109,7 @@ fn layout(self: *Self) !void {
 
     var i: usize = 0;
     var offset: usize = 0;
-    var max_offset = @divFloor(width * 2, chWidth) + @divFloor(height * 2, chHeight);
+    var max_offset = @divFloor(width * 2, chWidthScaled) + @divFloor(height * 2, chHeightScaled);
     var side: usize = 0;
     while (i < rsize) {
         var j: usize = 0;
@@ -115,9 +117,9 @@ fn layout(self: *Self) !void {
             if (i == rsize) {
                 break;
             }
-            if (cur_x >= 0 and cur_x + chWidth <= width and cur_y >= 0 and cur_y + chHeight <= height) {
+            if (cur_x >= 0 and cur_x + chWidthScaled <= width and cur_y >= 0 and cur_y + chHeightScaled <= height) {
                 offset = 0;
-                try self.window.children.items[i].setSize(cur_x, cur_y, chWidth - margin, chHeight - margin);
+                try self.window.children.items[i].setSize(cur_x, cur_y, chWidthScaled - marginScaled, chHeightScaled - marginScaled);
                 _ = self.window.children.items[i].show();
                 var matIdx = cur_row * self.cols + cur_col;
                 if (matIdx < rows * cols) {
@@ -136,23 +138,23 @@ fn layout(self: *Self) !void {
             if (side != 0) {
                 if (j % (side * 4) < side or j % (side * 4) >= side * 3) {
                     if (cur_col < cols) {
-                        cur_x += chWidth;
+                        cur_x += chWidthScaled;
                         cur_col += 1;
                     }
                 } else {
                     if (cur_col > 0) {
-                        cur_x -= chWidth;
+                        cur_x -= chWidthScaled;
                         cur_col -= 1;
                     }
                 }
                 if (j % (side * 4) < side * 2) {
                     if (cur_row > 0) {
-                        cur_y += chHeight;
+                        cur_y += chHeightScaled;
                         cur_row -= 1;
                     }
                 } else {
                     if (cur_row < rows) {
-                        cur_y -= chHeight;
+                        cur_y -= chHeightScaled;
                         cur_row += 1;
                     }
                 }
@@ -167,8 +169,8 @@ fn layout(self: *Self) !void {
             break;
         }
         side += 1;
-        cur_x = @divFloor(width, 2) - @divFloor(chWidth, 2);
-        cur_y -= chHeight;
+        cur_x = @divFloor(width, 2) - @divFloor(chWidthScaled, 2);
+        cur_y -= chHeightScaled;
         cur_col = @divFloor(cols, 2);
         cur_row += 1;
     }
