@@ -9,6 +9,8 @@ pub usingnamespace @cImport({
     @cInclude("dwmapi.h");
 });
 
+const std = @import("std");
+
 //pub const HICON_a1 = *opaque {};
 
 pub const WinApiError = error{GenericError, Failure};
@@ -21,6 +23,15 @@ pub fn mapErr(hResult: HRESULT) anyerror!void {
 
 pub fn mapFailure(res: BOOL) anyerror!void {
     if(res == 0) {
+        var errCode = GetLastError();
+        std.debug.warn("WIN32ERRCODE: {x}\n", .{errCode});
+
         return WinApiError.Failure;
     }
+}
+
+pub fn logGdiObjects(comptime message: []const u8) void {
+    var hProc = GetCurrentProcess();
+    var gdiObjects = GetGuiResources(hProc, GR_GDIOBJECTS);
+    std.debug.warn("{s}: gdiObjects: {}\n", .{message, gdiObjects});
 }

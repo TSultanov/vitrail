@@ -14,7 +14,7 @@ pub const Callbacks = struct {
 window: *Window,
 layout: *Layout,
 event_handlers: Window.EventHandlers,
-desktop_windows: []DesktopWindow,
+desktop_windows: ?std.ArrayList(DesktopWindow),
 hInstance: w.HINSTANCE,
 allocator: *std.mem.Allocator,
 callbacks: *Callbacks,
@@ -79,7 +79,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
             .onKeyDown = onKeyDownHandler,
             .onPaint = onPaintHandler
         },
-        .desktop_windows = undefined,
+        .desktop_windows = null,
         .hInstance = hInstance,
         .allocator = allocator,
         .callbacks = callbacks,
@@ -103,7 +103,17 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
     return self;
 }
 
-pub fn setDesktopWindows(self: *Self, desktopWindows: []DesktopWindow) !void {
+pub fn setDesktopWindows(self: *Self, desktopWindows: std.ArrayList(DesktopWindow)) !void { //TODO: Move desktop windows ownership to presenter
+    // First destroy existing boxes if any
+    if(self.desktop_windows) |desktop_windows| {
+        for(desktop_windows.items) |desktop_window| {
+            try desktop_window.destroy();
+        }
+
+        desktop_windows.deinit();
+        self.desktop_windows = null;
+    }
+
     self.desktop_windows = desktopWindows;
     try self.updateBoxes();
 }
@@ -124,14 +134,14 @@ pub fn hideBoxes(self: *Self) !void {
 fn updateBoxes(self: *Self) !void {
     try self.hideBoxes();
 
-    std.debug.warn("Creating {} tiles\n", .{self.desktop_windows.len});
+    if(self.desktop_windows) |desktop_windows| {
+        for (desktop_windows.items) |dw| {
+            var box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
+            try self.boxes.append(box);
+        }
 
-    for (self.desktop_windows) |dw| {
-        var box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
-        try self.boxes.append(box);
+        try self.layout.layout();
     }
-
-    try self.layout.layout();
 
     //try self.updateVisibilityMask();
 }

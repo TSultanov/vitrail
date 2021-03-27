@@ -29,8 +29,8 @@ fn onDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
     self.allocator.free(self.desktopNumberString);
-    _ = DeleteObject(self.font);
-    _ = DeleteObject(self.desktopFont);
+    _ = w.DeleteObject(self.font);
+    _ = w.DeleteObject(self.desktopFont);
     self.allocator.destroy(window);
 }
 
@@ -42,8 +42,6 @@ pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
 pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
-    std.debug.warn("Drawing tile\n", .{});
-
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(self.window.hwnd, &ps);
     defer _ = w.EndPaint(self.window.hwnd, &ps);
@@ -51,7 +49,7 @@ pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
 
     var hbrushBg = w.CreateSolidBrush(0);
     defer _ = w.DeleteObject(hbrushBg);
-    _ = w.FillRect(hdc, &ps.rcPaint, hbrushBg);
+    try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 
     var colorFg: w.COLORREF = if (self.selected) self.colorFocused else self.color;
     var hbrushFg = w.CreateSolidBrush(colorFg);
@@ -61,7 +59,7 @@ pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     rect.top = window.scaleDpi(1);
     rect.right -= window.scaleDpi(1);
     rect.bottom -= window.scaleDpi(1);
-    _ = w.FillRect(hdc, &rect, hbrushFg);
+    try w.mapFailure(w.FillRect(hdc, &rect, hbrushFg));
 
     try self.drawDesktopNo(hdc);
     try self.drawText(hdc);
@@ -74,6 +72,8 @@ pub fn onDpiChange(event_handlers: *Window.EventHandlers, window: *Window, wPara
     try window.setSize(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    _ = w.DeleteObject(self.font);
+    _ = w.DeleteObject(self.desktopFont);
     try self.setFonts();
 }
 
@@ -149,7 +149,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
             .onMouseMove = onMouseMove,
             .onSetFocus = onSetFocus,
             .onKillFocus = onKillFocus,
-            .onKeyDown = onKeyDown
+            .onKeyDown = onKeyDown,
+            .onDestroy = onDestroy
         },
         .callbacks = callbacks
     };

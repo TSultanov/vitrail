@@ -30,12 +30,12 @@ pub const DesktopWindow = struct {
     desktopNumber: ?usize,
     originalAllocator: *std.mem.Allocator,
 
-    pub fn destroy(self: *DesktopWindow) !void {
-        try originalAllocator.free(title);
-        try originalAllocator.free(class);
-        if (executableName) |fname| try originalAllocator.free(fname);
+    pub fn destroy(self: DesktopWindow) !void {
+        self.originalAllocator.free(self.title);
+        self.originalAllocator.free(self.class);
+        if (self.executableName) |fname| self.originalAllocator.free(fname);
 
-        _ = w.DestroyIcon(icon);
+        _ = w.DestroyIcon(self.icon);
     }
 };
 
@@ -55,28 +55,27 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
     return 1;
 }
 
-pub fn init(hInstance: w.HINSTANCE, allocator: *Allocator) SystemInteraction {
+pub fn init(hInstance: w.HINSTANCE, allocator: *Allocator) !SystemInteraction {
+    const serviceProvider = try com.IServiceProvider.create();
     return SystemInteraction{
         .allocator = allocator,
         .hInstance = hInstance,
+        .desktopManager = try com.IVirtualDesktopManager.create(),
+        .serviceProvider = serviceProvider,
+        .desktopManagerInternal = try com.IVirtualDesktopManagerInternal.create(serviceProvider),
     };
 }
 
 pub const SystemInteraction = struct {
     allocator: *Allocator,
     hInstance: w.HINSTANCE,
+    desktopManager: *com.IVirtualDesktopManager,
+    serviceProvider: *com.IServiceProvider,
+    desktopManagerInternal: *com.IVirtualDesktopManagerInternal,
 
-    pub fn getWindowList(self: @This()) ![]DesktopWindow {
-        var desktopManager = try com.IVirtualDesktopManager.create();
-        defer _ = desktopManager.Release();
-        var serviceProvider = try com.IServiceProvider.create();
-        defer _ = serviceProvider.Release();
-        var desktopManagerInternal = try com.IVirtualDesktopManagerInternal.create(serviceProvider);
-        defer _ = desktopManagerInternal.Release();
-
+    pub fn getWindowList(self: @This()) !std.ArrayList(DesktopWindow) { //TODO: accept allocator as function argument, remove dependency on hInstance
         var desktopsNullable: ?*com.IObjectArray = undefined;
-        var desktopsHr = desktopManagerInternal.GetDesktops(&desktopsNullable);
-
+        var desktopsHr = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
         var desktops = desktopsNullable orelse unreachable;
         defer _ = desktops.Release();
 
@@ -84,6 +83,7 @@ pub const SystemInteraction = struct {
         var countHr = desktops.GetCount(&dCount);
 
         var desktopsMap = std.hash_map.AutoHashMap(w.GUID, usize).init(self.allocator);
+        defer desktopsMap.deinit();
 
         var i: usize = 0;
         while (i < dCount) {
@@ -95,16 +95,18 @@ pub const SystemInteraction = struct {
         }
 
         var hwndList = std.ArrayList(w.HWND).init(self.allocator);
+        defer hwndList.deinit();
         _ = w.EnumWindows(enumWindowProc, @intCast(c_longlong, @ptrToInt(&hwndList)));
-        var windowList = std.ArrayList(DesktopWindow).init(self.allocator);
+        var windowList = std.ArrayList(DesktopWindow).init(self.allocator); //TODO check for memory leak here
         for (hwndList.items) |hwnd| {
             var shouldShow = try self.shouldShowWindow(hwnd);
+            if(!shouldShow) continue;
             var title = try self.getWindowTitle(hwnd);
             var class = try self.getWindowClass(hwnd);
             var icon: w.HICON = try self.getWindowIcon(hwnd);
 
             var desktopId: w.GUID = undefined;
-            _ = desktopManager.GetWindowDesktopId(hwnd, &desktopId);
+            _ = self.desktopManager.GetWindowDesktopId(hwnd, &desktopId);
 
             var executablePath = try self.getWindowFilePath(hwnd);
             var executableName: ?[:0]u16 = null;
@@ -127,7 +129,7 @@ pub const SystemInteraction = struct {
                 });
             }
         }
-        return windowList.items;
+        return windowList;
     }
 
     fn getWindowTitle(self: @This(), hwnd: w.HWND) ![:0]u16 {
@@ -190,6 +192,7 @@ pub const SystemInteraction = struct {
             var largeIcon: w.HICON = undefined;
             var smallIcon: w.HICON = undefined;
             _ = w.SHDefExtractIconW(fileName, iconIndex, 0, &largeIcon, &smallIcon, 0); //TODO: process errors
+            _ = w.DestroyIcon(smallIcon);
             return largeIcon;
         }
 

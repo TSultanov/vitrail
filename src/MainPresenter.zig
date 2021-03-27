@@ -21,7 +21,7 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     self.* = .{
         .allocator = allocator,
         .window = null,
-        .si = SystemInteraction.init(hInstance, allocator),
+        .si = try SystemInteraction.init(hInstance, allocator),
         .hInstance = hInstance
     };
 
