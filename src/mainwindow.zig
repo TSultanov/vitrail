@@ -37,7 +37,9 @@ pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     self.* = .{
         .window = undefined,
         .layout = undefined,
-        .event_handlers = .{ .onDestroy = onDestroyHandler },
+        .event_handlers = .{
+            .onDestroy = onDestroyHandler,
+        },
         .desktop_windows = undefined,
         .hInstance = hInstance,
         .allocator = allocator

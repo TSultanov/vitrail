@@ -65,6 +65,31 @@ pub fn onDpiChange(event_handlers: *Window.EventHandlers, window: *Window, wPara
     try self.setFonts();
 }
 
+pub fn onMouseMove(event_handlers: *Window.EventHandlers, window: *Window, keys: u64, x: i16, y: i16) !void {
+    const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    try self.window.focus();
+}
+
+fn onSetFocus(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    try self.select();
+}
+
+fn onKillFocus(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    try self.unselect();
+}
+
+fn select(self: *Self) !void {
+    self.selected = true;
+    try self.window.redraw();
+}
+
+fn unselect(self: *Self) !void {
+    self.selected = false;
+    try self.window.redraw();
+}
+
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, eventHandlers: *EventHandlers, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = desktopWindow.title,
@@ -97,6 +122,9 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
             .onClick = onClick,
             .onPaint = onPaint,
             .onDpiChange = onDpiChange,
+            .onMouseMove = onMouseMove,
+            .onSetFocus = onSetFocus,
+            .onKillFocus = onKillFocus
         },
     };
 

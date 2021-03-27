@@ -52,7 +52,10 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
     self.* = .{
         .window = undefined,
         .allocator = allocator,
-        .event_handlers = .{ .onResize = onResizeHandler, .onPaint = onPaintHandler }
+        .event_handlers = .{
+            .onResize = onResizeHandler,
+            .onPaint = onPaintHandler,
+        }
     };
     
     var window: *Window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);

@@ -109,7 +109,14 @@ pub const EventHandlers = struct {
     onCommand: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onNotify: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDpiChange: fn(self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = onDpiChangeHandler,
+    onMouseMove: fn(self: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) anyerror!void = onMouseMoveDefaultHandler,
+    onMouseLeave: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onActivate: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onSetFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onKillFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
+
+pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
 
 pub fn onDpiChangeHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     window.dpi = w.GetDpiForWindow(window.hwnd);
@@ -164,6 +171,17 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             try self.event_handlers.onClick(self.event_handlers, self);
             return 0;
         },
+        w.WM_MOUSEMOVE => {
+            const x: i16 = @intCast(i16, lParam & 0xff);
+            const y: i16 = @intCast(i16, (lParam >> 16) & 0xff);
+            try self.event_handlers.onMouseMove(self.event_handlers, self, wParam, x, y);
+            self.startMouseTracking();
+            return 0;
+        },
+        w.WM_MOUSELEAVE => {
+            try self.event_handlers.onMouseLeave(self.event_handlers, self);
+            return 0;
+        },
         w.WM_CREATE => {
             try self.event_handlers.onCreate(self.event_handlers, self);
             return 0;
@@ -187,6 +205,18 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         w.WM_DPICHANGED => {
             try self.event_handlers.onDpiChange(self.event_handlers, self, wParam, lParam);
             return 0;
+        },
+        w.WM_ACTIVATE => {
+            try self.event_handlers.onActivate(self.event_handlers, self, wParam, lParam);
+            return 0;  
+        },
+        w.WM_SETFOCUS => {
+            try self.event_handlers.onSetFocus(self.event_handlers, self, wParam, lParam);
+            return 0;  
+        },
+        w.WM_KILLFOCUS => {
+            try self.event_handlers.onKillFocus(self.event_handlers, self, wParam, lParam);
+            return 0;  
         },
         else => {
             return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);
@@ -240,6 +270,17 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
     _ = w.SendMessage(hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
 
     return window;
+}
+
+pub fn startMouseTracking(self: Self) void {
+    var config: w.TRACKMOUSEEVENT = .{
+        .cbSize = @sizeOf(w.TRACKMOUSEEVENT),
+        .dwFlags = w.TME_LEAVE,
+        .hwndTrack = self.hwnd,
+        .dwHoverTime = w.HOVER_DEFAULT
+    };
+
+    _ = w.TrackMouseEvent(&config);
 }
 
 pub fn scaleDpi(self: Self, x: i32) i32 {
