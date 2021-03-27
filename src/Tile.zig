@@ -5,7 +5,7 @@ const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
 
-const color_offset = 0;
+const color_offset = 50;
 const desktop_no_font_size = 32;
 
 allocator: *std.mem.Allocator,
@@ -204,7 +204,7 @@ fn createColor(text: []const u16, focused: bool) w.COLORREF {
     var pre_s = ((crc << 0) & 0xFF);
     var h: f32 = @intToFloat(f32, pre_h) / 255.0;
     var s: f32 = 0.1 + @intToFloat(f32, pre_s) / 512.0;
-    var l: f32 = if (focused) 0.3 else 0.6;
+    var l: f32 = if (focused) 0.4 else 0.6;
 
     var q = if (l < 0.5) l * (1.0 + s) else l + s - l * s;
     var p = 2.0 * l - q;
