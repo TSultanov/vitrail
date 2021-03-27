@@ -2,7 +2,7 @@ usingnamespace @import("vitrail.zig");
 const MainPresenter = @import("MainPresenter.zig");
 
 //pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.C) c_int {
-pub export fn main() void {
+pub export fn main() c_int {
     const hInstanceWinApi = w.GetModuleHandleW(null); //@ptrCast(w.HINSTANCE, @alignCast(4, hInstance));
     //const stdin = std.io.getStdIn().inStream();
     //_ = stdin.readByte() catch unreachable;
@@ -12,23 +12,26 @@ pub export fn main() void {
 
     _ = w.InitCommonControlsEx(&picce);
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(!gpa.deinit());
 
     _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
 
-    var main_presenter = MainPresenter.init(hInstanceWinApi, &arena.allocator) catch unreachable;
+    var main_presenter = MainPresenter.init(hInstanceWinApi, &gpa.allocator) catch unreachable;
             main_presenter.show() catch unreachable;
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {
-        if (msg.message == w.WM_HOTKEY){
+        if (msg.message == w.WM_HOTKEY)
+        {
             main_presenter.show() catch unreachable;
-        } else {
+        }
+        else
+        {
             _ = w.TranslateMessage(&msg);
             _ = w.DispatchMessageW(&msg);
         }
     }
 
-    return; // 0;
+    return 0;
 }
