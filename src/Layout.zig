@@ -129,7 +129,7 @@ pub fn clear(self: *Self) !void {
 
     while (self.window.children.popOrNull()) |window|
     {
-        try window.destroy();
+        window.destroy();
         self.allocator.destroy(window);
     }
 }

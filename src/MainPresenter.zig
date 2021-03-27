@@ -6,34 +6,52 @@ const SystemInteraction = @import("SystemInteraction.zig");
 
 const Self = @This();
 
+allocator: *std.mem.Allocator,
 window: *MainWindow,
 
-pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !Self {
-    var main_window = try MainWindow.create(hInstance, allocator);
+window_callbacks: MainWindow.Callbacks = .{
+    .activateWindow = activateWindow,
+    .hide = hide
+},
+si: SystemInteraction.SystemInteraction,
 
-    try createWidgets(main_window, hInstance, allocator);
+pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
+    var self = try allocator.create(Self);
+    self.* = .{
+        .allocator = allocator,
+        .window = undefined,
+        .si = SystemInteraction.init(hInstance, allocator)
+    };
+
+    var main_window = try MainWindow.create(hInstance, &self.window_callbacks, allocator);
+
+    self.window = main_window;
+    try self.createWidgets();
 
     _ = main_window.window.show();
-    return Self{
-        .window = main_window,
-    };
+    return self;
 }
 
-pub fn createWidgets(main_window: *MainWindow, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !void {
-    var si = SystemInteraction.init(hInstance, allocator);
-
-    var windows = try si.getWindowList();
-
-    for (windows) |window| {
-        var titleUtf8 = try toUtf8(window.title, allocator);
-        defer allocator.free(titleUtf8);
-        var classUtf8 = try toUtf8(window.class, allocator);
-        defer allocator.free(classUtf8);
-
-        var executableNameUtf8: []u8 = if(window.executableName) |en| try toUtf8(en, allocator) else "";
-
-        std.debug.warn("Window \"{s}\", class: \"{s}\", executableName: \"{s}\", desktop {}\n", .{ titleUtf8, classUtf8, executableNameUtf8, window.desktopNumber });
-    }
-
-    try main_window.setDesktopWindows(windows);
+pub fn createWidgets(self: *Self) !void {
+    var windows = try self.si.getWindowList();
+    try self.window.setDesktopWindows(windows);
 }
+
+pub fn hideWidgets(self: *Self) !void {
+    self.window.destroy();
+}
+
+fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow) !void {
+    const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
+
+    var titleUtf8 = try toUtf8(dw.title, self.allocator);
+    defer self.allocator.free(titleUtf8);
+    std.debug.warn("Switching to {s}\n", .{titleUtf8});
+}
+
+fn hide(main_window: *MainWindow) !void {
+    main_window.window.destroy();
+
+    _ = w.PostQuitMessage(0);
+}
+

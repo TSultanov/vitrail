@@ -6,22 +6,32 @@ pub const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
 
+pub const Callbacks = struct {
+    activateWindow: fn(main_window: *Self, dw: DesktopWindow) anyerror!void,
+    hide: fn(main_window: *Self) anyerror!void
+};
+
 window: *Window,
 layout: *Layout,
 event_handlers: Window.EventHandlers,
 desktop_windows: []DesktopWindow,
 hInstance: w.HINSTANCE,
 allocator: *std.mem.Allocator,
+callbacks: *Callbacks,
+
+tile_callbacks: Tile.Callbacks = .{
+    .clicked = tileCallback
+},
 
 fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
-    _ = w.PostQuitMessage(0);
+    //_ = w.PostQuitMessage(0);
 }
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(wParam == w.VK_ESCAPE)
     {
-        _ = w.PostQuitMessage(0);
+        try self.callbacks.hide(self);
     }
 }
 
@@ -35,7 +45,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
-pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
     const desktop = w.GetDesktopWindow();
     var desktopRect: w.RECT = undefined;
     try w.mapFailure(w.GetWindowRect(desktop, &desktopRect));
@@ -61,7 +71,8 @@ pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
         },
         .desktop_windows = undefined,
         .hInstance = hInstance,
-        .allocator = allocator
+        .allocator = allocator,
+        .callbacks = callbacks
     };
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
@@ -86,11 +97,17 @@ pub fn setDesktopWindows(self: *Self, desktopWindows: []DesktopWindow) !void {
     try self.updateBoxes();
 }
 
+fn tileCallback(tile: *Tile) !void {
+    const self = @fieldParentPtr(Self, "tile_callbacks", tile.callbacks);
+
+    try self.callbacks.activateWindow(self, tile.desktopWindow);
+}
+
 fn updateBoxes(self: *Self) !void {
     try self.layout.clear();
 
     for (self.desktop_windows) |dw| {
-        var button = Tile.create(self.hInstance, self.layout.window, dw, self.allocator);
+        var button = Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
     }
 
     try self.updateVisibilityMask();

@@ -78,8 +78,12 @@ pub fn focus(self: Self) !void {
     }
 }
 
-pub fn destroy(self: Self) !void {
-    try w.mapFailure(w.DestroyWindow(self.hwnd));
+pub fn destroy(self: Self) void {
+    for(self.children.items) |child| {
+        child.destroy();
+    }
+
+    _ = w.DestroyWindow(self.hwnd);
 }
 
 pub const WindowParameters = struct {

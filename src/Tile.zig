@@ -3,10 +3,16 @@ pub const Window = @import("Window.zig");
 
 const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
+pub const Callbacks = struct {
+    clicked: fn (tile: *Self) anyerror!void,
+};
+
 const Self = @This();
 
 const color_offset = 50;
 const desktop_no_font_size = 32;
+
+
 
 allocator: *std.mem.Allocator,
 window: *Window,
@@ -19,9 +25,20 @@ font: w.HGDIOBJ,
 desktopFont: w.HGDIOBJ,
 desktopNumberString: [:0]u16,
 
+callbacks: *Callbacks,
+
+fn onDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+
+    self.allocator.free(self.desktopNumberString);
+    _ = DeleteObject(self.font);
+    _ = DeleteObject(self.desktopFont);
+    self.allocator.destroy(window);
+}
+
 pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-    try self.desktopWindow.activate();
+    try self.callbacks.clicked(self);
 }
 
 pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
@@ -90,7 +107,7 @@ fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.W
 
     if(wParam == w.VK_RETURN) {
          // Handle return
-        try self.desktopWindow.activate();
+        try self.callbacks.clicked(self);
     }
     else
     if(self.window.parent) |p| {
@@ -99,7 +116,7 @@ fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.W
     }
 }
 
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = desktopWindow.title,
         .className = toUtf16const("VitrailTile"),
@@ -135,6 +152,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
             .onKillFocus = onKillFocus,
             .onKeyDown = onKeyDown
         },
+        .callbacks = callbacks
     };
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
