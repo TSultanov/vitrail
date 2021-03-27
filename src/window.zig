@@ -295,3 +295,16 @@ pub fn scaleDpi(self: Self, x: i32) i32 {
 pub fn unscaleDpi(self: Self, x: i32) i32 {
     return w.MulDiv(x, defaultDpi, @intCast(i32, self.dpi));
 }
+
+pub fn getChildRgn(self: Self) !w.HRGN {
+    var hRgn = w.CreateRectRgn(0,0,0,0);
+    for(self.children.items) |child| {
+        var childRgn = child.getRgn();
+        defer _ = w.DeleteObject(childRgn);
+        var newRgn: w.HRGN = undefined;
+        _ = w.CombineRgn(newRgn, hRgn, childRgn, w.RGN_OR);
+        _ = w.DeleteObject(hRgn);
+        hRgn = newRgn;
+    }
+    return hRgn;
+}

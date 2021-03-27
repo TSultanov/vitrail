@@ -140,6 +140,9 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
 
+    _ = w.SetWindowLong(window.hwnd, w.GWL_EXSTYLE, w.WS_EX_LAYERED);
+    _ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
+
     try self.setFonts();
 
     return self;

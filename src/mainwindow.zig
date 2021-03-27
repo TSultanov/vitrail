@@ -25,11 +25,29 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
+fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+    var ps: w.PAINTSTRUCT = undefined;
+    var hdc = w.BeginPaint(window.hwnd, &ps);
+    defer _ = w.EndPaint(window.hwnd, &ps);
+    defer _ = w.ReleaseDC(window.hwnd, hdc);
+    var hbrushBg = w.CreateSolidBrush(0xaa000000);
+    defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
+    try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
+}
+
 pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
-    const windowConfig = Window.WindowParameters { 
-        .width = 1024,
-        .height = 768,
-        .title = toUtf16const("MainWindow")
+    const desktop = w.GetDesktopWindow();
+    var desktopRect: w.RECT = undefined;
+    try w.mapFailure(w.GetWindowRect(desktop, &desktopRect));
+
+    const windowConfig = Window.WindowParameters {
+        .exStyle = w.WS_EX_LAYERED | w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
+        .x = desktopRect.left,
+        .y = desktopRect.top,
+        .width = desktopRect.right,
+        .height = desktopRect.bottom,
+        .title = toUtf16const("MainWindow"),
+        .style = w.WS_BORDER
     };
 
     var self = try allocator.create(Self);
@@ -38,7 +56,8 @@ pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
         .layout = undefined,
         .event_handlers = .{
             .onDestroy = onDestroyHandler,
-            .onKeyDown = onKeyDownHandler
+            .onKeyDown = onKeyDownHandler,
+            .onPaint = onPaintHandler
         },
         .desktop_windows = undefined,
         .hInstance = hInstance,
@@ -47,6 +66,15 @@ pub fn create(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
+    _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
+    _ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
+    const margins = w.MARGINS {
+        .cxLeftWidth = -1,
+        .cxRightWidth = -1,
+        .cyTopHeight = -1,
+        .cyBottomHeight = -1
+    };
+    _ = w.DwmExtendFrameIntoClientArea(window.hwnd, &margins);
 
     self.layout = try Layout.create(hInstance, window, allocator);
 
@@ -64,4 +92,12 @@ fn updateBoxes(self: *Self) !void {
     for (self.desktop_windows) |dw| {
         var button = Tile.create(self.hInstance, self.layout.window, dw, self.allocator);
     }
+
+    try self.updateVisibilityMask();
+}
+
+fn updateVisibilityMask(self: Self) !void {
+    const rgn = try self.layout.window.getChildRgn();
+    defer _ = w.DeleteObject(rgn);
+    _ = w.SetWindowRgn(self.window.hwnd, rgn, 1);
 }

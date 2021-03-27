@@ -13,6 +13,7 @@ pub fn build(b: *Builder) void {
     exe.linkSystemLibrary("ComCtl32");
     exe.linkSystemLibrary("Ole32");
     exe.linkSystemLibrary("Shlwapi");
+    exe.linkSystemLibrary("Dwmapi");
     exe.setBuildMode(mode);
     exe.install();
 

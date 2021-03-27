@@ -5,6 +5,8 @@ pub usingnamespace @cImport({
     @cInclude("shlwapi.h");
     @cInclude("shlobj.h");
     @cInclude("shlobj_core.h");
+    @cInclude("uxtheme.h");
+    @cInclude("dwmapi.h");
 });
 
 //pub const HICON_a1 = *opaque {};
