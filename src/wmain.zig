@@ -15,12 +15,18 @@ pub export fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var main_window = MainPresenter.init(hInstanceWinApi, &arena.allocator) catch unreachable;
+    _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
+
+    var main_presenter = MainPresenter.init(hInstanceWinApi, &arena.allocator) catch unreachable;
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {
-        _ = w.TranslateMessage(&msg);
-        _ = w.DispatchMessageW(&msg);
+        if (msg.message == w.WM_HOTKEY){
+            main_presenter.show() catch unreachable;
+        } else {
+            _ = w.TranslateMessage(&msg);
+            _ = w.DispatchMessageW(&msg);
+        }
     }
 
     return; // 0;

@@ -7,7 +7,8 @@ const SystemInteraction = @import("SystemInteraction.zig");
 const Self = @This();
 
 allocator: *std.mem.Allocator,
-window: *MainWindow,
+window: ?*MainWindow,
+hInstance: w.HINSTANCE,
 
 window_callbacks: MainWindow.Callbacks = .{
     .activateWindow = activateWindow,
@@ -19,22 +20,19 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     var self = try allocator.create(Self);
     self.* = .{
         .allocator = allocator,
-        .window = undefined,
-        .si = SystemInteraction.init(hInstance, allocator)
+        .window = null,
+        .si = SystemInteraction.init(hInstance, allocator),
+        .hInstance = hInstance
     };
 
-    var main_window = try MainWindow.create(hInstance, &self.window_callbacks, allocator);
-
-    self.window = main_window;
-    try self.createWidgets();
-
-    _ = main_window.window.show();
     return self;
 }
 
 pub fn createWidgets(self: *Self) !void {
-    var windows = try self.si.getWindowList();
-    try self.window.setDesktopWindows(windows);
+    if(self.window) |view| {
+        var windows = try self.si.getWindowList();
+        try view.setDesktopWindows(windows);
+    }
 }
 
 pub fn hideWidgets(self: *Self) !void {
@@ -50,8 +48,24 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
 }
 
 fn hide(main_window: *MainWindow) !void {
-    main_window.window.destroy();
+    const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
 
-    _ = w.PostQuitMessage(0);
+    main_window.window.destroy();
+    if(self.window) |window| {
+        self.allocator.destroy(window);
+        self.window = null;
+    }
+    //_ = w.PostQuitMessage(0);
 }
 
+pub fn show(self: *Self) !void {
+    if(self.window == null) {
+        var main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
+
+        self.window = main_window;
+
+        try self.createWidgets();
+        _ = main_window.window.show();
+        main_window.window.activate();
+    }
+}

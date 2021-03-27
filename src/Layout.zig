@@ -121,6 +121,9 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
     var window: *Window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     window.docked = true;
 
+    // _ = w.SetWindowLong(window.hwnd, w.GWL_EXSTYLE, w.WS_EX_LAYERED);
+    // _ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
+
     self.window = window;
     return self;
 }
@@ -132,7 +135,7 @@ pub fn clear(self: *Self) !void {
     }
 }
 
-fn layout(self: *Self) !void {
+pub fn layout(self: *Self) !void {
     if (self.window.children.items.len == 0) return;
 
     self.rows_max = std.math.minInt(i64);

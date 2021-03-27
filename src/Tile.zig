@@ -12,8 +12,6 @@ const Self = @This();
 const color_offset = 50;
 const desktop_no_font_size = 32;
 
-
-
 allocator: *std.mem.Allocator,
 window: *Window,
 event_handlers: Window.EventHandlers,

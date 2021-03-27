@@ -6,7 +6,7 @@ const defaultDpi = 96;
 
 hwnd: w.HWND,
 hInstance: w.HINSTANCE,
-children: *std.ArrayList(*Self),
+children: std.ArrayList(*Self),
 event_handlers: *EventHandlers,
 docked: bool = false,
 parent: ?*Self,
@@ -84,6 +84,10 @@ pub fn destroy(self: Self) void {
     }
 
     _ = w.DestroyWindow(self.hwnd);
+}
+
+pub fn activate(self: *Self) void {
+    _ = w.SetActiveWindow(self.hwnd);
 }
 
 pub const WindowParameters = struct {
@@ -254,14 +258,11 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
     var parent: w.HWND = if (window_parameters.parent) |p| p.hwnd else null;
     var hwnd = w.CreateWindowExW(window_parameters.exStyle, window_parameters.className, window_parameters.title, window_parameters.style, window_parameters.x, window_parameters.y, window_parameters.width, window_parameters.height, parent, window_parameters.menu, hInstance, null);
 
-    var children = try allocator.create(std.ArrayList(*Self));
-    children.* = std.ArrayList(*Self).init(allocator);
-
     var window = try allocator.create(Self);
     window.* = Self {
         .hwnd = hwnd,
         .hInstance = hInstance,
-        .children = children,
+        .children = std.ArrayList(*Self).init(allocator),
         .event_handlers = event_handlers,
         .parent = window_parameters.parent,
         .dpi = w.GetDpiForWindow(hwnd),

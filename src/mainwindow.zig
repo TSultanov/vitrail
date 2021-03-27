@@ -18,6 +18,7 @@ desktop_windows: []DesktopWindow,
 hInstance: w.HINSTANCE,
 allocator: *std.mem.Allocator,
 callbacks: *Callbacks,
+boxes: std.ArrayList(*Tile),
 
 tile_callbacks: Tile.Callbacks = .{
     .clicked = tileCallback
@@ -25,7 +26,14 @@ tile_callbacks: Tile.Callbacks = .{
 
 fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-    self.allocator.destroy(window);
+
+    while (self.boxes.popOrNull()) |box| {
+        self.allocator.destroy(box);
+    }
+
+    self.boxes.deinit();
+    self.allocator.destroy(self.window);
+    self.allocator.destroy(self.layout);
 }
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
@@ -73,7 +81,8 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
         .desktop_windows = undefined,
         .hInstance = hInstance,
         .allocator = allocator,
-        .callbacks = callbacks
+        .callbacks = callbacks,
+        .boxes = std.ArrayList(*Tile).init(allocator)
     };
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
@@ -104,12 +113,28 @@ fn tileCallback(tile: *Tile) !void {
     try self.callbacks.activateWindow(self, tile.desktopWindow);
 }
 
+pub fn hideBoxes(self: *Self) !void {
+    try self.layout.clear();
+    while (self.boxes.popOrNull()) |box| {
+        self.allocator.destroy(box);
+    }
+}
+
 fn updateBoxes(self: *Self) !void {
     try self.layout.clear();
 
-    for (self.desktop_windows) |dw| {
-        var button = Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
+    while (self.boxes.popOrNull()) |box| {
+        self.allocator.destroy(box);
     }
+
+    std.debug.warn("Creating {} tiles\n", .{self.desktop_windows.len});
+
+    for (self.desktop_windows) |dw| {
+        var box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
+        try self.boxes.append(box);
+    }
+
+    try self.layout.layout();
 
     try self.updateVisibilityMask();
 }
