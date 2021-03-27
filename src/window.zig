@@ -114,6 +114,7 @@ pub const EventHandlers = struct {
     onActivate: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onSetFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKillFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onKeyDown: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
 pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
@@ -217,6 +218,10 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         w.WM_KILLFOCUS => {
             try self.event_handlers.onKillFocus(self.event_handlers, self, wParam, lParam);
             return 0;  
+        },
+        w.WM_KEYDOWN => {
+            try self.event_handlers.onKeyDown(self.event_handlers, self, wParam, lParam);
+            return 0;
         },
         else => {
             return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);

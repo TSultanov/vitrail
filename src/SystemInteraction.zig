@@ -30,7 +30,13 @@ pub const DesktopWindow = struct {
     desktopNumber: ?usize,
     originalAllocator: *std.mem.Allocator,
 
-    pub fn destroy() !void {
+    pub fn activate(self: DesktopWindow) !void {
+        var titleUtf8 = try toUtf8(self.title, self.originalAllocator);
+        defer self.originalAllocator.free(titleUtf8);
+        std.debug.warn("Switching to {s}\n", .{titleUtf8});
+    }
+
+    pub fn destroy(self: *DesktopWindow) !void {
         try originalAllocator.free(title);
         try originalAllocator.free(class);
         if (executableName) |fname| try originalAllocator.free(fname);

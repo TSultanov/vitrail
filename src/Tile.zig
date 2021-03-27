@@ -11,7 +11,6 @@ const desktop_no_font_size = 32;
 allocator: *std.mem.Allocator,
 window: *Window,
 event_handlers: Window.EventHandlers,
-tile_event_handlers: *EventHandlers,
 selected: bool,
 desktopWindow: DesktopWindow,
 color: w.COLORREF,
@@ -20,13 +19,9 @@ font: w.HGDIOBJ,
 desktopFont: w.HGDIOBJ,
 desktopNumberString: [:0]u16,
 
-pub const EventHandlers = struct {
-    onClick: fn (self: *EventHandlers, tile: *Self) anyerror!void,
-};
-
 pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-    try self.tile_event_handlers.onClick(self.tile_event_handlers, self);
+    try self.desktopWindow.activate();
 }
 
 pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
@@ -90,7 +85,21 @@ fn unselect(self: *Self) !void {
     try self.window.redraw();
 }
 
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, eventHandlers: *EventHandlers, allocator: *std.mem.Allocator) !*Self {
+fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+
+    if(wParam == w.VK_RETURN) {
+         // Handle return
+        try self.desktopWindow.activate();
+    }
+    else
+    if(self.window.parent) |p| {
+        // Relay event to parent if key is not return
+        _ = w.SendMessage(p.hwnd, w.WM_KEYDOWN, wParam, lParam);
+    }
+}
+
+pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = desktopWindow.title,
         .className = toUtf16const("VitrailTile"),
@@ -110,7 +119,6 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
     self.* = .{
         .allocator = allocator,
         .window = undefined,
-        .tile_event_handlers = eventHandlers,
         .selected = false,
         .desktopWindow = desktopWindow,
         .color = if (desktopWindow.executableName) |en| createColor(en, false) else createColor(desktopWindow.class, false),
@@ -124,7 +132,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
             .onDpiChange = onDpiChange,
             .onMouseMove = onMouseMove,
             .onSetFocus = onSetFocus,
-            .onKillFocus = onKillFocus
+            .onKillFocus = onKillFocus,
+            .onKeyDown = onKeyDown
         },
     };
 
