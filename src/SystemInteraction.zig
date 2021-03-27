@@ -33,7 +33,7 @@ pub const DesktopWindow = struct {
     pub fn destroy(self: DesktopWindow) !void {
         self.originalAllocator.free(self.title);
         self.originalAllocator.free(self.class);
-        if (self.executableName) |fname| self.originalAllocator.free(fname);
+        if (self.executablePath) |fname| self.originalAllocator.free(fname);
 
         _ = w.DestroyIcon(self.icon);
     }
