@@ -18,6 +18,7 @@ pub export fn main() void {
     _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
 
     var main_presenter = MainPresenter.init(hInstanceWinApi, &arena.allocator) catch unreachable;
+            main_presenter.show() catch unreachable;
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {

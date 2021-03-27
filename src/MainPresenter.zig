@@ -25,6 +25,14 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
         .hInstance = hInstance
     };
 
+    var main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
+
+    self.window = main_window;
+
+    //try self.createWidgets();
+    _ = main_window.window.show();
+    main_window.window.activate();
+
     return self;
 }
 
@@ -50,22 +58,24 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
 fn hide(main_window: *MainWindow) !void {
     const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
 
-    main_window.window.destroy();
+    //main_window.window.destroy();
     if(self.window) |window| {
-        self.allocator.destroy(window);
-        self.window = null;
+        try window.hideBoxes();
+        // self.allocator.destroy(window);
+        // self.window = null;
     }
     //_ = w.PostQuitMessage(0);
 }
 
 pub fn show(self: *Self) !void {
-    if(self.window == null) {
-        var main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
+    try self.createWidgets();
+    // if(self.window == null) {
+    //     var main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
 
-        self.window = main_window;
+    //     self.window = main_window;
 
-        try self.createWidgets();
-        _ = main_window.window.show();
-        main_window.window.activate();
-    }
+    //     try self.createWidgets();
+    //     _ = main_window.window.show();
+    //     main_window.window.activate();
+    // }
 }

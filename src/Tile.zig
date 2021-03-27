@@ -42,6 +42,8 @@ pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
 pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
+    std.debug.warn("Drawing tile\n", .{});
+
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(self.window.hwnd, &ps);
     defer _ = w.EndPaint(self.window.hwnd, &ps);
@@ -119,12 +121,11 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
         .title = desktopWindow.title,
         .className = toUtf16const("VitrailTile"),
         .width = 100, .height = 25,
-        .style = w.WS_TABSTOP | w.WS_VISIBLE | w.WS_CHILD,
+        .style = w.WS_VISIBLE | w.WS_CHILD,
         .parent = parent,
         .register_class = true
     };
 
-    //defer allocator.destroy(desktopNumber);
     var desktopNumberUtf16 = blk: {
             var desktopNumber = try std.fmt.allocPrint(allocator, "{d}", .{desktopWindow.desktopNumber.? + 1});
             break :blk try std.unicode.utf8ToUtf16LeWithNull(allocator, desktopNumber);
@@ -155,9 +156,10 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-
-    _ = w.SetWindowLong(window.hwnd, w.GWL_EXSTYLE, w.WS_EX_LAYERED);
     _ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
+
+    // _ = w.SetWindowLong(window.hwnd, w.GWL_EXSTYLE, w.WS_EX_LAYERED);
+    // _ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
 
     try self.setFonts();
 
@@ -244,7 +246,8 @@ fn createColor(text: []const u16, focused: bool) w.COLORREF {
     var bi: w.COLORREF = @floatToInt(w.COLORREF, b * 255);
     var gi: w.COLORREF = @floatToInt(w.COLORREF, g * 255);
 
-    var color = ri + (bi << 8) + (gi << 16);
+    var color = ri + (gi << 8) + (bi << 16);
+
     return color;
 }
 

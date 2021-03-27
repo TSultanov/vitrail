@@ -34,6 +34,7 @@ fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !voi
     self.boxes.deinit();
     self.allocator.destroy(self.window);
     self.allocator.destroy(self.layout);
+    _ = w.PostQuitMessage(0);
 }
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
@@ -49,7 +50,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
     defer _ = w.ReleaseDC(window.hwnd, hdc);
-    var hbrushBg = w.CreateSolidBrush(0xaa000000);
+    var hbrushBg = w.CreateSolidBrush(0x00000000);
     defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
@@ -60,13 +61,13 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
     try w.mapFailure(w.GetWindowRect(desktop, &desktopRect));
 
     const windowConfig = Window.WindowParameters {
-        .exStyle = w.WS_EX_LAYERED | w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
-        .x = desktopRect.left,
-        .y = desktopRect.top,
-        .width = desktopRect.right,
-        .height = desktopRect.bottom,
+        .exStyle = w.WS_EX_TOPMOST,// | w.WS_EX_TOOLWINDOW, //w.WS_EX_LAYERED
+        .x = 100,//desktopRect.left,
+        .y = 100,//desktopRect.top,
+        .width = 1024,//desktopRect.right,
+        .height = 768,//desktopRect.bottom,
         .title = toUtf16const("MainWindow"),
-        .style = w.WS_BORDER
+        .style = w.WS_OVERLAPPEDWINDOW
     };
 
     var self = try allocator.create(Self);
@@ -87,15 +88,15 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
-    _ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
+    //_ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
+    //_ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
     const margins = w.MARGINS {
         .cxLeftWidth = -1,
         .cxRightWidth = -1,
         .cyTopHeight = -1,
         .cyBottomHeight = -1
     };
-    _ = w.DwmExtendFrameIntoClientArea(window.hwnd, &margins);
+    //_ = w.DwmExtendFrameIntoClientArea(window.hwnd, &margins);
 
     self.layout = try Layout.create(hInstance, window, allocator);
 
@@ -121,11 +122,7 @@ pub fn hideBoxes(self: *Self) !void {
 }
 
 fn updateBoxes(self: *Self) !void {
-    try self.layout.clear();
-
-    while (self.boxes.popOrNull()) |box| {
-        self.allocator.destroy(box);
-    }
+    try self.hideBoxes();
 
     std.debug.warn("Creating {} tiles\n", .{self.desktop_windows.len});
 
@@ -136,7 +133,7 @@ fn updateBoxes(self: *Self) !void {
 
     try self.layout.layout();
 
-    try self.updateVisibilityMask();
+    //try self.updateVisibilityMask();
 }
 
 fn updateVisibilityMask(self: Self) !void {

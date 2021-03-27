@@ -153,8 +153,7 @@ fn onPaintHandler(event_handlers: *EventHandlers, window: *Self) !void {
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
     defer _ = w.ReleaseDC(window.hwnd, hdc);
-    var color = w.GetSysColor(w.COLOR_WINDOW);
-    var hbrushBg = w.CreateSolidBrush(color);
+    var hbrushBg = w.CreateSolidBrush(0x00aaaaaa);
     defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
