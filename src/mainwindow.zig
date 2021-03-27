@@ -24,7 +24,8 @@ tile_callbacks: Tile.Callbacks = .{
 },
 
 fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
-    //_ = w.PostQuitMessage(0);
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    self.allocator.destroy(window);
 }
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {

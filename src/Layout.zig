@@ -93,6 +93,7 @@ fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !voi
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     self.child_index_map.deinit();
     self.pos_idx_map.deinit();
+    self.allocator.destroy(window);
 }
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
@@ -125,12 +126,9 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
 }
 
 pub fn clear(self: *Self) !void {
-    //var wnd: ?*Window = self.window.children.popOrNull();
-
-    while (self.window.children.popOrNull()) |window|
+    while (self.window.children.popOrNull()) |child|
     {
-        window.destroy();
-        self.allocator.destroy(window);
+        child.destroy();
     }
 }
 
