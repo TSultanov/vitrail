@@ -26,6 +26,12 @@ pub export fn main() c_int {
         {
             main_presenter.show() catch unreachable;
         }
+        else if(msg.message == w.WM_KEYDOWN and msg.wParam == w.VK_F12) // Hack to trigger GPA deinit for debugging
+        {
+            std.debug.warn("Hi\n", .{});
+            defer std.debug.assert(!gpa.deinit());
+            return 0;
+        }
         else
         {
             _ = w.TranslateMessage(&msg);

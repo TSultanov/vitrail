@@ -34,6 +34,14 @@ fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !voi
     self.boxes.deinit();
     self.allocator.destroy(self.window);
     self.allocator.destroy(self.layout);
+
+    // if(self.desktop_windows) |desktop_windows| {
+    //     for (desktop_windows.items) |dw| {
+    //         try dw.destroy();
+    //     }
+    //     desktop_windows.deinit();
+    // }
+
     _ = w.PostQuitMessage(0);
 }
 
