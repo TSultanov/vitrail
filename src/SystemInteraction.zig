@@ -230,7 +230,7 @@ pub const SystemInteraction = struct {
 
         comptime var taskListDeletedProp = try toUtf16("ITaskList_Deleted");
         var taskListDeleted = w.GetPropW(hwnd, taskListDeletedProp);
-        defer if(taskListDeleted != null) { _ = w.CloseHandle(taskListDeleted); }
+        defer if(taskListDeleted != null) { _ = w.CloseHandle(taskListDeleted); };
         if (taskListDeleted != null) return false;
 
         var class = try self.getWindowClass(hwnd);
