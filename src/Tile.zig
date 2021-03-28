@@ -25,13 +25,16 @@ desktopNumberString: [:0]u16,
 
 callbacks: *Callbacks,
 
+fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    self.allocator.free(self.desktopNumberString);
+    self.allocator.destroy(window);
+}
+
 fn onDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-
-    self.allocator.free(self.desktopNumberString);
     _ = w.DeleteObject(self.font);
     _ = w.DeleteObject(self.desktopFont);
-    self.allocator.destroy(window);
 }
 
 pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
@@ -150,7 +153,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
             .onSetFocus = onSetFocus,
             .onKillFocus = onKillFocus,
             .onKeyDown = onKeyDown,
-            .onDestroy = onDestroy
+            .onDestroy = onDestroy,
+            .onAfterDestroy = onAfterDestroy
         },
         .callbacks = callbacks
     };

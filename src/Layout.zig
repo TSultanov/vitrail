@@ -88,7 +88,7 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
-fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     self.child_index_map.deinit();
     self.pos_idx_map.deinit();
@@ -113,7 +113,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
             .onResize = onResizeHandler,
             .onPaint = onPaintHandler,
             .onKeyDown = onKeyDownHandler,
-            .onDestroy = onDestroyHandler
+            .onAfterDestroy = onAfterDestroyHandler
         }
     };
     

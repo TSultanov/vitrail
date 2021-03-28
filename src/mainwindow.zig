@@ -24,7 +24,7 @@ tile_callbacks: Tile.Callbacks = .{
     .clicked = tileCallback
 },
 
-fn onDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
     while (self.boxes.popOrNull()) |box| {
@@ -83,7 +83,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
         .window = undefined,
         .layout = undefined,
         .event_handlers = .{
-            .onDestroy = onDestroyHandler,
+            .onAfterDestroy = onAfterDestroyHandler,
             .onKeyDown = onKeyDownHandler,
             .onPaint = onPaintHandler
         },
@@ -111,17 +111,8 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
     return self;
 }
 
-pub fn setDesktopWindows(self: *Self, desktopWindows: std.ArrayList(DesktopWindow)) !void { //TODO: Move desktop windows ownership to presenter
-    // First destroy existing boxes if any
-    if(self.desktop_windows) |desktop_windows| {
-        for(desktop_windows.items) |desktop_window| {
-            try desktop_window.destroy();
-        }
-
-        desktop_windows.deinit();
-        self.desktop_windows = null;
-    }
-
+pub fn setDesktopWindows(self: *Self, desktopWindows: std.ArrayList(DesktopWindow)) !void {
+    try self.hideBoxes();
     self.desktop_windows = desktopWindows;
     try self.updateBoxes();
 }
@@ -137,11 +128,10 @@ pub fn hideBoxes(self: *Self) !void {
     while (self.boxes.popOrNull()) |box| {
         self.allocator.destroy(box);
     }
+    self.desktop_windows = null;
 }
 
 fn updateBoxes(self: *Self) !void {
-    try self.hideBoxes();
-
     if(self.desktop_windows) |desktop_windows| {
         for (desktop_windows.items) |dw| {
             var box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);

@@ -113,6 +113,7 @@ pub const EventHandlers = struct {
     onResize: fn (self: *EventHandlers, window: *Self) anyerror!void = onResizeHandler,
     onCreate: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDestroy: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onAfterDestroy: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onPaint: fn (self: *EventHandlers, window: *Self) anyerror!void = onPaintHandler,
     onCommand: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onNotify: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
@@ -196,6 +197,10 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_DESTROY => {
             try self.event_handlers.onDestroy(self.event_handlers, self);
+            return 0;
+        },
+        w.WM_NCDESTROY => {
+            try self.event_handlers.onAfterDestroy(self.event_handlers, self);
             return 0;
         },
         w.WM_PAINT => {

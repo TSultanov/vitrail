@@ -7,21 +7,24 @@ const SystemInteraction = @import("SystemInteraction.zig");
 const Self = @This();
 
 allocator: *std.mem.Allocator,
+//arena: std.heap.ArenaAllocator,
 window: ?*MainWindow,
 hInstance: w.HINSTANCE,
+desktop_windows: ?std.ArrayList(SystemInteraction.DesktopWindow) = null,
 
 window_callbacks: MainWindow.Callbacks = .{
     .activateWindow = activateWindow,
-    .hide = hide
+    .hide = destroyWidgets
 },
-si: SystemInteraction.SystemInteraction,
+si: SystemInteraction,
 
 pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     var self = try allocator.create(Self);
     self.* = .{
         .allocator = allocator,
+        //.arena = std.heap.ArenaAllocator.init(allocator),
         .window = null,
-        .si = try SystemInteraction.init(hInstance, allocator),
+        .si = try SystemInteraction.init(),
         .hInstance = hInstance
     };
 
@@ -38,8 +41,11 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
 
 pub fn createWidgets(self: *Self) !void {
     if(self.window) |view| {
-        var windows = try self.si.getWindowList();
-        try view.setDesktopWindows(windows);
+        try destroyWidgets(view);
+        self.desktop_windows = try self.si.getWindowList(self.allocator);
+        if(self.desktop_windows) |desktop_windows| {
+            try view.setDesktopWindows(desktop_windows);
+        }
     }
 }
 
@@ -55,12 +61,24 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
     std.debug.warn("Switching to {s}\n", .{titleUtf8});
 }
 
-fn hide(main_window: *MainWindow) !void {
+fn destroyWidgets(main_window: *MainWindow) !void {
     const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
 
     //main_window.window.destroy();
     if(self.window) |window| {
         try window.hideBoxes();
+
+        if(self.desktop_windows) |desktop_windows| {
+            for(desktop_windows.items) |desktop_window| {
+                try desktop_window.destroy();
+            }
+
+            desktop_windows.deinit();
+            self.desktop_windows = null;
+        }
+
+        //self.arena.deinit();
+        //self.arena = std.heap.ArenaAllocator.init(self.allocator);
         // self.allocator.destroy(window);
         // self.window = null;
     }

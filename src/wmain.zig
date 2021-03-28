@@ -12,7 +12,7 @@ pub export fn main() c_int {
 
     _ = w.InitCommonControlsEx(&picce);
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{.safety = true}){};
     defer std.debug.assert(!gpa.deinit());
 
     _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
@@ -25,12 +25,6 @@ pub export fn main() c_int {
         if (msg.message == w.WM_HOTKEY)
         {
             main_presenter.show() catch unreachable;
-        }
-        else if(msg.message == w.WM_KEYDOWN and msg.wParam == w.VK_F12) // Hack to trigger GPA deinit for debugging
-        {
-            std.debug.warn("Hi\n", .{});
-            defer std.debug.assert(!gpa.deinit());
-            return 0;
         }
         else
         {
