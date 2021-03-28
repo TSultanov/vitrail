@@ -58,10 +58,6 @@ pub fn hideWidgets(self: *Self) !void {
 fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow) !void {
     const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
 
-    var titleUtf8 = try toUtf8(dw.title, self.allocator);
-    defer self.allocator.free(titleUtf8);
-    std.debug.warn("Switching to {s}\n", .{titleUtf8});
-
     if(w.IsIconic(dw.hwnd) != 0) {
         _ = w.ShowWindow(dw.hwnd, w.SW_RESTORE);
     }
