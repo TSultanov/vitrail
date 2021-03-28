@@ -62,6 +62,10 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
     defer self.allocator.free(titleUtf8);
     std.debug.warn("Switching to {s}\n", .{titleUtf8});
 
+    if(w.IsIconic(dw.hwnd) != 0) {
+        _ = w.ShowWindow(dw.hwnd, w.SW_RESTORE);
+    }
+
     _ = w.SetForegroundWindow(dw.hwnd);
     if(self.window) |view| {
         try destroyWidgets(view);
