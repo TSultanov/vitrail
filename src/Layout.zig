@@ -17,8 +17,8 @@ event_handlers: Window.EventHandlers,
 pos_idx_map: PosIdxMap,
 child_index_map: ChildIndexMap,
 
-const chWidth: c_int = 101;
-const chHeight: c_int = 101;
+const chWidth: c_int = 100;
+const chHeight: c_int = 100;
 const margin: c_int = -1;
 
 const BoxPosition = struct {

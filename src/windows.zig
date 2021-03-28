@@ -1,5 +1,7 @@
 pub usingnamespace @cImport({
+    @cDefine("NO_STRICT", "1");
     @cInclude("windows.h");
+    @cUndef("NO_STRICT");
     @cInclude("commctrl.h");
     @cInclude("psapi.h");
     @cInclude("shlwapi.h");

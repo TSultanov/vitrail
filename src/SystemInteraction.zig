@@ -97,7 +97,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
 
     var hwndList = std.ArrayList(w.HWND).init(allocator);
     defer hwndList.deinit();
-    _ = w.EnumWindows(enumWindowProc, @intCast(c_longlong, @ptrToInt(&hwndList)));
+    _ = w.EnumWindows(@ptrCast(fn(...) callconv(.C) c_longlong, enumWindowProc), @intCast(c_longlong, @ptrToInt(&hwndList)));
     var windowList = std.ArrayList(DesktopWindow).init(allocator);
     for (hwndList.items) |hwnd| {
         var shouldShow = try self.shouldShowWindow(hwnd);
@@ -149,18 +149,18 @@ fn getWindowClass(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]
 }
 
 fn getWindowIcon(self: Self, hwnd: w.HWND) !w.HICON {
-    var iconAddr: c_ulonglong = undefined;
-    // var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_SMALL2, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
-    // if (lResult != 0 and iconAddr != 0) {
-    //     var icon: w.HICON = @intToPtr(w.HICON, @intCast(usize, iconAddr));
-    //     return icon;
-    // }
+    var iconAddr: usize = undefined;
+    var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_BIG, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
+    if (lResult != 0 and iconAddr != 0) {
+        var icon: w.HICON = @intToPtr(w.HICON, iconAddr);
+        return icon;
+    }
 
-    // var wndClassLongPtr = w.GetClassLongPtrW(hwnd, w.GCLP_HICON);
-    // if (wndClassLongPtr != 0) {
-    //     var icon: w.HICON = @intToPtr(w.HICON, wndClassLongPtr);
-    //     return icon;
-    // }
+    var wndClassLongPtr = w.GetClassLongPtrW(hwnd, w.GCLP_HICON);
+    if (wndClassLongPtr != 0) {
+        var icon: w.HICON = @intToPtr(w.HICON, wndClassLongPtr);
+        return icon;
+    }
 
     var fileIcon = try self.extractIconFromExecutable(hwnd);
     if (fileIcon != null) return fileIcon.?;
@@ -251,7 +251,7 @@ fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
 
     if (isUwpApp) {
         var validCloak: bool = false;
-        _ = w.EnumPropsExA(hwnd, verifyUwpCloak, @intCast(c_longlong, @ptrToInt(&validCloak)));
+        _ = w.EnumPropsExA(hwnd, @ptrCast(fn(...) callconv(.C) c_longlong, verifyUwpCloak), @intCast(c_longlong, @ptrToInt(&validCloak)));
         return validCloak;
     }
 

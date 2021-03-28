@@ -212,10 +212,10 @@ pub fn drawText(self: Self, hdc: w.HDC) !void {
 pub fn drawIcon(self: Self, hdc: w.HDC) !void {
     var rect = try self.window.getRect();
 
-    const margin_top = self.window.scaleDpi(14);
+    const margin_top = self.window.scaleDpi(20);
     const margin_left = self.window.scaleDpi(14);
     const margin_right = self.window.scaleDpi(14);
-    const margin_bot = self.window.scaleDpi(26);
+    const margin_bot = self.window.scaleDpi(32);
 
     rect.top += margin_top;
     rect.bottom -= margin_bot;

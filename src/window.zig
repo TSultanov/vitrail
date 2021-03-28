@@ -42,11 +42,11 @@ pub fn redraw(self: Self) !void {
 }
 
 pub fn setSize(self: *Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
-    try w.mapFailure(w.SetWindowPos(self.hwnd, 0, x, y, cx, cy, w.SWP_NOCOPYBITS));
+    try w.mapFailure(w.SetWindowPos(self.hwnd, null, x, y, cx, cy, w.SWP_NOCOPYBITS));
 }
 
 pub fn setSizeScaled(self: *Self, x: c_int, y: c_int, cx: c_int, cy: c_int) !void {
-    try w.mapFailure(w.SetWindowPos(self.hwnd, 0, self.scaleDpi(x), self.scaleDpi(y), self.scaleDpi(cx), self.scaleDpi(cy), w.SWP_NOCOPYBITS));
+    try w.mapFailure(w.SetWindowPos(self.hwnd, null, self.scaleDpi(x), self.scaleDpi(y), self.scaleDpi(cx), self.scaleDpi(cy), w.SWP_NOCOPYBITS));
 }
 
 pub fn getRect(self: Self) !w.RECT {
