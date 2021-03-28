@@ -4,7 +4,7 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 
 ## Features
 - [x] Displaying opened windows in a grid and allowing switching between them
-- [ ] Showing virtual desktop number in the background of a tile
+- [x] Showing virtual desktop number in the background of a tile
 - [ ] Support for showing windows only from current virtual desktop
 - [ ] Incremental search in the list of windows
 
@@ -13,7 +13,7 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 
 ## Building
 - Clone this repository
-- Download 0.6.0 release of Zig from https://ziglang.org/download/ and extract it.
+- Download latest nightly build of Zig from https://ziglang.org/download/ and extract it (last tested with 0.8.0-dev.1561).
 - Open PowerShell in the directory with this repository
 - Run `.\path\to\zig.exe build`
 
