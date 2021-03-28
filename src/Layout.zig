@@ -127,6 +127,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
 }
 
 pub fn clear(self: *Self) !void {
+    self.child_index_map.clearAndFree();
+    self.pos_idx_map.clearAndFree();
     while (self.window.children.popOrNull()) |child|
     {
         child.destroy();
