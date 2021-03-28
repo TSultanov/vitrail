@@ -17,7 +17,7 @@ pub export fn main() c_int {
 
     _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
 
-    var main_presenter = MainPresenter.init(hInstanceWinApi, &gpa.allocator) catch unreachable;
+    var main_presenter = MainPresenter.init(hInstanceWinApi, std.heap.page_allocator) catch unreachable;
             main_presenter.show() catch unreachable;
 
     var msg: w.MSG = undefined;

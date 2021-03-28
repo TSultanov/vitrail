@@ -72,10 +72,7 @@ pub fn setParent(self: *Self, parent: Self) !void {
 }
 
 pub fn focus(self: Self) !void {
-    var hwnd = w.SetFocus(self.hwnd);
-    if(hwnd == 0) {
-        return error.Failure;
-    }
+    _ = w.SetFocus(self.hwnd);
 }
 
 pub fn destroy(self: Self) void {
@@ -308,6 +305,7 @@ pub fn unscaleDpi(self: Self, x: i32) i32 {
 pub fn getChildRgn(self: Self) !w.HRGN {
     var hRgn = w.CreateRectRgn(0,0,0,0);
     for(self.children.items) |child| {
+        std.debug.warn("Gettign rgn of {*}\n", .{child.hwnd});
         var childRgn = child.getRgn();
         defer _ = w.DeleteObject(childRgn);
         var newRgn: w.HRGN = undefined;

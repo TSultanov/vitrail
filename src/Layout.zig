@@ -47,7 +47,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
     defer _ = w.ReleaseDC(window.hwnd, hdc);
-    var hbrushBg = w.CreateSolidBrush(0x00ffffff);
+    var hbrushBg = w.CreateSolidBrush(0x00ff00ff);
     defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
@@ -101,7 +101,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
         .className = toUtf16const("SpiralLayout"),
         .style = w.WS_VISIBLE | w.WS_CHILD | w.WS_CLIPSIBLINGS ,
         .parent = parent,
-        .register_class = true
+        .register_class = true,
+        //.exStyle = w.WS_EX_LAYERED
     };
     var self = try allocator.create(Self);
     self.* = .{
@@ -119,6 +120,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
     
     var window: *Window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     window.docked = true;
+    //_ = w.SetLayeredWindowAttributes(window.hwnd, 0, 0, w.LWA_ALPHA);
 
     self.window = window;
     return self;
@@ -140,7 +142,7 @@ pub fn layout(self: *Self) !void {
     self.cols_min = std.math.maxInt(i64);
 
     for (self.window.children.items) |child| {
-        //_ = child.hide();
+        _ = child.hide();
     }
 
     const marginScaled: c_int = self.window.scaleDpi(margin);

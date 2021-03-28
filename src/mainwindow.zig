@@ -58,7 +58,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
     defer _ = w.ReleaseDC(window.hwnd, hdc);
-    var hbrushBg = w.CreateSolidBrush(0x00000000);
+    var hbrushBg = w.CreateSolidBrush(0xff000000);
     defer w.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
@@ -69,11 +69,11 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
     try w.mapFailure(w.GetWindowRect(desktop, &desktopRect));
 
     const windowConfig = Window.WindowParameters {
-        .exStyle = w.WS_EX_TOPMOST,// | w.WS_EX_TOOLWINDOW, //w.WS_EX_LAYERED
-        .x = 100,//desktopRect.left,
-        .y = 100,//desktopRect.top,
-        .width = 1024,//desktopRect.right,
-        .height = 768,//desktopRect.bottom,
+        .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
+        .x = desktopRect.left,
+        .y = desktopRect.top,
+        .width = desktopRect.right,
+        .height = desktopRect.bottom,
         .title = toUtf16const("MainWindow"),
         .style = w.WS_OVERLAPPEDWINDOW
     };
@@ -96,8 +96,11 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    //_ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
-    //_ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
+    _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
+    _ = w.SetWindowLong(window.hwnd, 
+              w.GWL_EXSTYLE, 
+              w.GetWindowLong(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
+    _ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
     const margins = w.MARGINS {
         .cxLeftWidth = -1,
         .cxRightWidth = -1,
@@ -146,6 +149,5 @@ fn updateBoxes(self: *Self) !void {
 
 fn updateVisibilityMask(self: Self) !void {
     const rgn = try self.layout.window.getChildRgn();
-    defer _ = w.DeleteObject(rgn);
-    _ = w.SetWindowRgn(self.window.hwnd, rgn, 1);
+    //_ = w.SetWindowRgn(self.window.hwnd, rgn, 1);
 }

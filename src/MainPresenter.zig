@@ -41,6 +41,8 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
 
 pub fn createWidgets(self: *Self) !void {
     if(self.window) |view| {
+        view.window.activate();
+        _ = w.SetForegroundWindow(view.window.hwnd);
         try destroyWidgets(view);
         self.desktop_windows = try self.si.getWindowList(self.allocator);
         if(self.desktop_windows) |desktop_windows| {
@@ -59,6 +61,11 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
     var titleUtf8 = try toUtf8(dw.title, self.allocator);
     defer self.allocator.free(titleUtf8);
     std.debug.warn("Switching to {s}\n", .{titleUtf8});
+
+    _ = w.SetForegroundWindow(dw.hwnd);
+    if(self.window) |view| {
+        try destroyWidgets(view);
+    }
 }
 
 fn destroyWidgets(main_window: *MainWindow) !void {
