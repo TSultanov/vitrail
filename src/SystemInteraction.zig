@@ -149,6 +149,9 @@ fn getWindowClass(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]
 }
 
 fn getWindowIcon(self: Self, hwnd: w.HWND) !w.HICON {
+    var fileIcon = try self.extractIconFromExecutable(hwnd);
+    if (fileIcon != null) return fileIcon.?;
+    
     var iconAddr: usize = undefined;
     var lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_BIG, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
     if (lResult != 0 and iconAddr != 0) {
@@ -161,9 +164,6 @@ fn getWindowIcon(self: Self, hwnd: w.HWND) !w.HICON {
         var icon: w.HICON = @intToPtr(w.HICON, wndClassLongPtr);
         return icon;
     }
-
-    var fileIcon = try self.extractIconFromExecutable(hwnd);
-    if (fileIcon != null) return fileIcon.?;
 
     return @ptrCast(w.HICON, w.LoadIconW(null, 32512));
 }
