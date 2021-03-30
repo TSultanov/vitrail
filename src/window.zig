@@ -90,7 +90,7 @@ pub fn activate(self: *Self) void {
 pub const WindowParameters = struct {
     exStyle: w.DWORD = 0,
     className: [:0]u16 = toUtf16const("Vitrail"),
-    title: [:0]u16 = toUtf16const("Window"),
+    title: ?[:0]u16 = toUtf16const("Window"),
     style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
     x: c_int = 100,
     y: c_int = 100,
@@ -98,7 +98,7 @@ pub const WindowParameters = struct {
     height: c_int = 480,
     parent: ?*Self = null,
     menu: w.HMENU = null,
-    register_class: bool = true,
+    register_class: bool = true
 };
 
 fn defaultHandler(event_handlers: *EventHandlers, window: *Self) !void {}
@@ -121,6 +121,7 @@ pub const EventHandlers = struct {
     onSetFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKillFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKeyDown: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onChar: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
 pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
@@ -142,7 +143,7 @@ fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
     }
 }
 
-fn resize(self: *Self) !void {
+pub fn resize(self: *Self) !void {
     try self.event_handlers.onResize(self.event_handlers, self);
 }
 
@@ -156,7 +157,7 @@ fn onPaintHandler(event_handlers: *EventHandlers, window: *Self) !void {
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
-fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.C) w.LRESULT {
+fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(std.os.windows.WINAPI) w.LRESULT {
     var wLong = w.GetWindowLongPtr(hwnd, w.GWLP_USERDATA);
     if (wLong == 0) {
         return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
@@ -232,6 +233,10 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             try self.event_handlers.onKeyDown(self.event_handlers, self, wParam, lParam);
             return 0;
         },
+        w.WM_CHAR => {
+            try self.event_handlers.onChar(self.event_handlers, self, wParam, lParam);
+            return 0;
+        },
         else => {
             return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);
         },
@@ -257,7 +262,7 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
     }
 
     var parent: w.HWND = if (window_parameters.parent) |p| p.hwnd else null;
-    var hwnd = w.CreateWindowExW(window_parameters.exStyle, window_parameters.className, window_parameters.title, window_parameters.style, window_parameters.x, window_parameters.y, window_parameters.width, window_parameters.height, parent, window_parameters.menu, hInstance, null);
+    var hwnd = w.CreateWindowExW(window_parameters.exStyle, window_parameters.className, if (window_parameters.title) |title| title else null, window_parameters.style, window_parameters.x, window_parameters.y, window_parameters.width, window_parameters.height, parent, window_parameters.menu, hInstance, null);
 
     var window = try allocator.create(Self);
     window.* = Self {
@@ -314,4 +319,12 @@ pub fn getChildRgn(self: Self) !w.HRGN {
         hRgn = newRgn;
     }
     return hRgn;
+}
+
+pub fn bringToTop(self: Self) !void {
+    try w.mapErr(w.BringWindowToTop(self.hwnd));
+}
+
+pub fn setFont(self: Self, font: w.HGDIOBJ) !void {
+    _ = SendMessage(self.hwnd, w.WM_SETFONT, font, 0);
 }

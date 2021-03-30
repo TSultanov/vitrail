@@ -84,7 +84,14 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
     else if(self.window.parent) |p| {
         // Relay event to parent
-        _ = w.SendMessage(p.hwnd, w.WM_KEYDOWN, wParam, lParam);
+        _ = w.SendMessageW(p.hwnd, w.WM_KEYDOWN, wParam, lParam);
+    }
+}
+
+fn onCharHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    if(self.window.parent) |p| {
+        _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
     }
 }
 
@@ -114,7 +121,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
             .onResize = onResizeHandler,
             .onPaint = onPaintHandler,
             .onKeyDown = onKeyDownHandler,
-            .onAfterDestroy = onAfterDestroyHandler
+            .onAfterDestroy = onAfterDestroyHandler,
+            .onChar = onCharHandler,
         }
     };
     
