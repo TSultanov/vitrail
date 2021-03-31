@@ -38,3 +38,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
 
     return self;
 }
+
+pub fn clearText(self: Self) !void {
+    try self.window.setText(null);
+}

@@ -113,7 +113,7 @@ pub const EventHandlers = struct {
     onAfterDestroy: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onPaint: fn (self: *EventHandlers, window: *Self) anyerror!void = onPaintHandler,
     onCommand: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
-    onNotify: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onNotify: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onDpiChange: fn(self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = onDpiChangeHandler,
     onMouseMove: fn(self: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) anyerror!void = onMouseMoveDefaultHandler,
     onMouseLeave: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
@@ -122,6 +122,7 @@ pub const EventHandlers = struct {
     onKillFocus: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKeyDown: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onChar: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onGetDlgCode: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
 pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
@@ -210,7 +211,7 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             return 0;
         },
         w.WM_NOTIFY => {
-            try self.event_handlers.onNotify(self.event_handlers, self);
+            try self.event_handlers.onNotify(self.event_handlers, self, wParam, lParam);
             return 0;
         },
         w.WM_DPICHANGED => {
@@ -235,6 +236,10 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_CHAR => {
             try self.event_handlers.onChar(self.event_handlers, self, wParam, lParam);
+            return 0;
+        },
+        w.WM_GETDLGCODE => {
+            try self.event_handlers.onGetDlgCode(self.event_handlers, self, wParam, lParam);
             return 0;
         },
         else => {
@@ -327,4 +332,24 @@ pub fn bringToTop(self: Self) !void {
 
 pub fn setFont(self: Self, font: w.HGDIOBJ) !void {
     _ = SendMessage(self.hwnd, w.WM_SETFONT, font, 0);
+}
+
+pub fn getText(self: Self, allocator: *std.mem.Allocator) ![:0]u16 {
+    const length = w.GetWindowTextLengthW(self.hwnd) + 1;
+    const title: [:0]u16 = try allocator.allocSentinel(u16, @intCast(usize, length), 0);
+    std.mem.set(u16, title, 0);
+    _ = w.GetWindowTextW(self.hwnd, title, length);
+    return title;
+}
+
+pub fn setText(self: Self, text: ?[:0]u16) !void {
+    try w.mapErr(w.SetWindowTextW(self.hwnd, if(text) |t| t else null)); 
+}
+
+pub fn isVisible(self: Self) bool {
+    return w.IsWindowVisible(self.hwnd) != 0;
+}
+
+pub fn isFocused(self:Self) bool {
+   return self.hwnd == w.GetFocus();
 }

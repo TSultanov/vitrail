@@ -7,6 +7,8 @@ pub const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
 
+const DesktopHwndTile = std.AutoArrayHashMap(w.HWND, *Tile);
+
 const search_box_width = 100;
 const search_box_height = 20;
 
@@ -25,6 +27,8 @@ allocator: *std.mem.Allocator,
 callbacks: *Callbacks,
 boxes: std.ArrayList(*Tile),
 font: w.HGDIOBJ,
+desktopHwndTileMap: DesktopHwndTile,
+previous_hidden: bool = false,
 
 tile_callbacks: Tile.Callbacks = .{
     .clicked = tileCallback
@@ -62,7 +66,7 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
     else
     {
-        _ = w.SendMessageW(self.search_box.window.hwnd, w.WM_KEYDOWN, wParam, lParam);
+        //_ = w.SendMessageW(self.search_box.window.hwnd, w.WM_KEYDOWN, wParam, lParam);
     }
 }
 
@@ -106,6 +110,29 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
+fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const command = wParam >> 16;
+    const controlHandle: w.HWND = @intToPtr(w.HWND, @intCast(usize, lParam));
+    if(self.search_box.window.hwnd == controlHandle)
+    {
+        if(command == w.EN_CHANGE)
+        {
+            try self.updateVisibility();
+        }
+    }
+}
+
+fn onNotifyHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    std.debug.warn("Notify\n", .{});
+}
+
+fn onGetDlgCodeHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    std.debug.warn("DlgCode: wParam: {}, lParam: {}\n", .{wParam, lParam});
+}
+
 pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
     const desktop = w.GetDesktopWindow();
     var desktopRect: w.RECT = undefined;
@@ -132,13 +159,17 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
             .onPaint = onPaintHandler,
             .onResize = onResizeHandler,
             .onChar = onCharHandler,
+            .onCommand = onCommandHandler,
+            .onNotify = onNotifyHandler,
+            .onGetDlgCode = onGetDlgCodeHandler
         },
         .desktop_windows = null,
         .hInstance = hInstance,
         .allocator = allocator,
         .callbacks = callbacks,
         .boxes = std.ArrayList(*Tile).init(allocator),
-        .font = undefined
+        .font = undefined,
+        .desktopHwndTileMap = DesktopHwndTile.init(allocator),
     };
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
@@ -184,19 +215,73 @@ pub fn hideBoxes(self: *Self) !void {
         self.allocator.destroy(box);
     }
     self.desktop_windows = null;
+    self.desktopHwndTileMap.clearAndFree();
+}
+
+fn updateVisibility(self: *Self) !void {
+    const search_text = try self.search_box.window.getText(self.allocator);
+    defer self.allocator.free(search_text);
+
+    if(self.desktop_windows) |desktop_windows| {
+        var reset_focus = self.previous_hidden;
+
+        var hidden_num: usize = 0;
+
+        for(desktop_windows.items) |dw| {
+            if(self.desktopHwndTileMap.get(dw.hwnd)) |tile|
+            {
+                if(search_text.len <= 1)
+                {
+                    _ = tile.window.show();
+                }
+                else
+                {
+                    if(std.mem.indexOfPos(u16, dw.title[0..(dw.title.len-1)], 0, search_text[0..(search_text.len-1)])) |idx|
+                    {
+                        _ = tile.window.show();
+                    }
+                    else
+                    {
+                        if(tile.selected)
+                        {
+                            reset_focus = true;
+                        }
+                        hidden_num += 1;
+                        _ = tile.window.hide();
+                    }
+                }
+            }
+        }
+
+        if(hidden_num == desktop_windows.items.len)
+        {
+            self.previous_hidden = true;
+        }
+        else
+        {
+            self.previous_hidden = false;
+        }
+
+        try self.layout.layout(reset_focus);
+    }
 }
 
 fn updateBoxes(self: *Self) !void {
     if(self.desktop_windows) |desktop_windows| {
-        for (desktop_windows.items) |dw| {
-            var box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
-            try self.boxes.append(box);
+        if(desktop_windows.items.len > 0)
+        {
+            for (desktop_windows.items) |dw| {
+                var box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
+                try self.boxes.append(box);
+                try self.desktopHwndTileMap.put(dw.hwnd, box);
+            }
+            try self.search_box.clearText();
+            self.previous_hidden = false;
+            try self.layout.layout(true);
+            _ = self.search_box.window.show();
+            try self.search_box.window.bringToTop();
         }
-
-        try self.layout.layout();
     }
-    _ = self.search_box.window.show();
-    try self.search_box.window.bringToTop();
 
     //try self.updateVisibilityMask();
 }

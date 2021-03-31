@@ -39,7 +39,7 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
 
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
-    try self.layout();
+    try self.layout(false);
 }
 
 fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
@@ -102,6 +102,13 @@ fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window)
     self.allocator.destroy(window);
 }
 
+fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    if(self.window.parent) |p| {
+        _ = w.SendMessageW(p.hwnd, w.WM_COMMAND, wParam, lParam);
+    }
+}
+
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = toUtf16const("SpiralLayout"),
@@ -123,6 +130,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Alloc
             .onKeyDown = onKeyDownHandler,
             .onAfterDestroy = onAfterDestroyHandler,
             .onChar = onCharHandler,
+            .onCommand = onCommandHandler
         }
     };
     
@@ -143,17 +151,16 @@ pub fn clear(self: *Self) !void {
     }
 }
 
-pub fn layout(self: *Self) !void {
+pub fn layout(self: *Self, reset_focus: bool) !void {
     if (self.window.children.items.len == 0) return;
+
+    self.child_index_map.clearAndFree();
+    self.pos_idx_map.clearAndFree();
 
     self.rows_max = std.math.minInt(i64);
     self.cols_max = std.math.minInt(i64);
     self.rows_min = std.math.maxInt(i64);
     self.cols_min = std.math.maxInt(i64);
-
-    for (self.window.children.items) |child| {
-        _ = child.hide();
-    }
 
     const marginScaled: c_int = self.window.scaleDpi(margin);
     const chWidthScaled = self.window.scaleDpi(chWidth);
@@ -173,15 +180,28 @@ pub fn layout(self: *Self) !void {
     const colMax = @divFloor(cols , 2);
     const colMin = -@divFloor(cols, 2) + 1;
 
-    var idx: usize = 0;
-    var offset: usize = 0;
+    var idx: i64 = 0;
+    var offset: i64 = 0;
+
+    var lowest_visible_idx: i64 = 0;
+
     while(idx < self.window.children.items.len and idx < maxNumberOfCells) : (idx += 1) {
-        var col = numToCol(idx + offset);
-        var row = numToRow(idx + offset);
+        if(!self.window.children.items[@intCast(usize, idx)].isVisible())
+        {
+            if(lowest_visible_idx == idx)
+            {
+                lowest_visible_idx += 1;
+            }
+            offset -= 1;
+            continue;
+        }
+
+        var col = numToCol(@intCast(usize, idx + offset));
+        var row = numToRow(@intCast(usize, idx + offset));
         while ((col < colMin or col > colMax or row < rowMin or row > rowMax) and (idx + offset < maxNumberOfCells)) {
             offset += 1;
-            col = numToCol(idx + offset);
-            row = numToRow(idx + offset);
+            col = numToCol(@intCast(usize, idx + offset));
+            row = numToRow(@intCast(usize, idx + offset));
         }
 
         self.cols_max = std.math.max(self.cols_max, col);
@@ -192,14 +212,19 @@ pub fn layout(self: *Self) !void {
         const x = @divFloor(width, 2) + col * (chWidthScaled + marginScaled) - @divFloor(chWidthScaled, 2);
         const y = @divFloor(height, 2) + row * (chHeightScaled + marginScaled) - @divFloor(chHeightScaled, 2);
 
-        try self.child_index_map.put(self.window.children.items[idx].hwnd, .{.idx = idx, .pos = .{.col = col, .row = row}});
-        try self.pos_idx_map.put(.{.col = col, .row = row}, idx);
+        try self.child_index_map.put(self.window.children.items[@intCast(usize, idx)].hwnd, .{.idx = @intCast(usize, idx), .pos = .{.col = col, .row = row}});
+        try self.pos_idx_map.put(.{.col = col, .row = row}, @intCast(usize, idx));
 
-        try self.window.children.items[idx].setSize(x, y, chWidthScaled, chHeightScaled);
-        _ = self.window.children.items[idx].show();
+        try self.window.children.items[@intCast(usize, idx)].setSize(x, y, chWidthScaled, chHeightScaled);
     }
 
-    try self.window.children.items[0].focus();
+    if (reset_focus)
+    {
+        if(lowest_visible_idx < self.window.children.items.len)
+        {
+            try self.window.children.items[@intCast(usize, lowest_visible_idx)].focus();
+        }
+    }
 }
 
 pub fn next(self: *Self) !void {
