@@ -140,10 +140,10 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
 
     const windowConfig = Window.WindowParameters {
         .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
-        //.x = desktopRect.left,
-        //.y = desktopRect.top,
-        //.width = desktopRect.right,
-        //.height = desktopRect.bottom,
+        .x = desktopRect.left,
+        .y = desktopRect.top,
+        .width = desktopRect.right,
+        .height = desktopRect.bottom,
         .title = toUtf16const("MainWindow"),
         .style = w.WS_OVERLAPPEDWINDOW
     };
@@ -174,11 +174,11 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    //_ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
-    // _ = w.SetWindowLong(window.hwnd, 
-    //           w.GWL_EXSTYLE, 
-    //           w.GetWindowLong(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
-    //_ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
+    _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
+    _ = w.SetWindowLong(window.hwnd, 
+              w.GWL_EXSTYLE, 
+              w.GetWindowLong(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
+    _ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
     const margins = w.MARGINS {
         .cxLeftWidth = -1,
         .cxRightWidth = -1,
