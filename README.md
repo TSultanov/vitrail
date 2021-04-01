@@ -6,7 +6,7 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 - [x] Displaying opened windows in a grid and allowing switching between them
 - [x] Showing virtual desktop number in the background of a tile
 - [ ] Support for showing windows only from current virtual desktop
-- [ ] Incremental search in the list of windows
+- [x] Incremental search in the list of windows
 
 ## Known issues
 - Icons and windows visibility states aren't resolved correctly for all applications
