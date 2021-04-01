@@ -26,6 +26,7 @@ pub fn toUtf8(str: []u16, allocator: *std.mem.Allocator) ![]u8 {
 pub const DesktopWindow = struct {
     hwnd: w.HWND,
     title: [:0]u16,
+    title_lower: [:0]u16,
     class: [:0]u16,
     icon: w.HICON,
     executablePath: ?[:0]u16,
@@ -36,6 +37,7 @@ pub const DesktopWindow = struct {
 
     pub fn destroy(self: DesktopWindow) !void {
         self.originalAllocator.free(self.title);
+        self.originalAllocator.free(self.title_lower);
         self.originalAllocator.free(self.class);
         if (self.executablePath) |fname| self.originalAllocator.free(fname);
 
@@ -103,6 +105,11 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
         var shouldShow = try self.shouldShowWindow(hwnd);
         if(!shouldShow) continue;
         var title = try self.getWindowTitle(hwnd, allocator);
+
+        const title_lower = try allocator.allocSentinel(u16, title.len, 0);
+        std.mem.copy(u16, title_lower, title);
+        _ = w.CharLowerBuffW(title_lower, @intCast(c_ulong, title_lower.len-1));
+
         var class = try self.getWindowClass(hwnd, allocator);
         var icon: w.HICON = try self.getWindowIcon(hwnd);
 
@@ -120,6 +127,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
             try windowList.append(DesktopWindow {
                     .hwnd = hwnd,
                     .title = title,
+                    .title_lower = title_lower,
                     .class = class,
                     .icon = icon,
                     .executablePath = executablePath,

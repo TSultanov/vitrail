@@ -222,6 +222,11 @@ fn updateVisibility(self: *Self) !void {
     const search_text = try self.search_box.window.getText(self.allocator);
     defer self.allocator.free(search_text);
 
+    const search_text_lower = try self.allocator.allocSentinel(u16, search_text.len, 0);
+    defer self.allocator.free(search_text_lower);
+    std.mem.copy(u16, search_text_lower, search_text);
+    _ = w.CharLowerBuffW(search_text_lower, @intCast(c_ulong, search_text_lower.len-1));
+
     if(self.desktop_windows) |desktop_windows| {
         var reset_focus = self.previous_hidden;
 
@@ -236,7 +241,7 @@ fn updateVisibility(self: *Self) !void {
                 }
                 else
                 {
-                    if(std.mem.indexOfPos(u16, dw.title[0..(dw.title.len-1)], 0, search_text[0..(search_text.len-1)])) |idx|
+                    if(std.mem.indexOfPos(u16, dw.title_lower[0..(dw.title.len-1)], 0, search_text_lower[0..(search_text.len-1)])) |idx|
                     {
                         _ = tile.window.show();
                     }
