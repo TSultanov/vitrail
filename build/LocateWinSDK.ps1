@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Include", "Lib")]
+    [ValidateSet("Include", "Lib", "Bin")]
     [string]$Type
 )
 

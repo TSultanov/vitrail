@@ -4,7 +4,8 @@ const builtin = @import("builtin");
 
 const PathType = enum {
     Lib,
-    Include
+    Include,
+    Bin
 };
 
 fn getSdkPath(allocator: *std.mem.Allocator, comptime pathType: PathType) ![]u8 {
@@ -16,7 +17,7 @@ fn getSdkPath(allocator: *std.mem.Allocator, comptime pathType: PathType) ![]u8 
 
     const locateResult = std.ChildProcess.exec(.{
         .allocator = allocator,
-        .argv = &.{powershellPath, "-NonInteractive", "-File", ".\\build\\LocateWinSDK.ps1", switch (pathType) { .Lib => "Lib", .Include => "Include" }}
+        .argv = &.{powershellPath, "-NonInteractive", "-File", ".\\build\\LocateWinSDK.ps1", switch (pathType) { .Lib => "Lib", .Include => "Include", .Bin => "Bin" }}
         }) catch unreachable;
     defer allocator.free(locateResult.stderr);
     const sdkBase = locateResult.stdout;
@@ -30,21 +31,21 @@ pub fn build(b: *Builder) void {
     const includePath = getSdkPath(&gpa.allocator, .Include) catch unreachable;
     defer gpa.allocator.free(includePath);
 
-    const ucrtPath = std.fmt.allocPrint(&gpa.allocator, "{s}/ucrt", .{includePath}) catch unreachable;
-    defer gpa.allocator.free(ucrtPath);
-    const umPath = std.fmt.allocPrint(&gpa.allocator, "{s}/um", .{includePath}) catch unreachable;
-    defer gpa.allocator.free(umPath);
-    const sharedPath = std.fmt.allocPrint(&gpa.allocator, "{s}/shared", .{includePath}) catch unreachable;
-    defer gpa.allocator.free(sharedPath);
+    const ucrtPath = b.fmt("{s}/ucrt", .{includePath});
+    const umPath = b.fmt("{s}/um", .{includePath});
+    const sharedPath = b.fmt("{s}/shared", .{includePath});
 
     const libPath = getSdkPath(&gpa.allocator, .Lib) catch unreachable;
     defer gpa.allocator.free(libPath);
 
-    const umLibPath = std.fmt.allocPrint(&gpa.allocator, "{s}/um/X64", .{libPath}) catch unreachable;
-    defer gpa.allocator.free(umLibPath);
+    const umLibPath = b.fmt("{s}/um/X64", .{libPath});
+
+    const binPath = getSdkPath(&gpa.allocator, .Bin) catch unreachable;
+    defer gpa.allocator.free(binPath);
+
+    const mtPath = b.fmt("{s}/X64/mt.exe", .{binPath});
 
     const mode = b.standardReleaseOptions();
-    b.installBinFile("src/app.manifest", "vitrail.exe.manifest");
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
     //exe.linkSystemLibrary("c");
     exe.addIncludeDir(ucrtPath);
@@ -63,6 +64,14 @@ pub fn build(b: *Builder) void {
     exe.linkSystemLibrary("Dwmapi");
     exe.setBuildMode(mode);
     exe.install();
+
+    var run_mt = b.addSystemCommand(&[_][]const u8{
+        mtPath, "-nologo", "-manifest", "src/app.manifest",
+        b.fmt("-outputresource:{s}\\{s}", .{b.exe_dir, exe.out_filename})
+    });
+    run_mt.step.dependOn(&exe.step);
+
+    b.default_step.dependOn(&run_mt.step);
 
     const run_cmd = exe.run();
     run_cmd.step.dependOn(b.getInstallStep());
