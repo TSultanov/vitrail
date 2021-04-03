@@ -1,4 +1,6 @@
 pub usingnamespace @cImport({
+    @cDefine("_UNICODE", "1");
+    @cDefine("_WIN64", "1");
     @cDefine("NO_STRICT", "1");
     @cInclude("windows.h");
     @cUndef("NO_STRICT");
