@@ -25,29 +25,19 @@ fn getSdkPath(allocator: *std.mem.Allocator, comptime pathType: PathType) ![]u8 
 }
 
 pub fn build(b: *Builder) void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(!gpa.deinit());
-
-    const includePath = getSdkPath(&gpa.allocator, .Include) catch unreachable;
-    defer gpa.allocator.free(includePath);
-
+    const includePath = getSdkPath(b.allocator, .Include) catch unreachable;
     const ucrtPath = b.fmt("{s}/ucrt", .{includePath});
     const umPath = b.fmt("{s}/um", .{includePath});
     const sharedPath = b.fmt("{s}/shared", .{includePath});
 
-    const libPath = getSdkPath(&gpa.allocator, .Lib) catch unreachable;
-    defer gpa.allocator.free(libPath);
-
+    const libPath = getSdkPath(b.allocator, .Lib) catch unreachable;
     const umLibPath = b.fmt("{s}/um/X64", .{libPath});
 
-    const binPath = getSdkPath(&gpa.allocator, .Bin) catch unreachable;
-    defer gpa.allocator.free(binPath);
-
+    const binPath = getSdkPath(b.allocator, .Bin) catch unreachable;
     const mtPath = b.fmt("{s}/X64/mt.exe", .{binPath});
 
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
-    //exe.linkSystemLibrary("c");
     exe.addIncludeDir(ucrtPath);
     exe.addIncludeDir(umPath);
     exe.addIncludeDir(sharedPath);
