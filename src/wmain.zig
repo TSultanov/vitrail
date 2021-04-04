@@ -2,7 +2,6 @@ usingnamespace @import("vitrail.zig");
 const MainPresenter = @import("MainPresenter.zig");
 
 pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(std.os.windows.WINAPI) c_int {
-    _ = w.FreeConsole(); //TODO: zig currently has issues with wWinMain and using windows usbsystem directly, so we are closing console manually here
     const hInstanceWinApi = @ptrCast(w.HINSTANCE, @alignCast(4, hInstance));
     //const stdin = std.io.getStdIn().inStream();
     //_ = stdin.readByte() catch unreachable;

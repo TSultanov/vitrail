@@ -38,6 +38,7 @@ pub fn build(b: *Builder) void {
 
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
+    exe.subsystem = .Windows;
     exe.is_dynamic = true;
     if(b.release_mode == builtin.Mode.ReleaseSmall) {
         exe.strip = true;
