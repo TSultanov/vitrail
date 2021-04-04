@@ -31,7 +31,7 @@ jobs:
         uses: goto-bus-stop/setup-zig@v1.3.0
         with:
           # Version of the zig compiler to use (must be 0.3.0 or up)
-          version: master
+          version: 0.8.0-dev.1715+74fd7107e
 
       # Runs a single command using the runners shell
       - name: Run build
@@ -41,7 +41,7 @@ jobs:
         uses: actions/upload-artifact@v2.2.2
         with:
           # Artifact name
-          name: # optional, default is artifact
+          name: exe
           # A file, directory or wildcard pattern that describes what to upload
           path: zig-cache/bin/vitrail.exe
           # The desired behavior if no files are found using the provided path.
