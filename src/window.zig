@@ -128,9 +128,21 @@ pub const EventHandlers = struct {
 pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
 
 pub fn onDpiChangeHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    window.dpi = w.GetDpiForWindow(window.hwnd);
-    const rect = @intToPtr(*w.RECT, @intCast(usize, lParam));
-    try window.setSize(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    const dpi = w.GetDpiForWindow(window.hwnd);
+    window.setDpi(dpi);
+    if(lParam != 0)
+    {
+        const rect = @intToPtr(*w.RECT, @intCast(usize, lParam));
+        try window.setSizeScaled(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    }
+}
+
+pub fn setDpi(self: *Self, dpi: u32) void {
+    self.dpi = dpi;
+    for (self.children.items) |child| {
+        child.setDpi(dpi);
+    }
+    _ = w.SendMessageW(self.hwnd, w.WM_SIZE, 0, 0);
 }
 
 fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {

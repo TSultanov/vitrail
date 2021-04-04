@@ -69,12 +69,7 @@ pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
     try self.drawIcon(hdc);
 }
 
-pub fn onDpiChange(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    window.dpi = w.GetDpiForWindow(window.hwnd);
-    const rect = @intToPtr(*w.RECT, @intCast(usize, lParam));
-    try window.setSize(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
-
-    const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+pub fn resetFonts(self: *Self) !void {
     _ = w.DeleteObject(self.font);
     _ = w.DeleteObject(self.desktopFont);
     try self.setFonts();
@@ -156,7 +151,6 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWin
         .event_handlers = .{
             .onClick = onClick,
             .onPaint = onPaint,
-            .onDpiChange = onDpiChange,
             .onMouseMove = onMouseMove,
             .onSetFocus = onSetFocus,
             .onKillFocus = onKillFocus,

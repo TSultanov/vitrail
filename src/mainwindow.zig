@@ -123,14 +123,19 @@ fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
-fn onNotifyHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-    std.debug.warn("Notify\n", .{});
-}
+    
+    const dpi = w.GetDpiForWindow(window.hwnd);
+    window.setDpi(dpi);
+    const desktop = w.GetDesktopWindow();
+    var rect: w.RECT = undefined;
+    try w.mapFailure(w.GetWindowRect(desktop, &rect));
+    try window.setSizeScaled(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 
-fn onGetDlgCodeHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-    std.debug.warn("DlgCode: wParam: {}, lParam: {}\n", .{wParam, lParam});
+    for(self.boxes.items) |box| {
+        try box.resetFonts();
+    }
 }
 
 pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
@@ -160,8 +165,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
             .onResize = onResizeHandler,
             .onChar = onCharHandler,
             .onCommand = onCommandHandler,
-            .onNotify = onNotifyHandler,
-            .onGetDlgCode = onGetDlgCodeHandler
+            .onDpiChange = onDpiChangeHandler
         },
         .desktop_windows = null,
         .hInstance = hInstance,
