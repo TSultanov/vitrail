@@ -38,6 +38,12 @@ pub fn build(b: *Builder) void {
 
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
+    exe.is_dynamic = true;
+    if(b.release_mode == builtin.Mode.ReleaseSmall) {
+        exe.strip = true;
+        exe.link_function_sections = true;
+        exe.single_threaded = true;
+    }
     exe.addIncludeDir(ucrtPath);
     exe.addIncludeDir(umPath);
     exe.addIncludeDir(sharedPath);
