@@ -25,14 +25,6 @@ fn getSdkPath(allocator: *std.mem.Allocator, comptime pathType: PathType) ![]u8 
 }
 
 pub fn build(b: *Builder) void {
-    const includePath = getSdkPath(b.allocator, .Include) catch unreachable;
-    const ucrtPath = b.fmt("{s}/ucrt", .{includePath});
-    const umPath = b.fmt("{s}/um", .{includePath});
-    const sharedPath = b.fmt("{s}/shared", .{includePath});
-
-    const libPath = getSdkPath(b.allocator, .Lib) catch unreachable;
-    const umLibPath = b.fmt("{s}/um/X64", .{libPath});
-
     const binPath = getSdkPath(b.allocator, .Bin) catch unreachable;
     const mtPath = b.fmt("{s}/X64/mt.exe", .{binPath});
 
@@ -45,12 +37,7 @@ pub fn build(b: *Builder) void {
         exe.link_function_sections = true;
         exe.single_threaded = true;
     }
-    exe.addIncludeDir(ucrtPath);
-    exe.addIncludeDir(umPath);
-    exe.addIncludeDir(sharedPath);
-    // This path must be removed
-    exe.addIncludeDir("C:/Program Files (x86)/Microsoft Visual Studio/2019/Community/VC/Tools/MSVC/14.28.29333/include");
-    exe.addLibPath(umLibPath);
+    exe.linkSystemLibrary("c");
     exe.linkSystemLibrary("gdi32");
     exe.linkSystemLibrary("user32");
     exe.linkSystemLibrary("Shell32");
