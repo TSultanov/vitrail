@@ -13,8 +13,8 @@ pub fn IUnknown(comptime Self: type) type {
         pub fn Release(self: Self) w.ULONG {
             return self.i.lpVtbl.*.Release.?(self.i);
         }
-        pub fn QueryService(self: Self, guidService: REFGUID, riid: REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
-            return self.i.lpVtbl.*.QueryService.?(self.i, guidService, riid, ppvObject);
+        pub fn QueryInterface(self: Self, riid: REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
+            return self.i.lpVtbl.*.QueryInterface.?(self.i, riid, ppvObject);
         }
     };
 }
