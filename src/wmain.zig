@@ -17,7 +17,6 @@ pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pC
     _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
 
     var main_presenter = MainPresenter.init(hInstanceWinApi, std.heap.page_allocator) catch unreachable;
-            main_presenter.show() catch unreachable;
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {
