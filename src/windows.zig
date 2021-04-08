@@ -11,6 +11,8 @@ pub usingnamespace @cImport({
     @cInclude("shlobj_core.h");
     @cInclude("uxtheme.h");
     @cInclude("dwmapi.h");
+    @cInclude("servprov.h");
+    @cInclude("ObjectArray.h");
 });
 
 const std = @import("std");

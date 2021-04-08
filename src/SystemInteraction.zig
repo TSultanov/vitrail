@@ -5,7 +5,7 @@ const com = @import("ComInterface.zig");
 const Self = @This();
 
 desktopManager: *com.IVirtualDesktopManager,
-serviceProvider: *com.IServiceProvider,
+serviceProvider: com.IServiceProvider,
 desktopManagerInternal: *com.IVirtualDesktopManagerInternal,
 
 pub fn toUtf16(str: []const u8) ![:0]u16 {
@@ -63,6 +63,7 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.C) c_int {
 
 pub fn init() !Self {
     const serviceProvider = try com.IServiceProvider.create();
+    _ = serviceProvider.AddRef();
     return Self {
         .desktopManager = try com.IVirtualDesktopManager.create(),
         .serviceProvider = serviceProvider,

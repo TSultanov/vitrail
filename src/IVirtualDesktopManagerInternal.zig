@@ -114,7 +114,7 @@ pub const IVirtualDesktopManagerInternal = extern struct {
         return self.lpVtbl.*.RemoveDesktop(self, pRemove, pFallbackDesktop);
     }
 
-    pub fn create(serviceProvider: *IServiceProvider) !*IVirtualDesktopManagerInternal {
+    pub fn create(serviceProvider: IServiceProvider) !*IVirtualDesktopManagerInternal {
         var virtualDesktopManagerInternal: *IVirtualDesktopManagerInternal = undefined;
         var hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &IID_IVirtualDesktopManagerInternal, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManagerInternal)));
         if (hr == 0) {
