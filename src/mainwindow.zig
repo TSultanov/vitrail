@@ -138,6 +138,18 @@ pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window
     }
 }
 
+pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+    if(wParam == 1) {
+        const desktop = w.GetDesktopWindow();
+        var desktopRect: w.RECT = undefined;
+        try w.mapFailure(w.GetWindowRect(desktop, &desktopRect));
+        try window.setSize(desktopRect.left, desktopRect.top, desktopRect.right - desktopRect.left, desktopRect.bottom - desktopRect.top);
+
+        var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+        try self.layout.layout(false);
+    }
+}
+
 pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
     const desktop = w.GetDesktopWindow();
     var desktopRect: w.RECT = undefined;
@@ -165,7 +177,8 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
             .onResize = onResizeHandler,
             .onChar = onCharHandler,
             .onCommand = onCommandHandler,
-            .onDpiChange = onDpiChangeHandler
+            .onDpiChange = onDpiChangeHandler,
+            .onEnable = onEnableHandler
         },
         .desktop_windows = null,
         .hInstance = hInstance,

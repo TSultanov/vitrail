@@ -123,6 +123,7 @@ pub const EventHandlers = struct {
     onKeyDown: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onChar: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onGetDlgCode: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onEnable: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
 pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
@@ -252,6 +253,10 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_GETDLGCODE => {
             try self.event_handlers.onGetDlgCode(self.event_handlers, self, wParam, lParam);
+            return 0;
+        },
+        w.WM_ENABLE => {
+            try self.event_handlers.onEnable(self.event_handlers, self, wParam, lParam);
             return 0;
         },
         else => {

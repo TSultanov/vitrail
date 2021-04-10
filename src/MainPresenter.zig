@@ -8,7 +8,7 @@ const Self = @This();
 
 allocator: *std.mem.Allocator,
 //arena: std.heap.ArenaAllocator,
-window: ?*MainWindow,
+view: *MainWindow,
 hInstance: w.HINSTANCE,
 desktop_windows: ?std.ArrayList(SystemInteraction.DesktopWindow) = null,
 
@@ -23,14 +23,14 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     self.* = .{
         .allocator = allocator,
         //.arena = std.heap.ArenaAllocator.init(allocator),
-        .window = null,
+        .view = undefined,
         .si = try SystemInteraction.init(),
         .hInstance = hInstance
     };
 
     var main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
 
-    self.window = main_window;
+    self.view = main_window;
 
     //try self.createWidgets();
     _ = main_window.window.show();
@@ -39,20 +39,14 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     return self;
 }
 
-pub fn createWidgets(self: *Self) !void {
-    if(self.window) |view| {
-        view.window.activate();
-        _ = w.SetForegroundWindow(view.window.hwnd);
-        try destroyWidgets(view);
-        self.desktop_windows = try self.si.getWindowList(self.allocator);
-        if(self.desktop_windows) |desktop_windows| {
-            try view.setDesktopWindows(desktop_windows);
-        }
+fn createWidgets(self: *Self) !void {
+    try destroyWidgets(self.view);
+    self.view.window.activate();
+    _ = w.SetForegroundWindow(self.view.window.hwnd);
+    self.desktop_windows = try self.si.getWindowList(self.allocator);
+    if(self.desktop_windows) |desktop_windows| {
+        try self.view.setDesktopWindows(desktop_windows);
     }
-}
-
-pub fn hideWidgets(self: *Self) !void {
-    self.window.destroy();
 }
 
 fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow) !void {
@@ -63,44 +57,28 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
     }
 
     _ = w.SetForegroundWindow(dw.hwnd);
-    if(self.window) |view| {
-        try destroyWidgets(view);
-    }
+    try hide(self.view);
+}
+
+fn hide(main_window: *MainWindow) !void {
+    try destroyWidgets(main_window);
 }
 
 fn destroyWidgets(main_window: *MainWindow) !void {
     const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
 
-    //main_window.window.destroy();
-    if(self.window) |window| {
-        try window.hideBoxes();
+    try self.view.hideBoxes();
 
-        if(self.desktop_windows) |desktop_windows| {
-            for(desktop_windows.items) |desktop_window| {
-                try desktop_window.destroy();
-            }
-
-            desktop_windows.deinit();
-            self.desktop_windows = null;
+    if(self.desktop_windows) |desktop_windows| {
+        for(desktop_windows.items) |desktop_window| {
+            try desktop_window.destroy();
         }
 
-        //self.arena.deinit();
-        //self.arena = std.heap.ArenaAllocator.init(self.allocator);
-        // self.allocator.destroy(window);
-        // self.window = null;
+        desktop_windows.deinit();
+        self.desktop_windows = null;
     }
-    //_ = w.PostQuitMessage(0);
 }
 
 pub fn show(self: *Self) !void {
     try self.createWidgets();
-    // if(self.window == null) {
-    //     var main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
-
-    //     self.window = main_window;
-
-    //     try self.createWidgets();
-    //     _ = main_window.window.show();
-    //     main_window.window.activate();
-    // }
 }
