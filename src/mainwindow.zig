@@ -194,6 +194,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
     self.layout = try Layout.create(hInstance, window, allocator);
 
     self.search_box = try TextBox.create(hInstance, window, allocator);
+    _ = self.search_box.window.hide();
 
     try self.setFonts();
 
