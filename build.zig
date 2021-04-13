@@ -2,31 +2,44 @@ const std = @import("std");
 const Builder = @import("std").build.Builder;
 const builtin = @import("builtin");
 
+const w = @import("build/windows.zig");
+
 const PathType = enum {
     Lib,
     Include,
     Bin
 };
 
-fn getSdkPath(allocator: *std.mem.Allocator, comptime pathType: PathType) ![]u8 {
-    const systemRoot = std.process.getEnvVarOwned(allocator, "SystemRoot") catch unreachable;
-    defer allocator.free(systemRoot);
-    // Sin: using shell as a library. But take alook at this API: https://docs.microsoft.com/en-us/windows/win32/sysinfo/enumerating-registry-subkeys, I'm too lazy to call it directly
-    const powershellPath = std.fmt.allocPrint(allocator, "{s}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", .{systemRoot}) catch unreachable;
-    defer allocator.free(powershellPath);
+fn descU8(context: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
 
-    const locateResult = std.ChildProcess.exec(.{
-        .allocator = allocator,
-        .argv = &.{powershellPath, "-NonInteractive", "-File", ".\\build\\LocateWinSDK.ps1", switch (pathType) { .Lib => "Lib", .Include => "Include", .Bin => "Bin" }}
-        }) catch unreachable;
-    defer allocator.free(locateResult.stderr);
-    const sdkBase = locateResult.stdout;
-    return sdkBase;
+fn getSdkPath(b: *Builder, comptime pathType: PathType) ![]u8 {
+    const systemRoot = std.process.getEnvVarOwned(b.allocator, "SystemRoot") catch unreachable;
+    defer b.allocator.free(systemRoot);
+    const kitsRoot = try w.getRegSzValue(b.allocator, w.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots\\", "KitsRoot10");
+    defer b.allocator.free(kitsRoot);
+    const sdkVersions = try w.regEnumKeys(b.allocator, w.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots\\");
+    defer sdkVersions.deinit();
+    defer for(sdkVersions.items) |version| {
+        b.allocator.free(version);
+    };
+    const maxVersion = std.sort.max([]u8, sdkVersions.items, {}, descU8);
+    const pathTypeStr = switch(pathType) {
+        .Lib => "Lib",
+        .Include => "Include",
+        .Bin => "Bin"
+    };
+    if(maxVersion) |version| {
+        const sdkBase = try std.fs.path.join(b.allocator, &.{kitsRoot, pathTypeStr, version});
+        return sdkBase;
+    }
+    @panic("Can't find installed Windows SDK");
 }
 
 pub fn build(b: *Builder) void {
-    const binPath = getSdkPath(b.allocator, .Bin) catch unreachable;
-    const mtPath = b.fmt("{s}/X64/mt.exe", .{binPath});
+    const binPath = getSdkPath(b, .Bin) catch unreachable;
+    const mtPath = std.fs.path.join(b.allocator, &.{binPath, "X64\\mt.exe"}) catch unreachable;
 
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
