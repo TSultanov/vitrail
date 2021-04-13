@@ -79,8 +79,12 @@ pub fn destroy(self: Self) void {
     for(self.children.items) |child| {
         child.destroy();
     }
-
+    
     _ = w.DestroyWindow(self.hwnd);
+}
+
+pub fn deinit(self: Self) void {
+    self.children.deinit();
 }
 
 pub fn activate(self: *Self) void {

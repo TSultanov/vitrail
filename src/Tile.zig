@@ -27,6 +27,7 @@ callbacks: *Callbacks,
 
 fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    window.deinit();
     self.allocator.free(self.desktopNumberString);
     self.allocator.destroy(window);
 }
