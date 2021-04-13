@@ -51,12 +51,7 @@ fn createWidgets(self: *Self) !void {
 
 fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow) !void {
     const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
-
-    if(w.IsIconic(dw.hwnd) != 0) {
-        _ = w.ShowWindow(dw.hwnd, w.SW_RESTORE);
-    }
-
-    _ = w.SetForegroundWindow(dw.hwnd);
+    _ = w.SwitchToThisWindow(dw.hwnd, 1);
     try hide(self.view);
 }
 
