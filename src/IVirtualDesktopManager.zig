@@ -2,6 +2,8 @@ const w = @import("windows.zig");
 const std = @import("std");
 const com = @import("com.zig");
 
+const Self = @This();
+
 const CLSID_VirtualDesktopManager: w.CLSID = w.CLSID{
     .Data1 = 0xaa509086,
     .Data2 = 0x5ca9,
@@ -16,44 +18,16 @@ const IID_IVirtualDesktopManager: w.IID = w.IID{
     .Data4 = [8]u8{ 0x8d, 0x04, 0xd8, 0x28, 0x79, 0xfb, 0x3f, 0x1b },
 };
 
-const IVirtualDesktopManagerVtbl = extern struct {
-    QueryInterface: fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
-    AddRef: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
-    Release: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
-    IsWindowOnCurrentVirtualDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) callconv(.C) w.HRESULT,
-    GetWindowDesktopId: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
-    MoveWindowToDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
-};
+i: *w.IVirtualDesktopManager,
 
-pub const IVirtualDesktopManager = extern struct {
-    lpVtbl: [*c]IVirtualDesktopManagerVtbl,
+pub usingnamespace com.ComInterface(Self, IID_IVirtualDesktopManager, CLSID_VirtualDesktopManager, w.IVirtualDesktopManagerVtbl, w.IVirtualDesktopManager);
 
-    pub fn QueryInterface(self: *IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
-        return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
-    }
-    pub fn AddRef(self: *IVirtualDesktopManager) w.ULONG {
-        return self.lpVtbl.*.AddRef(self);
-    }
-    pub fn Release(self: *IVirtualDesktopManager) w.ULONG {
-        return self.lpVtbl.*.Release(self);
-    }
-    pub fn IsWindowOnCurrentVirtualDesktop(self: *IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]BOOL) w.HRESULT {
-        return self.lpVtbl.*.IsWindowOnCurrentVirtualDesktop(self, topLevelWindow, onCurrentDesktop);
-    }
-    pub fn GetWindowDesktopId(self: *IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
-        return self.lpVtbl.*.GetWindowDesktopId(self, topLevelWindow, desktopId);
-    }
-    pub fn MoveWindowToDesktop(self: *IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
-        return self.lpVtbl.*.MoveWindowToDesktop(self, topLevelWindow, desktopId);
-    }
-
-    pub fn create() !*IVirtualDesktopManager {
-        var virtualDesktopManager: *IVirtualDesktopManager = undefined;
-        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, w.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
-        if (hr == 0) {
-            return virtualDesktopManager;
-        } else {
-            return com.ComError.FailedToCreateComObject;
-        }
-    }
-};
+pub fn IsWindowOnCurrentVirtualDesktop(self: Self, topLevelWindow: w.HWND, onCurrentDesktop: [*c]BOOL) w.HRESULT {
+    return self.i.lpVtbl.*.IsWindowOnCurrentVirtualDesktop.?(self.i, topLevelWindow, onCurrentDesktop);
+}
+pub fn GetWindowDesktopId(self: Self, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
+    return self.i.lpVtbl.*.GetWindowDesktopId.?(self.i, topLevelWindow, desktopId);
+}
+pub fn MoveWindowToDesktop(self: Self, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {
+    return self.i.lpVtbl.*.MoveWindowToDesktop.?(self.i, topLevelWindow, desktopId);
+}

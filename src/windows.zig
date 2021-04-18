@@ -13,6 +13,7 @@ pub usingnamespace @cImport({
     @cInclude("dwmapi.h");
     @cInclude("servprov.h");
     @cInclude("ObjectArray.h");
+    @cInclude("ShObjIdl_core.h");
 });
 
 const std = @import("std");

@@ -22,7 +22,6 @@ i: *w.IServiceProvider,
 
 pub usingnamespace com.ComInterface(Self, IID_IServiceProvider, CLSID_ImmersiveShell, w.IServiceProviderVtbl, w.IServiceProvider);
 
-
 pub fn QueryService(self: Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
     return self.i.lpVtbl.*.QueryService.?(self.i, guidService, riid, ppvObject);
 }

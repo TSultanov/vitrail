@@ -4,7 +4,7 @@ const com = @import("ComInterface.zig");
 
 const Self = @This();
 
-desktopManager: *com.IVirtualDesktopManager,
+desktopManager: com.IVirtualDesktopManager,
 serviceProvider: com.IServiceProvider,
 desktopManagerInternal: *com.IVirtualDesktopManagerInternal,
 
