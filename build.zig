@@ -41,6 +41,10 @@ pub fn build(b: *Builder) void {
     const binPath = getSdkPath(b, .Bin) catch unreachable;
     const mtPath = std.fs.path.join(b.allocator, &.{binPath, "X64\\mt.exe"}) catch unreachable;
 
+    // const includePath = getSdkPath(b, .Include) catch unreachable;
+    // const umPath = std.fs.path.join(b.allocator, &.{includePath, "um"}) catch unreachable;
+    // const sharedPath = std.fs.path.join(b.allocator, &.{includePath, "shared"}) catch unreachable;
+
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
     exe.subsystem = .Windows;
@@ -49,6 +53,8 @@ pub fn build(b: *Builder) void {
         exe.link_function_sections = true;
         exe.single_threaded = true;
     }
+    // exe.addIncludeDir(umPath);
+    // exe.addIncludeDir(sharedPath);
     exe.linkSystemLibrary("c");
     exe.linkSystemLibrary("gdi32");
     exe.linkSystemLibrary("user32");

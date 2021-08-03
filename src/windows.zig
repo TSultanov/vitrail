@@ -1,6 +1,7 @@
 pub usingnamespace @cImport({
     @cDefine("_UNICODE", "1");
     @cDefine("_WIN64", "1");
+    @cDefine("_AMD64_", "1");
     @cDefine("NO_STRICT", "1");
     @cInclude("windows.h");
     @cUndef("NO_STRICT");
@@ -8,7 +9,7 @@ pub usingnamespace @cImport({
     @cInclude("psapi.h");
     @cInclude("shlwapi.h");
     @cInclude("shlobj.h");
-    @cInclude("shlobj_core.h");
+    // @cInclude("shlobj_core.h");
     @cInclude("uxtheme.h");
     @cInclude("dwmapi.h");
 });
