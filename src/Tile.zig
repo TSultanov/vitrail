@@ -32,13 +32,13 @@ fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void 
     self.allocator.destroy(window);
 }
 
-fn onDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onDestroy(event_handlers: *Window.EventHandlers, _: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     _ = w.DeleteObject(self.font);
     _ = w.DeleteObject(self.desktopFont);
 }
 
-pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
+pub fn onClick(event_handlers: *Window.EventHandlers, _: *Window) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.callbacks.clicked(self);
 }
@@ -76,17 +76,17 @@ pub fn resetFonts(self: *Self) !void {
     try self.setFonts();
 }
 
-pub fn onMouseMove(event_handlers: *Window.EventHandlers, window: *Window, keys: u64, x: i16, y: i16) !void {
+pub fn onMouseMove(event_handlers: *Window.EventHandlers, _: *Window, _: u64, _: i16, _: i16) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.window.focus();
 }
 
-fn onSetFocus(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onSetFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.select();
 }
 
-fn onKillFocus(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKillFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.unselect();
 }
@@ -101,7 +101,7 @@ fn unselect(self: *Self) !void {
     try self.window.redraw();
 }
 
-fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKeyDown(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
     if(wParam == w.VK_RETURN) {
@@ -115,7 +115,7 @@ fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.W
     }
 }
 
-fn onChar(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onChar(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);

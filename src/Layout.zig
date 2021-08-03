@@ -42,7 +42,7 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
     try self.layout(false);
 }
 
-fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
@@ -52,7 +52,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
-fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(wParam == w.VK_TAB)
     {
@@ -88,7 +88,7 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
-fn onCharHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
@@ -102,7 +102,7 @@ fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window)
     self.allocator.destroy(window);
 }
 
-fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_COMMAND, wParam, lParam);

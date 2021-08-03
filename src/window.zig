@@ -105,9 +105,9 @@ pub const WindowParameters = struct {
     register_class: bool = true
 };
 
-fn defaultHandler(event_handlers: *EventHandlers, window: *Self) !void {}
+fn defaultHandler(_: *EventHandlers, _: *Self) !void {}
 
-fn defaultParamHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {}
+fn defaultParamHandler(_: *EventHandlers, _: *Self, _: w.WPARAM, _: w.LPARAM) !void {}
 
 pub const EventHandlers = struct {
     onClick: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
@@ -130,9 +130,9 @@ pub const EventHandlers = struct {
     onEnable: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
-pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
+pub fn onMouseMoveDefaultHandler(_: *EventHandlers, _: *Self, _: u64, _: i16, _: i16) !void {}
 
-pub fn onDpiChangeHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+pub fn onDpiChangeHandler(_: *EventHandlers, window: *Self, _: w.WPARAM, lParam: w.LPARAM) !void {
     const dpi = w.GetDpiForWindow(window.hwnd);
     window.setDpi(dpi);
     if(lParam != 0)
@@ -150,7 +150,7 @@ pub fn setDpi(self: *Self, dpi: u32) void {
     _ = w.SendMessageW(self.hwnd, w.WM_SIZE, 0, 0);
 }
 
-fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
+fn onResizeHandler(_: *EventHandlers, window: *Self) !void {
     if(window.docked)
     {
         try window.dock();
@@ -165,7 +165,7 @@ pub fn resize(self: *Self) !void {
     try self.event_handlers.onResize(self.event_handlers, self);
 }
 
-fn onPaintHandler(event_handlers: *EventHandlers, window: *Self) !void {
+fn onPaintHandler(_: *EventHandlers, window: *Self) !void {
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);

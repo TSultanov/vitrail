@@ -1,7 +1,6 @@
 usingnamespace @import("vitrail.zig");
 const com = @import("ComInterface.zig");
 const MainWindow = @import("MainWindow.zig");
-const Button = @import("Button.zig");
 const SystemInteraction = @import("SystemInteraction.zig");
 
 const Self = @This();

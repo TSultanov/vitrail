@@ -34,7 +34,7 @@ tile_callbacks: Tile.Callbacks = .{
     .clicked = tileCallback
 },
 
-fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
     _ = w.DeleteObject(self.font);
@@ -58,7 +58,7 @@ fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window)
     _ = w.PostQuitMessage(0);
 }
 
-fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(wParam == w.VK_ESCAPE)
     {
@@ -70,7 +70,7 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
-fn onCharHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     _ = w.SendMessageW(self.search_box.window.hwnd, w.WM_CHAR, wParam, lParam);
 }
@@ -100,7 +100,7 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
     }
 }
 
-fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
@@ -110,7 +110,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
-fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     const command = wParam >> 16;
     const controlHandle: w.HWND = @intToPtr(w.HWND, @intCast(usize, lParam));
@@ -123,7 +123,7 @@ fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
-pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window, _: w.WPARAM, _: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     
     const dpi = w.GetDpiForWindow(window.hwnd);
@@ -138,7 +138,7 @@ pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window
     }
 }
 
-pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
     if(wParam == 1) {
         const desktop = w.GetDesktopWindow();
         var desktopRect: w.RECT = undefined;
@@ -196,12 +196,12 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
               w.GWL_EXSTYLE, 
               w.GetWindowLong(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
     _ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
-    const margins = w.MARGINS {
-        .cxLeftWidth = -1,
-        .cxRightWidth = -1,
-        .cyTopHeight = -1,
-        .cyBottomHeight = -1
-    };
+    // const margins = w.MARGINS {
+    //     .cxLeftWidth = -1,
+    //     .cxRightWidth = -1,
+    //     .cyTopHeight = -1,
+    //     .cyBottomHeight = -1
+    // };
     //_ = w.DwmExtendFrameIntoClientArea(window.hwnd, &margins);
 
     self.layout = try Layout.create(hInstance, window, allocator);
@@ -259,7 +259,7 @@ fn updateVisibility(self: *Self) !void {
                 }
                 else
                 {
-                    if(std.mem.indexOfPos(u16, dw.title_lower[0..(dw.title.len-1)], 0, search_text_lower[0..(search_text.len-1)])) |idx|
+                    if(std.mem.indexOfPos(u16, dw.title_lower[0..(dw.title.len-1)], 0, search_text_lower[0..(search_text.len-1)]))
                     {
                         _ = tile.window.show();
                     }
@@ -309,10 +309,10 @@ fn updateBoxes(self: *Self) !void {
     //try self.updateVisibilityMask();
 }
 
-fn updateVisibilityMask(self: Self) !void {
-    const rgn = try self.layout.window.getChildRgn();
-    //_ = w.SetWindowRgn(self.window.hwnd, rgn, 1);
-}
+// fn updateVisibilityMask(self: Self) !void {
+//     const rgn = try self.layout.window.getChildRgn();
+//     _ = w.SetWindowRgn(self.window.hwnd, rgn, 1);
+// }
 
 fn setFonts(self: *Self) !void {
     self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);

@@ -10,7 +10,7 @@ const PathType = enum {
     Bin
 };
 
-fn descU8(context: void, a: []const u8, b: []const u8) bool {
+fn descU8(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.order(u8, a, b) == .lt;
 }
 
@@ -44,8 +44,7 @@ pub fn build(b: *Builder) void {
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
     exe.subsystem = .Windows;
-    exe.is_dynamic = true;
-    if(b.release_mode == builtin.Mode.ReleaseSmall) {
+    if(b.release_mode == std.builtin.Mode.ReleaseSmall) {
         exe.strip = true;
         exe.link_function_sections = true;
         exe.single_threaded = true;

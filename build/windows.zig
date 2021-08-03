@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const WINAPI: builtin.CallingConvention = if (builtin.arch == .i386)
+pub const WINAPI: std.builtin.CallingConvention = if (std.builtin.target.cpu.arch == .i386)
     .Stdcall
 else
     .C;

@@ -1,9 +1,9 @@
 usingnamespace @import("vitrail.zig");
 const MainPresenter = @import("MainPresenter.zig");
 
-pub export fn wWinMain(hInstance: zw.HINSTANCE, hPrevInstance: ?zw.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(std.os.windows.WINAPI) c_int {
+pub export fn wWinMain(hInstance: zw.HINSTANCE, _: ?zw.HINSTANCE, _: w.LPWSTR, _: c_int) callconv(std.os.windows.WINAPI) c_int {
     const hInstanceWinApi = @ptrCast(w.HINSTANCE, @alignCast(4, hInstance));
-    var hr = w.CoInitializeEx(null, 0x2);
+    _ = w.CoInitializeEx(null, 0x2);
 
     var picce = w.INITCOMMONCONTROLSEX{ .dwSize = @sizeOf(w.INITCOMMONCONTROLSEX), .dwICC = 0xff };
 
