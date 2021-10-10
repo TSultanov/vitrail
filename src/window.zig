@@ -1,4 +1,6 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const sys = @import("SystemInteraction.zig");
+const w = @import("windows.zig");
 
 const Self = @This();
 
@@ -93,8 +95,8 @@ pub fn activate(self: *Self) void {
 
 pub const WindowParameters = struct {
     exStyle: w.DWORD = 0,
-    className: [:0]u16 = toUtf16const("Vitrail"),
-    title: ?[:0]u16 = toUtf16const("Window"),
+    className: [:0]u16 = sys.toUtf16const("Vitrail"),
+    title: ?[:0]u16 = sys.toUtf16const("Window"),
     style: w.DWORD = w.WS_OVERLAPPEDWINDOW,
     x: c_int = 100,
     y: c_int = 100,
@@ -105,9 +107,9 @@ pub const WindowParameters = struct {
     register_class: bool = true
 };
 
-fn defaultHandler(event_handlers: *EventHandlers, window: *Self) !void {}
+fn defaultHandler(_: *EventHandlers, _: *Self) !void {}
 
-fn defaultParamHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {}
+fn defaultParamHandler(_: *EventHandlers, _: *Self, _: w.WPARAM, _: w.LPARAM) !void {}
 
 pub const EventHandlers = struct {
     onClick: fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
@@ -130,9 +132,9 @@ pub const EventHandlers = struct {
     onEnable: fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
-pub fn onMouseMoveDefaultHandler(event_handlers: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) !void {}
+pub fn onMouseMoveDefaultHandler(_: *EventHandlers, _: *Self, _: u64, _: i16, _: i16) !void {}
 
-pub fn onDpiChangeHandler(event_handlers: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+pub fn onDpiChangeHandler(_: *EventHandlers, window: *Self, _: w.WPARAM, lParam: w.LPARAM) !void {
     const dpi = w.GetDpiForWindow(window.hwnd);
     window.setDpi(dpi);
     if(lParam != 0)
@@ -150,7 +152,7 @@ pub fn setDpi(self: *Self, dpi: u32) void {
     _ = w.SendMessageW(self.hwnd, w.WM_SIZE, 0, 0);
 }
 
-fn onResizeHandler(event_handlers: *EventHandlers, window: *Self) !void {
+fn onResizeHandler(_: *EventHandlers, window: *Self) !void {
     if(window.docked)
     {
         try window.dock();
@@ -165,7 +167,7 @@ pub fn resize(self: *Self) !void {
     try self.event_handlers.onResize(self.event_handlers, self);
 }
 
-fn onPaintHandler(event_handlers: *EventHandlers, window: *Self) !void {
+fn onPaintHandler(_: *EventHandlers, window: *Self) !void {
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
@@ -176,7 +178,7 @@ fn onPaintHandler(event_handlers: *EventHandlers, window: *Self) !void {
 }
 
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(std.os.windows.WINAPI) w.LRESULT {
-    var wLong = w.GetWindowLongPtr(hwnd, w.GWLP_USERDATA);
+    var wLong = w.GetWindowLongPtrW(hwnd, w.GWLP_USERDATA);
     if (wLong == 0) {
         return w.DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
@@ -278,7 +280,7 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
             .cbWndExtra = 0,
             .hInstance = hInstance,
             .hIcon = null,
-            .hCursor = w.LoadCursor(null, 32512),
+            .hCursor = w.LoadCursorW(null, 32512),
             .hbrBackground = null,
             .lpszMenuName = null,
             .lpszClassName = window_parameters.className,
@@ -307,9 +309,9 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
     var rect = try window.getRect();
     try window.setSize(rect.left, rect.top, window.scaleDpi(rect.right - rect.left), window.scaleDpi(rect.bottom - rect.top));
 
-    _ = w.SetWindowLongPtr(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
+    _ = w.SetWindowLongPtrW(hwnd, w.GWLP_USERDATA, @bitCast(c_longlong, @ptrToInt(window)));
     var font = w.GetStockObject(w.DEFAULT_GUI_FONT);
-    _ = w.SendMessage(hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
+    _ = w.SendMessageW(hwnd, w.WM_SETFONT, @ptrToInt(font), 1);
 
     return window;
 }
@@ -352,7 +354,7 @@ pub fn bringToTop(self: Self) !void {
 }
 
 pub fn setFont(self: Self, font: w.HGDIOBJ) !void {
-    _ = SendMessage(self.hwnd, w.WM_SETFONT, font, 0);
+    _ = w.SendMessageW(self.hwnd, w.WM_SETFONT, font, 0);
 }
 
 pub fn getText(self: Self, allocator: *std.mem.Allocator) ![:0]u16 {

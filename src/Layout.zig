@@ -1,4 +1,6 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const w = @import("windows.zig");
+const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
 
 const Self = @This();
@@ -42,7 +44,7 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
     try self.layout(false);
 }
 
-fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
     var ps: w.PAINTSTRUCT = undefined;
     var hdc = w.BeginPaint(window.hwnd, &ps);
     defer _ = w.EndPaint(window.hwnd, &ps);
@@ -52,7 +54,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
     try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 }
 
-fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(wParam == w.VK_TAB)
     {
@@ -88,7 +90,7 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
     }
 }
 
-fn onCharHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
@@ -102,7 +104,7 @@ fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window)
     self.allocator.destroy(window);
 }
 
-fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_COMMAND, wParam, lParam);
@@ -111,8 +113,8 @@ fn onCommandHandler(event_handlers: *Window.EventHandlers, window: *Window, wPar
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
-        .title = toUtf16const("SpiralLayout"),
-        .className = toUtf16const("SpiralLayout"),
+        .title = sys.toUtf16const("SpiralLayout"),
+        .className = sys.toUtf16const("SpiralLayout"),
         .style = w.WS_VISIBLE | w.WS_CHILD | w.WS_CLIPSIBLINGS ,
         .parent = parent,
         .register_class = true,

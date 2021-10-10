@@ -79,12 +79,12 @@ pub fn deinit(self: Self) !void {
 
 pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(DesktopWindow) {
     var desktopsNullable: ?*com.IObjectArray = undefined;
-    var desktopsHr = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
+    _ = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
     var desktops = desktopsNullable orelse unreachable;
     defer _ = desktops.Release();
 
     var dCount: c_uint = undefined;
-    var countHr = desktops.GetCount(&dCount);
+    _ = desktops.GetCount(&dCount);
 
     var desktopsMap = std.hash_map.AutoHashMap(w.GUID, usize).init(allocator);
     defer desktopsMap.deinit();
@@ -103,21 +103,21 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
     _ = w.EnumWindows(@ptrCast(fn(...) callconv(.C) c_longlong, enumWindowProc), @intCast(c_longlong, @ptrToInt(&hwndList)));
     var windowList = std.ArrayList(DesktopWindow).init(allocator);
     for (hwndList.items) |hwnd| {
-        var shouldShow = try self.shouldShowWindow(hwnd);
+        var shouldShow = try shouldShowWindow(hwnd);
         if(!shouldShow) continue;
-        var title = try self.getWindowTitle(hwnd, allocator);
+        var title = try getWindowTitle(hwnd, allocator);
 
         const title_lower = try allocator.allocSentinel(u16, title.len, 0);
         std.mem.copy(u16, title_lower, title);
         _ = w.CharLowerBuffW(title_lower, @intCast(c_ulong, title_lower.len-1));
 
-        var class = try self.getWindowClass(hwnd, allocator);
-        var icon: w.HICON = try self.getWindowIcon(hwnd);
+        var class = try getWindowClass(hwnd, allocator);
+        var icon: w.HICON = try getWindowIcon(hwnd);
 
         var desktopId: w.GUID = undefined;
         _ = self.desktopManager.GetWindowDesktopId(hwnd, &desktopId);
 
-        var executablePath = try self.getWindowFilePath(hwnd, allocator);
+        var executablePath = try getWindowFilePath(hwnd, allocator);
         var executableName: ?[:0]u16 = null;
         if (executablePath) |ep| {
             var name: [*:0]u16 = w.PathFindFileNameW(ep);
@@ -142,7 +142,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
     return windowList;
 }
 
-fn getWindowTitle(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
+fn getWindowTitle(hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
     const length = w.GetWindowTextLengthW(hwnd) + 1;
     const title: [:0]u16 = try allocator.allocSentinel(u16, @intCast(usize, length), 0);
     std.mem.set(u16, title, 0);
@@ -150,15 +150,15 @@ fn getWindowTitle(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]
     return title;
 }
 
-fn getWindowClass(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
+fn getWindowClass(hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
     const class: [:0]u16 = try allocator.allocSentinel(u16, 512, 0);
     std.mem.set(u16, class, 0);
     _ = w.GetClassNameW(hwnd, class, 511);
     return class;
 }
 
-fn getWindowIcon(self: Self, hwnd: w.HWND) !w.HICON {
-    var fileIcon = try self.extractIconFromExecutable(hwnd);
+fn getWindowIcon(hwnd: w.HWND) !w.HICON {
+    var fileIcon = try extractIconFromExecutable(hwnd);
     if (fileIcon != null) return fileIcon.?;
     
     var iconAddr: usize = undefined;
@@ -177,7 +177,7 @@ fn getWindowIcon(self: Self, hwnd: w.HWND) !w.HICON {
     return @ptrCast(w.HICON, w.LoadIconW(null, 32512));
 }
 
-fn getWindowFilePath(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) !?[:0]u16 {
+fn getWindowFilePath(hwnd: w.HWND, allocator: *std.mem.Allocator) !?[:0]u16 {
     var pid: w.DWORD = undefined;
     _ = w.GetWindowThreadProcessId(hwnd, &pid);
     var hProc: w.HANDLE = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
@@ -194,10 +194,10 @@ fn getWindowFilePath(self: Self, hwnd: w.HWND, allocator: *std.mem.Allocator) !?
     }
 }
 
-fn extractIconFromExecutable(self: Self, hwnd: w.HWND) !?w.HICON {
+fn extractIconFromExecutable(hwnd: w.HWND) !?w.HICON {
     var filePathBuf = [_]u8 {0} ** 8194;
     var fba = std.heap.FixedBufferAllocator.init(&filePathBuf);
-    var windowFileName = try self.getWindowFilePath(hwnd, &fba.allocator);
+    var windowFileName = try getWindowFilePath(hwnd, &fba.allocator);
     if(windowFileName) |fileName| {
         defer fba.allocator.free(fileName);
         var iconIndex: w.WORD = 0;
@@ -211,7 +211,7 @@ fn extractIconFromExecutable(self: Self, hwnd: w.HWND) !?w.HICON {
     return null;
 }
 
-fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
+fn shouldShowWindow(hwnd: w.HWND) !bool {
     var owner = w.GetWindow(hwnd, w.GW_OWNER);
     var ownerVisible = false;
     if (owner != null) {
@@ -248,7 +248,7 @@ fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
 
     var classBuf = [_]u8 {0} ** 1026;
     var fba = std.heap.FixedBufferAllocator.init(&classBuf);
-    var class = try self.getWindowClass(hwnd, &fba.allocator);
+    var class = try getWindowClass(hwnd, &fba.allocator);
     defer fba.allocator.free(class);
 
     comptime var coreWindowClass = try toUtf16("Windows.UI.Core.CoreWindow");
@@ -256,7 +256,6 @@ fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
 
     comptime var uwpAppClass = try toUtf16("ApplicationFrameWindow");
     var isUwpApp = std.mem.eql(u16, class, uwpAppClass);
-    comptime var cloakType = "ApplicationViewCloakType";
 
     if (isUwpApp) {
         var validCloak: bool = false;
@@ -267,8 +266,8 @@ fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
     return true;
 }
 
-fn verifyUwpCloak(hwnd: w.HWND, str: w.LPSTR, handle: w.HANDLE, ptr: w.ULONG_PTR) callconv(.C) c_int {
-    comptime var cloakType = "ApplicationViewCloakType";
+fn verifyUwpCloak(_: w.HWND, str: w.LPSTR, handle: w.HANDLE, ptr: w.ULONG_PTR) callconv(.C) c_int {
+    const cloakType = "ApplicationViewCloakType";
     if (@ptrToInt(str) > 0xffff) {
         var prop = std.mem.spanZ(str);
         if (std.mem.eql(u8, cloakType, prop)) {

@@ -1,7 +1,7 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const w = @import("windows.zig");
+const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
-
-const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 pub const Callbacks = struct {
     clicked: fn (tile: *Self) anyerror!void,
@@ -16,7 +16,7 @@ allocator: *std.mem.Allocator,
 window: *Window,
 event_handlers: Window.EventHandlers,
 selected: bool,
-desktopWindow: DesktopWindow,
+desktopWindow: sys.DesktopWindow,
 color: w.COLORREF,
 colorFocused: w.COLORREF,
 font: w.HGDIOBJ,
@@ -32,13 +32,13 @@ fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void 
     self.allocator.destroy(window);
 }
 
-fn onDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
+fn onDestroy(event_handlers: *Window.EventHandlers, _: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     _ = w.DeleteObject(self.font);
     _ = w.DeleteObject(self.desktopFont);
 }
 
-pub fn onClick(event_handlers: *Window.EventHandlers, window: *Window) !void {
+pub fn onClick(event_handlers: *Window.EventHandlers, _: *Window) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.callbacks.clicked(self);
 }
@@ -76,17 +76,17 @@ pub fn resetFonts(self: *Self) !void {
     try self.setFonts();
 }
 
-pub fn onMouseMove(event_handlers: *Window.EventHandlers, window: *Window, keys: u64, x: i16, y: i16) !void {
+pub fn onMouseMove(event_handlers: *Window.EventHandlers, _: *Window, _: u64, _: i16, _: i16) !void {
     const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.window.focus();
 }
 
-fn onSetFocus(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onSetFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.select();
 }
 
-fn onKillFocus(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKillFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     try self.unselect();
 }
@@ -101,7 +101,7 @@ fn unselect(self: *Self) !void {
     try self.window.redraw();
 }
 
-fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onKeyDown(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
 
     if(wParam == w.VK_RETURN) {
@@ -115,17 +115,17 @@ fn onKeyDown(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.W
     }
 }
 
-fn onChar(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
+fn onChar(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     if(self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
     }
 }
 
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.DesktopWindow, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = desktopWindow.title,
-        .className = toUtf16const("VitrailTile"),
+        .className = sys.toUtf16const("VitrailTile"),
         .width = 100, .height = 25,
         .style = w.WS_VISIBLE | w.WS_CHILD,
         .parent = parent,
@@ -177,7 +177,7 @@ fn setFonts(self: *Self) !void {
     self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
     self.desktopFont = w.CreateFontW(self.window.scaleDpi(desktop_no_font_size), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
                         w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
-                        w.DEFAULT_PITCH | w.FF_DONTCARE, toUtf16const("Segoe UI"));
+                        w.DEFAULT_PITCH | w.FF_DONTCARE, sys.toUtf16const("Segoe UI"));
 }
 
 pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
