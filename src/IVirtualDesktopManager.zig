@@ -20,9 +20,9 @@ const IID_IVirtualDesktopManager: w.IID = w.IID{
 
 i: *w.IVirtualDesktopManager,
 
-pub usingnamespace com.ComInterface(Self, IID_IVirtualDesktopManager, CLSID_VirtualDesktopManager, w.IVirtualDesktopManagerVtbl, w.IVirtualDesktopManager);
+pub usingnamespace com.ComInterface(Self, IID_IVirtualDesktopManager, CLSID_VirtualDesktopManager, w.IVirtualDesktopManager);
 
-pub fn IsWindowOnCurrentVirtualDesktop(self: Self, topLevelWindow: w.HWND, onCurrentDesktop: [*c]BOOL) w.HRESULT {
+pub fn IsWindowOnCurrentVirtualDesktop(self: Self, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) w.HRESULT {
     return self.i.lpVtbl.*.IsWindowOnCurrentVirtualDesktop.?(self.i, topLevelWindow, onCurrentDesktop);
 }
 pub fn GetWindowDesktopId(self: Self, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) w.HRESULT {

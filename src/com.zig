@@ -20,7 +20,7 @@ pub fn IUnknown(comptime Self: type) type {
     };
 }
 
-pub fn ComInterface(comptime Self: type, comptime iid: w.IID, comptime clsid: w.CLSID, comptime Vtbl: type, comptime Interface: type) type {
+pub fn ComInterface(comptime Self: type, comptime iid: w.IID, comptime clsid: w.CLSID, comptime Interface: type) type {
     return struct {
         pub usingnamespace IUnknown(Self);
 
