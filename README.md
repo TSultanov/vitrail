@@ -13,15 +13,15 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 
 ## Building
 - Clone this repository
-- Download latest nightly build of Zig from https://ziglang.org/download/ and extract it (last tested with 0.8.0-dev.1561).
+- Download latest nightly build of Zig from https://ziglang.org/download/ and extract it (last tested with 0.9.0-dev.1343).
 - Open PowerShell in the directory with this repository
-- Run `.\path\to\zig.exe build`
+- Run `path\to\zig.exe build`
 
 ## Downloading
 You can download recent build from the [releases page](https://github.com/ArtifTh/vitrail/releases).
 
 ## Running
-Execute `.\zig-cache\bin\vitrail.exe`. Pressing `Alt-Space` opens the window grid.
+Execute `.\zig-out\bin\vitrail.exe`. Pressing `Alt-Space` opens the window grid.
 
 ## Screenshot
 ![Screenshot of the application](/docs/screenshot.png?raw=true)
