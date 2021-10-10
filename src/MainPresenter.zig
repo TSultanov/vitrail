@@ -14,7 +14,7 @@ desktop_windows: ?std.ArrayList(SystemInteraction.DesktopWindow) = null,
 
 window_callbacks: MainWindow.Callbacks = .{
     .activateWindow = activateWindow,
-    .hide = destroyWidgets
+    .hide = hide
 },
 si: SystemInteraction,
 
@@ -22,7 +22,6 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
     var self = try allocator.create(Self);
     self.* = .{
         .allocator = allocator,
-        //.arena = std.heap.ArenaAllocator.init(allocator),
         .view = undefined,
         .si = try SystemInteraction.init(),
         .hInstance = hInstance
@@ -32,15 +31,12 @@ pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
 
     self.view = main_window;
 
-    //try self.createWidgets();
     _ = main_window.window.show();
-    main_window.window.activate();
 
     return self;
 }
 
 fn createWidgets(self: *Self) !void {
-    try destroyWidgets(self.view);
     self.view.window.activate();
     _ = w.SetForegroundWindow(self.view.window.hwnd);
     self.desktop_windows = try self.si.getWindowList(self.allocator);
@@ -56,10 +52,6 @@ fn activateWindow(main_window: *MainWindow, dw: SystemInteraction.DesktopWindow)
 }
 
 fn hide(main_window: *MainWindow) !void {
-    try destroyWidgets(main_window);
-}
-
-fn destroyWidgets(main_window: *MainWindow) !void {
     const self = @fieldParentPtr(Self, "window_callbacks", main_window.callbacks);
 
     try self.view.hideBoxes();
@@ -72,8 +64,10 @@ fn destroyWidgets(main_window: *MainWindow) !void {
         desktop_windows.deinit();
         self.desktop_windows = null;
     }
+
 }
 
 pub fn show(self: *Self) !void {
+    _ = self.view.window.show();
     try self.createWidgets();
 }
