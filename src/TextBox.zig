@@ -1,4 +1,6 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const w = @import("windows.zig");
+const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
 
 const Self = @This();
@@ -18,7 +20,7 @@ fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = null,
-        .className = toUtf16const("EDIT"),
+        .className = sys.toUtf16const("EDIT"),
         .width = 100, .height = 25,
         .style = w.WS_VISIBLE | w.WS_CHILD | w.ES_LEFT | w.WS_BORDER,
         .parent = parent,

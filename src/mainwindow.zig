@@ -1,9 +1,10 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const w = @import("windows.zig");
+const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
 pub const Layout = @import("Layout.zig");
 pub const Tile = @import("Tile.zig");
 pub const TextBox = @import("TextBox.zig");
-pub const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 const Self = @This();
 
@@ -13,7 +14,7 @@ const search_box_width = 100;
 const search_box_height = 20;
 
 pub const Callbacks = struct {
-    activateWindow: fn(main_window: *Self, dw: DesktopWindow) anyerror!void,
+    activateWindow: fn(main_window: *Self, dw: sys.DesktopWindow) anyerror!void,
     hide: fn(main_window: *Self) anyerror!void
 };
 
@@ -21,7 +22,7 @@ window: *Window,
 layout: *Layout,
 search_box: *TextBox,
 event_handlers: Window.EventHandlers,
-desktop_windows: ?std.ArrayList(DesktopWindow),
+desktop_windows: ?std.ArrayList(sys.DesktopWindow),
 hInstance: w.HINSTANCE,
 allocator: *std.mem.Allocator,
 callbacks: *Callbacks,
@@ -161,7 +162,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
         .y = desktopRect.top,
         .width = desktopRect.right,
         .height = desktopRect.bottom,
-        .title = toUtf16const("MainWindow"),
+        .title = sys.toUtf16const("MainWindow"),
         .style = w.WS_OVERLAPPEDWINDOW
     };
 
@@ -191,10 +192,10 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
 
     var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    _ = w.SetWindowLong(window.hwnd, w.GWL_STYLE, 0);
-    _ = w.SetWindowLong(window.hwnd, 
+    _ = w.SetWindowLongW(window.hwnd, w.GWL_STYLE, 0);
+    _ = w.SetWindowLongW(window.hwnd, 
               w.GWL_EXSTYLE, 
-              w.GetWindowLong(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
+              w.GetWindowLongW(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
     _ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
     // const margins = w.MARGINS {
     //     .cxLeftWidth = -1,
@@ -214,7 +215,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem
     return self;
 }
 
-pub fn setDesktopWindows(self: *Self, desktopWindows: std.ArrayList(DesktopWindow)) !void {
+pub fn setDesktopWindows(self: *Self, desktopWindows: std.ArrayList(sys.DesktopWindow)) !void {
     try self.hideBoxes();
     self.desktop_windows = desktopWindows;
     try self.updateBoxes();
@@ -259,7 +260,7 @@ fn updateVisibility(self: *Self) !void {
                 }
                 else
                 {
-                    if(std.mem.indexOfPos(u16, dw.title_lower[0..(dw.title.len-1)], 0, search_text_lower[0..(search_text.len-1)]))
+                    if(std.mem.containsAtLeast(u16, dw.title_lower[0..(dw.title.len-1)], 1, search_text_lower[0..(search_text.len-1)]) )
                     {
                         _ = tile.window.show();
                     }

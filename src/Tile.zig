@@ -1,7 +1,7 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const w = @import("windows.zig");
+const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
-
-const DesktopWindow = @import("SystemInteraction.zig").DesktopWindow;
 
 pub const Callbacks = struct {
     clicked: fn (tile: *Self) anyerror!void,
@@ -16,7 +16,7 @@ allocator: *std.mem.Allocator,
 window: *Window,
 event_handlers: Window.EventHandlers,
 selected: bool,
-desktopWindow: DesktopWindow,
+desktopWindow: sys.DesktopWindow,
 color: w.COLORREF,
 colorFocused: w.COLORREF,
 font: w.HGDIOBJ,
@@ -122,10 +122,10 @@ fn onChar(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, l
     }
 }
 
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: DesktopWindow, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.DesktopWindow, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = desktopWindow.title,
-        .className = toUtf16const("VitrailTile"),
+        .className = sys.toUtf16const("VitrailTile"),
         .width = 100, .height = 25,
         .style = w.WS_VISIBLE | w.WS_CHILD,
         .parent = parent,
@@ -177,7 +177,7 @@ fn setFonts(self: *Self) !void {
     self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
     self.desktopFont = w.CreateFontW(self.window.scaleDpi(desktop_no_font_size), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
                         w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
-                        w.DEFAULT_PITCH | w.FF_DONTCARE, toUtf16const("Segoe UI"));
+                        w.DEFAULT_PITCH | w.FF_DONTCARE, sys.toUtf16const("Segoe UI"));
 }
 
 pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {

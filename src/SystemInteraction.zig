@@ -102,7 +102,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
     _ = w.EnumWindows(@ptrCast(fn(...) callconv(.C) c_longlong, enumWindowProc), @intCast(c_longlong, @ptrToInt(&hwndList)));
     var windowList = std.ArrayList(DesktopWindow).init(allocator);
     for (hwndList.items) |hwnd| {
-        var shouldShow = try self.shouldShowWindow(hwnd);
+        var shouldShow = try shouldShowWindow(hwnd);
         if(!shouldShow) continue;
         var title = try getWindowTitle(hwnd, allocator);
 
@@ -116,7 +116,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
         var desktopId: w.GUID = undefined;
         _ = self.desktopManager.GetWindowDesktopId(hwnd, &desktopId);
 
-        var executablePath = try self.getWindowFilePath(hwnd, allocator);
+        var executablePath = try getWindowFilePath(hwnd, allocator);
         var executableName: ?[:0]u16 = null;
         if (executablePath) |ep| {
             var name: [*:0]u16 = w.PathFindFileNameW(ep);
@@ -210,7 +210,7 @@ fn extractIconFromExecutable(hwnd: w.HWND) !?w.HICON {
     return null;
 }
 
-fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
+fn shouldShowWindow(hwnd: w.HWND) !bool {
     var owner = w.GetWindow(hwnd, w.GW_OWNER);
     var ownerVisible = false;
     if (owner != null) {
@@ -247,7 +247,7 @@ fn shouldShowWindow(self: Self, hwnd: w.HWND) !bool {
 
     var classBuf = [_]u8 {0} ** 1026;
     var fba = std.heap.FixedBufferAllocator.init(&classBuf);
-    var class = try self.getWindowClass(hwnd, &fba.allocator);
+    var class = try getWindowClass(hwnd, &fba.allocator);
     defer fba.allocator.free(class);
 
     comptime var coreWindowClass = try toUtf16("Windows.UI.Core.CoreWindow");

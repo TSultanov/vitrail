@@ -45,16 +45,18 @@ pub fn build(b: *Builder) void {
     // const umPath = std.fs.path.join(b.allocator, &.{includePath, "um"}) catch unreachable;
     // const sharedPath = std.fs.path.join(b.allocator, &.{includePath, "shared"}) catch unreachable;
 
-    const mode = b.standardReleaseOptions();
+    // const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("vitrail", "src/wmain.zig");
+    exe.setTarget(.{.cpu_arch = .x86_64, .os_tag = .windows, .abi = .msvc});
     exe.subsystem = .Windows;
-    if(b.release_mode == std.builtin.Mode.ReleaseSmall) {
-        exe.strip = true;
-        exe.link_function_sections = true;
-        exe.single_threaded = true;
-    }
+    // if(b.release_mode == std.builtin.Mode.ReleaseSmall) {
+    //     exe.strip = true;
+    //     exe.link_function_sections = true;
+    //     // exe.single_threaded = true;
+    // }
     // exe.addIncludeDir(umPath);
     // exe.addIncludeDir(sharedPath);
+    exe.single_threaded = true;
     exe.linkSystemLibrary("c");
     exe.linkSystemLibrary("gdi32");
     exe.linkSystemLibrary("user32");
@@ -64,7 +66,7 @@ pub fn build(b: *Builder) void {
     exe.linkSystemLibrary("Ole32");
     exe.linkSystemLibrary("Shlwapi");
     exe.linkSystemLibrary("Dwmapi");
-    exe.setBuildMode(mode);
+    // exe.setBuildMode(mode);
     exe.install();
 
     var run_mt = b.addSystemCommand(&[_][]const u8{

@@ -1,4 +1,6 @@
-usingnamespace @import("vitrail.zig");
+const std = @import("std");
+const w = @import("windows.zig");
+const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
 
 const Self = @This();
@@ -111,8 +113,8 @@ fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
-        .title = toUtf16const("SpiralLayout"),
-        .className = toUtf16const("SpiralLayout"),
+        .title = sys.toUtf16const("SpiralLayout"),
+        .className = sys.toUtf16const("SpiralLayout"),
         .style = w.WS_VISIBLE | w.WS_CHILD | w.WS_CLIPSIBLINGS ,
         .parent = parent,
         .register_class = true,
