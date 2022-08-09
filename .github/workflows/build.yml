@@ -31,7 +31,7 @@ jobs:
         uses: goto-bus-stop/setup-zig@v1.3.0
         with:
           # Version of the zig compiler to use (must be 0.3.0 or up)
-          version: 0.8.0-dev.1715+74fd7107e
+          version: 0.9.1
 
       # Runs a single command using the runners shell
       - name: Run build
