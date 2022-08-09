@@ -17,7 +17,7 @@ const IID_IVirtualDesktopManager: w.IID = w.IID{
 };
 
 const IVirtualDesktopManagerVtbl = extern struct {
-    QueryInterface: fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryInterface: fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
     AddRef: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
     Release: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
     IsWindowOnCurrentVirtualDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) callconv(.C) w.HRESULT,
@@ -28,7 +28,7 @@ const IVirtualDesktopManagerVtbl = extern struct {
 pub const IVirtualDesktopManager = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerVtbl,
 
-    pub fn QueryInterface(self: *IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
+    pub fn QueryInterface(self: *IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c][*c]anyopaque) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }
     pub fn AddRef(self: *IVirtualDesktopManager) w.ULONG {
@@ -49,7 +49,7 @@ pub const IVirtualDesktopManager = extern struct {
 
     pub fn create() !*IVirtualDesktopManager {
         var virtualDesktopManager: *IVirtualDesktopManager = undefined;
-        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, w.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManager)));
+        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, w.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*anyopaque, @ptrToInt(&virtualDesktopManager)));
         if (hr == 0) {
             return virtualDesktopManager;
         } else {

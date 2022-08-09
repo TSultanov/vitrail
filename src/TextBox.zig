@@ -10,14 +10,14 @@ event_handlers: Window.EventHandlers = .{
     .onAfterDestroy = onAfterDestroy
 },
 
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 
 fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
     var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
     self.allocator.destroy(window);
 }
 
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = null,
         .className = sys.toUtf16const("EDIT"),

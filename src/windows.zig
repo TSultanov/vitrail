@@ -34,7 +34,7 @@ pub fn mapErr(hResult: w.HRESULT) anyerror!void {
 pub fn mapFailure(res: w.BOOL) anyerror!void {
     if(res == 0) {
         var errCode = w.GetLastError();
-        std.debug.warn("WIN32ERRCODE: {x}\n", .{errCode});
+        std.log.err("WIN32ERRCODE: {x}\n", .{errCode});
 
         return WinApiError.Failure;
     }
@@ -43,5 +43,5 @@ pub fn mapFailure(res: w.BOOL) anyerror!void {
 pub fn logGdiObjects(comptime message: []const u8) void {
     var hProc = w.GetCurrentProcess();
     var gdiObjects = w.GetGuiResources(hProc, w.GR_GDIOBJECTS);
-    std.debug.warn("{s}: gdiObjects: {}\n", .{message, gdiObjects});
+    std.log.info("{s}: gdiObjects: {}\n", .{message, gdiObjects});
 }

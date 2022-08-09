@@ -8,7 +8,7 @@ else
 
 pub const HKEY__ = opaque {};
 pub const HKEY = *HKEY__;
-pub const PVOID = *c_void;
+pub const PVOID = *anyopaque;
 pub const WCHAR = u16;
 pub const LPCWSTR = ?[*:0]const WCHAR;
 pub const DWORD = u32;
@@ -72,7 +72,7 @@ const ERROR_MORE_DATA: LSTATUS = 234;
 const ERROR_NO_MORE_ITEMS: LSTATUS = 259;
 const ERROR_SUCCESS: LSTATUS = 0;
 
-pub fn getRegSzValue(allocator: *std.mem.Allocator, hive: HKEY, subKey: []const u8, value: []const u8) ![:0]const u8 {
+pub fn getRegSzValue(allocator: std.mem.Allocator, hive: HKEY, subKey: []const u8, value: []const u8) ![:0]const u8 {
     const subKeyUtf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, subKey);
     defer allocator.free(subKeyUtf16);
 
@@ -84,7 +84,7 @@ pub fn getRegSzValue(allocator: *std.mem.Allocator, hive: HKEY, subKey: []const 
     std.mem.set(u16, data, 0);
     defer allocator.free(data);
 
-    var errorCode = RegGetValueW(hive, subKeyUtf16, valueUtf16, RRF_RT_REG_SZ, null, @ptrCast(*c_void, data), &cbData);
+    var errorCode = RegGetValueW(hive, subKeyUtf16, valueUtf16, RRF_RT_REG_SZ, null, @ptrCast(*anyopaque, data), &cbData);
     if(errorCode != 0) {
         return WinError.RegQueryError;
     }
@@ -94,7 +94,7 @@ pub fn getRegSzValue(allocator: *std.mem.Allocator, hive: HKEY, subKey: []const 
     return dataUtf8;
 }
 
-pub fn regEnumKeys(allocator: *std.mem.Allocator, hive: HKEY, subKey: []const u8) !std.ArrayList([:0]u8) {
+pub fn regEnumKeys(allocator: std.mem.Allocator, hive: HKEY, subKey: []const u8) !std.ArrayList([:0]u8) {
     const subKeyUtf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, subKey);
     defer allocator.free(subKeyUtf16);
 

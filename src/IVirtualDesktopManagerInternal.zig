@@ -32,7 +32,7 @@ const IApplicationView = extern struct {
 };
 
 const IVirtualDesktopVtbl = extern struct {
-    QueryInterface: fn (This: [*c]IVirtualDesktop, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryInterface: fn (This: [*c]IVirtualDesktop, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
     AddRef: fn (This: [*c]IVirtualDesktop) callconv(.C) w.ULONG,
     Release: fn (This: [*c]IVirtualDesktop) callconv(.C) w.ULONG,
     IsViewVisible: fn (This: [*c]IVirtualDesktop, pView: [*c]IApplicationView, pfVisible: [*c]c_int) callconv(.C) w.HRESULT,
@@ -43,7 +43,7 @@ pub const IVirtualDesktop = extern struct {
     lpVtbl: [*c]IVirtualDesktopVtbl,
     iid: w.IID = IID_IVirtualDesktop,
 
-    pub fn QueryInterface(self: *IVirtualDesktop, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
+    pub fn QueryInterface(self: *IVirtualDesktop, riid: com.REFIID, ppvObject: [*c]?*anyopaque) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }
     pub fn AddRef(self: *IVirtualDesktop) w.ULONG {
@@ -61,7 +61,7 @@ pub const IVirtualDesktop = extern struct {
 };
 
 const IVirtualDesktopManagerInternalVtbl = extern struct {
-    QueryInterface: fn (This: [*c]IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryInterface: fn (This: [*c]IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
     AddRef: fn (This: [*c]IVirtualDesktopManagerInternal) callconv(.C) w.ULONG,
     Release: fn (This: [*c]IVirtualDesktopManagerInternal) callconv(.C) w.ULONG,
     GetCount: fn (This: [*c]IVirtualDesktopManagerInternal, pCount: [*c]c_int) callconv(.C) w.HRESULT,
@@ -80,7 +80,7 @@ pub const IVirtualDesktopManagerInternal = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerInternalVtbl,
     iid: w.IID = IID_IVirtualDesktopManagerInternal,
 
-    pub fn QueryInterface(self: *IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
+    pub fn QueryInterface(self: *IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c][*c]anyopaque) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }
     pub fn AddRef(self: *IVirtualDesktopManagerInternal) w.ULONG {
@@ -116,11 +116,11 @@ pub const IVirtualDesktopManagerInternal = extern struct {
 
     pub fn create(serviceProvider: *IServiceProvider) !*IVirtualDesktopManagerInternal {
         var virtualDesktopManagerInternal: *IVirtualDesktopManagerInternal = undefined;
-        var hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &IID_IVirtualDesktopManagerInternal, @intToPtr([*c]?*c_void, @ptrToInt(&virtualDesktopManagerInternal)));
+        var hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &IID_IVirtualDesktopManagerInternal, @intToPtr([*c]?*anyopaque, @ptrToInt(&virtualDesktopManagerInternal)));
         if (hr == 0) {
             return virtualDesktopManagerInternal;
         } else {
-            std.debug.warn("virtualDesktopManagerInternal hr: {x}\n", .{@bitCast(u32, hr)});
+            std.log.info("virtualDesktopManagerInternal hr: {x}\n", .{@bitCast(u32, hr)});
             return com.ComError.FailedToCreateComObject;
         }
     }

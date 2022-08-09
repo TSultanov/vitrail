@@ -5,17 +5,17 @@ const com = @import("com.zig");
 pub const ObjectArrayError = error{ InvalidType, Unknown };
 
 pub const IObjectArrayVtbl = extern struct {
-    QueryInterface: fn (This: [*c]IObjectArray, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryInterface: fn (This: [*c]IObjectArray, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
     AddRef: fn (This: [*c]IObjectArray) callconv(.C) w.ULONG,
     Release: fn (This: [*c]IObjectArray) callconv(.C) w.ULONG,
     GetCount: fn (This: [*c]IObjectArray, pcObjects: [*c]w.UINT) callconv(.C) w.HRESULT,
-    GetAt: fn (This: [*c]IObjectArray, uiIndex: w.UINT, riid: com.REFIID, ppv: [*c]?*c_void) callconv(.C) w.HRESULT,
+    GetAt: fn (This: [*c]IObjectArray, uiIndex: w.UINT, riid: com.REFIID, ppv: [*c]?*anyopaque) callconv(.C) w.HRESULT,
 };
 
 pub const IObjectArray = extern struct {
     lpVtbl: [*c]IObjectArrayVtbl,
 
-    pub fn QueryInterface(self: *IObjectArray, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
+    pub fn QueryInterface(self: *IObjectArray, riid: com.REFIID, ppvObject: [*c]?*anyopaque) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
     }
     pub fn AddRef(self: *IObjectArray) w.ULONG {
@@ -30,7 +30,7 @@ pub const IObjectArray = extern struct {
     pub fn GetAtGeneric(self: *IObjectArray, uiIndex: usize, comptime T: type) !*T {
         var iid = std.meta.fieldInfo(T, .iid).default_value orelse return ObjectArrayError.InvalidType;
 
-        var object: ?*c_void = undefined;
+        var object: ?*anyopaque = undefined;
         var hr = self.lpVtbl.*.GetAt(self, @intCast(w.UINT, uiIndex), &iid, &object);
 
         if (hr == 0) {

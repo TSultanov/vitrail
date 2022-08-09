@@ -24,7 +24,7 @@ search_box: *TextBox,
 event_handlers: Window.EventHandlers,
 desktop_windows: ?std.ArrayList(sys.DesktopWindow),
 hInstance: w.HINSTANCE,
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 callbacks: *Callbacks,
 boxes: std.ArrayList(*Tile),
 font: w.HGDIOBJ,
@@ -151,7 +151,7 @@ pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, w
     }
 }
 
-pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
     const desktop = w.GetDesktopWindow();
     var desktopRect: w.RECT = undefined;
     try w.mapFailure(w.GetWindowRect(desktop, &desktopRect));

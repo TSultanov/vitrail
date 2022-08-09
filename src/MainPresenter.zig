@@ -6,7 +6,7 @@ const SystemInteraction = @import("SystemInteraction.zig");
 
 const Self = @This();
 
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 //arena: std.heap.ArenaAllocator,
 view: *MainWindow,
 hInstance: w.HINSTANCE,
@@ -18,7 +18,7 @@ window_callbacks: MainWindow.Callbacks = .{
 },
 si: SystemInteraction,
 
-pub fn init(hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
+pub fn init(hInstance: w.HINSTANCE, allocator: std.mem.Allocator) !*Self {
     var self = try allocator.create(Self);
     self.* = .{
         .allocator = allocator,

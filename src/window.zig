@@ -271,7 +271,7 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
     }
 }
 
-pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandlers, hInstance: w.HINSTANCE, allocator: *std.mem.Allocator) !*Self {
+pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandlers, hInstance: w.HINSTANCE, allocator: std.mem.Allocator) !*Self {
     if (window_parameters.register_class) {
         const wc: w.WNDCLASSW = .{
             .style = 0,
@@ -338,7 +338,7 @@ pub fn unscaleDpi(self: Self, x: i32) i32 {
 pub fn getChildRgn(self: Self) !w.HRGN {
     var hRgn = w.CreateRectRgn(0,0,0,0);
     for(self.children.items) |child| {
-        std.debug.warn("Gettign rgn of {*}\n", .{child.hwnd});
+        std.log.info("Gettign rgn of {*}\n", .{child.hwnd});
         var childRgn = child.getRgn();
         defer _ = w.DeleteObject(childRgn);
         var newRgn: w.HRGN = undefined;
@@ -357,7 +357,7 @@ pub fn setFont(self: Self, font: w.HGDIOBJ) !void {
     _ = w.SendMessageW(self.hwnd, w.WM_SETFONT, font, 0);
 }
 
-pub fn getText(self: Self, allocator: *std.mem.Allocator) ![:0]u16 {
+pub fn getText(self: Self, allocator: std.mem.Allocator) ![:0]u16 {
     const length = w.GetWindowTextLengthW(self.hwnd) + 1;
     const title: [:0]u16 = try allocator.allocSentinel(u16, @intCast(usize, length), 0);
     std.mem.set(u16, title, 0);

@@ -33,7 +33,7 @@ pub const DesktopWindow = struct {
     executableName: ?[:0]u16,
     shouldShow: bool,
     desktopNumber: ?usize,
-    originalAllocator: *std.mem.Allocator,
+    originalAllocator: std.mem.Allocator,
 
     pub fn destroy(self: DesktopWindow) !void {
         self.originalAllocator.free(self.title);
@@ -76,7 +76,7 @@ pub fn deinit(self: Self) !void {
     self.desktopManagerInternal.Release();
 }
 
-pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(DesktopWindow) {
+pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.ArrayList(DesktopWindow) {
     var desktopsNullable: ?*com.IObjectArray = undefined;
     _ = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
     var desktops = desktopsNullable orelse unreachable;
@@ -120,7 +120,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
         var executableName: ?[:0]u16 = null;
         if (executablePath) |ep| {
             var name: [*:0]u16 = w.PathFindFileNameW(ep);
-            executableName = std.mem.spanZ(name);
+            executableName = std.mem.span(name);
         }
 
         if (shouldShow) {
@@ -141,7 +141,7 @@ pub fn getWindowList(self: Self, allocator: *std.mem.Allocator) !std.ArrayList(D
     return windowList;
 }
 
-fn getWindowTitle(hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
+fn getWindowTitle(hwnd: w.HWND, allocator: std.mem.Allocator) ![:0]u16 {
     const length = w.GetWindowTextLengthW(hwnd) + 1;
     const title: [:0]u16 = try allocator.allocSentinel(u16, @intCast(usize, length), 0);
     std.mem.set(u16, title, 0);
@@ -149,7 +149,7 @@ fn getWindowTitle(hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
     return title;
 }
 
-fn getWindowClass(hwnd: w.HWND, allocator: *std.mem.Allocator) ![:0]u16 {
+fn getWindowClass(hwnd: w.HWND, allocator: std.mem.Allocator) ![:0]u16 {
     const class: [:0]u16 = try allocator.allocSentinel(u16, 512, 0);
     std.mem.set(u16, class, 0);
     _ = w.GetClassNameW(hwnd, class, 511);
@@ -176,7 +176,7 @@ fn getWindowIcon(hwnd: w.HWND) !w.HICON {
     return @ptrCast(w.HICON, w.LoadIconW(null, 32512));
 }
 
-fn getWindowFilePath(hwnd: w.HWND, allocator: *std.mem.Allocator) !?[:0]u16 {
+fn getWindowFilePath(hwnd: w.HWND, allocator: std.mem.Allocator) !?[:0]u16 {
     var pid: w.DWORD = undefined;
     _ = w.GetWindowThreadProcessId(hwnd, &pid);
     var hProc: w.HANDLE = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
@@ -196,9 +196,9 @@ fn getWindowFilePath(hwnd: w.HWND, allocator: *std.mem.Allocator) !?[:0]u16 {
 fn extractIconFromExecutable(hwnd: w.HWND) !?w.HICON {
     var filePathBuf = [_]u8 {0} ** 8194;
     var fba = std.heap.FixedBufferAllocator.init(&filePathBuf);
-    var windowFileName = try getWindowFilePath(hwnd, &fba.allocator);
+    var windowFileName = try getWindowFilePath(hwnd, fba.threadSafeAllocator());
     if(windowFileName) |fileName| {
-        defer fba.allocator.free(fileName);
+        defer fba.threadSafeAllocator().free(fileName);
         var iconIndex: w.WORD = 0;
         var largeIcon: w.HICON = undefined;
         var smallIcon: w.HICON = undefined;
@@ -247,8 +247,8 @@ fn shouldShowWindow(hwnd: w.HWND) !bool {
 
     var classBuf = [_]u8 {0} ** 1026;
     var fba = std.heap.FixedBufferAllocator.init(&classBuf);
-    var class = try getWindowClass(hwnd, &fba.allocator);
-    defer fba.allocator.free(class);
+    var class = try getWindowClass(hwnd, fba.threadSafeAllocator());
+    defer fba.threadSafeAllocator().free(class);
 
     comptime var coreWindowClass = try toUtf16("Windows.UI.Core.CoreWindow");
     if (std.mem.eql(u16, class, coreWindowClass)) return false;
@@ -268,7 +268,7 @@ fn shouldShowWindow(hwnd: w.HWND) !bool {
 fn verifyUwpCloak(_: w.HWND, str: w.LPSTR, handle: w.HANDLE, ptr: w.ULONG_PTR) callconv(.C) c_int {
     const cloakType = "ApplicationViewCloakType";
     if (@ptrToInt(str) > 0xffff) {
-        var prop = std.mem.spanZ(str);
+        var prop = std.mem.span(str);
         if (std.mem.eql(u8, cloakType, prop)) {
             if (@ptrToInt(handle) != 1) {
                 var pValidCloak = @intToPtr(*bool, ptr);

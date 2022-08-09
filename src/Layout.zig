@@ -13,7 +13,7 @@ rows_max: i64 = std.math.minInt(i64),
 cols_max: i64 = std.math.minInt(i64),
 rows_min: i64 = std.math.maxInt(i64),
 cols_min: i64 = std.math.maxInt(i64),
-allocator: *std.mem.Allocator,
+allocator: std.mem.Allocator,
 event_handlers: Window.EventHandlers,
 
 pos_idx_map: PosIdxMap,
@@ -111,7 +111,7 @@ fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
     }
 }
 
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: *std.mem.Allocator) !*Self {
+pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Allocator) !*Self {
     const windowConfig = Window.WindowParameters {
         .title = sys.toUtf16const("SpiralLayout"),
         .className = sys.toUtf16const("SpiralLayout"),

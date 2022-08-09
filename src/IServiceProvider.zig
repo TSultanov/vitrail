@@ -19,15 +19,15 @@ const CLSID_ImmersiveShell = w.CLSID{
 };
 
 const IServiceProviderVtbl = extern struct {
-    QueryInterface: fn (self: *Self, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryInterface: fn (self: *Self, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
     AddRef: fn (self: *Self) callconv(.C) w.ULONG,
     Release: fn (self: *Self) callconv(.C) w.ULONG,
-    QueryService: fn (self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*c_void) callconv(.C) w.HRESULT,
+    QueryService: fn (self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
 };
 
 lpVtbl: *IServiceProviderVtbl,
 
-pub fn QueryInterface(self: *Self, riid: com.REFIID, ppvObject: [*c][*c]c_void) w.HRESULT {
+pub fn QueryInterface(self: *Self, riid: com.REFIID, ppvObject: [*c][*c]anyopaque) w.HRESULT {
     return self.lpVtbl.QueryInterface(self, riid, ppvObject);
 }
 pub fn AddRef(self: *Self) w.ULONG {
@@ -36,14 +36,14 @@ pub fn AddRef(self: *Self) w.ULONG {
 pub fn Release(self: *Self) w.ULONG {
     return self.lpVtbl.Release(self);
 }
-pub fn QueryService(self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*c_void) w.HRESULT {
+pub fn QueryService(self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*anyopaque) w.HRESULT {
     return self.lpVtbl.QueryService(self, guidService, riid, ppvObject);
 }
 
 pub fn create() !*Self {
     var serviceProvider: *Self = undefined;
 
-    var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, w.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*c_void, @ptrToInt(&serviceProvider)));
+    var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, w.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*anyopaque, @ptrToInt(&serviceProvider)));
     if (hr == 0) {
         return serviceProvider;
     } else {
