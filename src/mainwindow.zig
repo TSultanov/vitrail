@@ -90,7 +90,7 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
             const xm = @divFloor(rect.right - rect.left, 2);
             const x = xm - @divFloor(child.scaleDpi(search_box_width), 2);
             
-            const y = rect.bottom - child.scaleDpi(200);
+            const y = rect.bottom - child.scaleDpi(100);
 
             try child.setSize(x, y, child.scaleDpi(search_box_width), child.scaleDpi(search_box_height));
         }
