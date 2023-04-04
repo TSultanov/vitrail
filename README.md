@@ -5,7 +5,7 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 ## Features
 - [x] Displaying opened windows in a grid and allowing switching between them
 - [x] Showing virtual desktop number in the background of a tile
-- [ ] Support for showing windows only from current virtual desktop
+- ~[ ] Support for showing windows only from current virtual desktop~
 - [x] Incremental search in the list of windows
 
 ## Known issues
@@ -18,10 +18,7 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 - Run `path\to\zig.exe build`
 
 ## Downloading
-You can download recent build from the [releases page](https://github.com/ArtifTh/vitrail/releases).
+You can download recent build from the [releases page](https://github.com/TSultanov/vitrail/releases).
 
 ## Running
 Execute `.\zig-out\bin\vitrail.exe`. Pressing `Alt-Space` opens the window grid.
-
-## Screenshot
-![Screenshot of the application](/docs/screenshot.png?raw=true)
