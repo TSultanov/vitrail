@@ -15,14 +15,16 @@ on:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: windows-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
+    strategy:
+      matrix:
+        target:
+          - x86_64-windows-gnu
+          - aarch64-windows-gnu
+
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
 
       - name: Setup Zig
@@ -31,10 +33,10 @@ jobs:
           version: 0.15.1
 
       - name: Run build
-        run: zig build -Doptimize=ReleaseSmall
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSmall
 
       - name: Upload a Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: exe
+          name: vitrail-${{ matrix.target }}
           path: zig-out/bin/vitrail.exe

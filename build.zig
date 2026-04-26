@@ -2,10 +2,16 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
-    const target = b.resolveTargetQuery(.{
-        .cpu_arch = .x86_64,
-        .os_tag = .windows,
-        .abi = .gnu,
+    const target = b.standardTargetOptions(.{
+        .default_target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .windows,
+            .abi = .gnu,
+        },
+        .whitelist = &.{
+            .{ .cpu_arch = .x86_64, .os_tag = .windows, .abi = .gnu },
+            .{ .cpu_arch = .aarch64, .os_tag = .windows, .abi = .gnu },
+        },
     });
 
     const exe_mod = b.createModule(.{

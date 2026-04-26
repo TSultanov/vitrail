@@ -1,10 +1,21 @@
+const std = @import("std");
+const builtin = @import("builtin");
+
 pub const c = @cImport({
     @cDefine("WINVER", "0x0606");
     @cDefine("_UNICODE", "1");
     @cDefine("UNICODE", "1");
     @cDefine("_WIN64", "1");
-    @cDefine("_AMD64_", "1");
-    @cDefine("__LP64__", "1");
+    switch (builtin.target.cpu.arch) {
+        .x86_64 => {
+            @cDefine("_AMD64_", "1");
+            @cDefine("__LP64__", "1");
+        },
+        .aarch64 => {
+            @cDefine("_ARM64_", "1");
+        },
+        else => @compileError("unsupported architecture"),
+    }
     @cDefine("NO_STRICT", "1");
     @cInclude("windows.h");
     @cUndef("NO_STRICT");
@@ -15,8 +26,6 @@ pub const c = @cImport({
     @cInclude("uxtheme.h");
     @cInclude("dwmapi.h");
 });
-
-const std = @import("std");
 
 pub const WinApiError = error{ GenericError, Failure };
 
