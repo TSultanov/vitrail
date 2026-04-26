@@ -131,7 +131,10 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.Deskto
     };
 
     const desktopNumberUtf16 = blk: {
-        const desktopNumber = try std.fmt.allocPrint(allocator, "{d}", .{desktopWindow.desktopNumber.? + 1});
+        const desktopNumber = if (desktopWindow.desktopNumber) |n|
+            try std.fmt.allocPrint(allocator, "{d}", .{n + 1})
+        else
+            try allocator.dupe(u8, "?");
         defer allocator.free(desktopNumber);
         break :blk try std.unicode.utf8ToUtf16LeAllocZ(allocator, desktopNumber);
     };
