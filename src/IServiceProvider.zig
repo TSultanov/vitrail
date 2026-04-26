@@ -1,4 +1,5 @@
-const w = @import("windows.zig");
+const wh = @import("windows.zig");
+const w = wh.c;
 const std = @import("std");
 const com = @import("com.zig");
 
@@ -19,10 +20,10 @@ const CLSID_ImmersiveShell = w.CLSID{
 };
 
 const IServiceProviderVtbl = extern struct {
-    QueryInterface: fn (self: *Self, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
-    AddRef: fn (self: *Self) callconv(.C) w.ULONG,
-    Release: fn (self: *Self) callconv(.C) w.ULONG,
-    QueryService: fn (self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
+    QueryInterface: *const fn (self: *Self, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.c) w.HRESULT,
+    AddRef: *const fn (self: *Self) callconv(.c) w.ULONG,
+    Release: *const fn (self: *Self) callconv(.c) w.ULONG,
+    QueryService: *const fn (self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.c) w.HRESULT,
 };
 
 lpVtbl: *IServiceProviderVtbl,
@@ -43,7 +44,7 @@ pub fn QueryService(self: *Self, guidService: com.REFGUID, riid: com.REFIID, ppv
 pub fn create() !*Self {
     var serviceProvider: *Self = undefined;
 
-    var hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, w.CLSCTX_ALL, &IID_IServiceProvider, @intToPtr([*c]?*anyopaque, @ptrToInt(&serviceProvider)));
+    const hr = w.CoCreateInstance(&CLSID_ImmersiveShell, null, w.CLSCTX_ALL, &IID_IServiceProvider, @ptrFromInt(@intFromPtr(&serviceProvider)));
     if (hr == 0) {
         return serviceProvider;
     } else {

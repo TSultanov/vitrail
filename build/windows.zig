@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const WINAPI: std.builtin.CallingConvention = if (builtin.target.cpu.arch == .i386)
-    .Stdcall
+pub const WINAPI: std.builtin.CallingConvention = if (builtin.target.cpu.arch == .x86)
+    .{ .x86_stdcall = .{} }
 else
-    .C;
+    .c;
 
 pub const HKEY__ = opaque {};
 pub const HKEY = *HKEY__;
@@ -26,9 +26,9 @@ pub const FILETIME = extern struct {
 
 pub const PFILETIME = ?*FILETIME;
 
-pub const WinError = error {
+pub const WinError = error{
     RegQueryError,
-    RegEnumError
+    RegEnumError,
 };
 
 extern "advapi32" fn RegGetValueW(
@@ -38,7 +38,7 @@ extern "advapi32" fn RegGetValueW(
     dwFlags: DWORD,
     pdwType: LPDWORD,
     pvData: PVOID,
-    pcbData: LPDWORD
+    pcbData: LPDWORD,
 ) callconv(WINAPI) LSTATUS;
 
 pub extern "advapi32" fn RegOpenKeyExW(
@@ -57,14 +57,14 @@ pub extern "advapi32" fn RegEnumKeyExW(
     lpReserved: LPDWORD,
     lpClass: LPWSTR,
     lpcchClass: LPDWORD,
-    lpftLastWriteTime: PFILETIME 
+    lpftLastWriteTime: PFILETIME,
 ) callconv(WINAPI) LSTATUS;
 
 pub extern "advapi32" fn RegCloseKey(
-    hKey: HKEY
+    hKey: HKEY,
 ) callconv(WINAPI) LSTATUS;
 
-pub const HKEY_LOCAL_MACHINE: HKEY = @intToPtr(HKEY, 0x80000002);
+pub const HKEY_LOCAL_MACHINE: HKEY = @ptrFromInt(0x80000002);
 const RRF_RT_REG_SZ: DWORD = 0x00000002;
 const KEY_READ: REGSAM = 0x20019;
 
@@ -73,57 +73,57 @@ const ERROR_NO_MORE_ITEMS: LSTATUS = 259;
 const ERROR_SUCCESS: LSTATUS = 0;
 
 pub fn getRegSzValue(allocator: std.mem.Allocator, hive: HKEY, subKey: []const u8, value: []const u8) ![:0]const u8 {
-    const subKeyUtf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, subKey);
+    const subKeyUtf16 = try std.unicode.utf8ToUtf16LeAllocZ(allocator, subKey);
     defer allocator.free(subKeyUtf16);
 
-    const valueUtf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, value);
+    const valueUtf16 = try std.unicode.utf8ToUtf16LeAllocZ(allocator, value);
     defer allocator.free(valueUtf16);
 
     var cbData: DWORD = 4096;
     const data = try allocator.allocSentinel(u16, cbData / 2, 0);
-    std.mem.set(u16, data, 0);
+    @memset(data, 0);
     defer allocator.free(data);
 
-    var errorCode = RegGetValueW(hive, subKeyUtf16, valueUtf16, RRF_RT_REG_SZ, null, @ptrCast(*anyopaque, data), &cbData);
-    if(errorCode != 0) {
+    const errorCode = RegGetValueW(hive, subKeyUtf16, valueUtf16, RRF_RT_REG_SZ, null, @ptrCast(data), &cbData);
+    if (errorCode != 0) {
         return WinError.RegQueryError;
     }
 
-    const dataUtf8 = try std.unicode.utf16leToUtf8AllocZ(allocator, data[0..(cbData/2-1)]);
+    const dataUtf8 = try std.unicode.utf16LeToUtf8AllocZ(allocator, data[0..(cbData / 2 - 1)]);
 
     return dataUtf8;
 }
 
-pub fn regEnumKeys(allocator: std.mem.Allocator, hive: HKEY, subKey: []const u8) !std.ArrayList([:0]u8) {
-    const subKeyUtf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, subKey);
+pub fn regEnumKeys(allocator: std.mem.Allocator, hive: HKEY, subKey: []const u8) !std.array_list.Managed([:0]u8) {
+    const subKeyUtf16 = try std.unicode.utf8ToUtf16LeAllocZ(allocator, subKey);
     defer allocator.free(subKeyUtf16);
 
     var key: HKEY = undefined;
 
     const openError = RegOpenKeyExW(hive, subKeyUtf16, 0, KEY_READ, &key);
-    if(openError != 0) {
+    if (openError != 0) {
         return WinError.RegQueryError;
     }
     defer _ = RegCloseKey(key);
 
-    var keys = std.ArrayList([:0]u8).init(allocator);
+    var keys = std.array_list.Managed([:0]u8).init(allocator);
 
     var i: DWORD = 0;
-    while(true) : (i += 1) {
+    while (true) : (i += 1) {
         var cchName: DWORD = 4096;
         const name = try allocator.allocSentinel(u16, cchName, 0);
-        std.mem.set(u16, name, 0);
+        @memset(name, 0);
         defer allocator.free(name);
 
         const errorCode = RegEnumKeyExW(key, i, name, &cchName, null, null, null, null);
-        if(errorCode == ERROR_MORE_DATA) {
+        if (errorCode == ERROR_MORE_DATA) {
             return error.RegEnumError; // TODO: implement buffer resizing
         }
-        if(errorCode == ERROR_NO_MORE_ITEMS) {
+        if (errorCode == ERROR_NO_MORE_ITEMS) {
             break;
         }
 
-        const nameUtf8 = try std.unicode.utf16leToUtf8AllocZ(allocator, name[0..cchName]);
+        const nameUtf8 = try std.unicode.utf16LeToUtf8AllocZ(allocator, name[0..cchName]);
         try keys.append(nameUtf8);
     }
 

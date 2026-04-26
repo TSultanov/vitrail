@@ -1,4 +1,5 @@
-const w = @import("windows.zig");
+const wh = @import("windows.zig");
+const w = wh.c;
 const std = @import("std");
 const com = @import("com.zig");
 
@@ -17,12 +18,12 @@ const IID_IVirtualDesktopManager: w.IID = w.IID{
 };
 
 const IVirtualDesktopManagerVtbl = extern struct {
-    QueryInterface: fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.C) w.HRESULT,
-    AddRef: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
-    Release: fn (This: [*c]IVirtualDesktopManager) callconv(.C) w.ULONG,
-    IsWindowOnCurrentVirtualDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) callconv(.C) w.HRESULT,
-    GetWindowDesktopId: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
-    MoveWindowToDesktop: fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.C) w.HRESULT,
+    QueryInterface: *const fn (This: [*c]IVirtualDesktopManager, riid: com.REFIID, ppvObject: [*c]?*anyopaque) callconv(.c) w.HRESULT,
+    AddRef: *const fn (This: [*c]IVirtualDesktopManager) callconv(.c) w.ULONG,
+    Release: *const fn (This: [*c]IVirtualDesktopManager) callconv(.c) w.ULONG,
+    IsWindowOnCurrentVirtualDesktop: *const fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, onCurrentDesktop: [*c]w.BOOL) callconv(.c) w.HRESULT,
+    GetWindowDesktopId: *const fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.c) w.HRESULT,
+    MoveWindowToDesktop: *const fn (This: [*c]IVirtualDesktopManager, topLevelWindow: w.HWND, desktopId: [*c]w.GUID) callconv(.c) w.HRESULT,
 };
 
 pub const IVirtualDesktopManager = extern struct {
@@ -49,7 +50,7 @@ pub const IVirtualDesktopManager = extern struct {
 
     pub fn create() !*IVirtualDesktopManager {
         var virtualDesktopManager: *IVirtualDesktopManager = undefined;
-        var hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, w.CLSCTX_ALL, &IID_IVirtualDesktopManager, @intToPtr([*c]?*anyopaque, @ptrToInt(&virtualDesktopManager)));
+        const hr = w.CoCreateInstance(&CLSID_VirtualDesktopManager, null, w.CLSCTX_ALL, &IID_IVirtualDesktopManager, @ptrFromInt(@intFromPtr(&virtualDesktopManager)));
         if (hr == 0) {
             return virtualDesktopManager;
         } else {

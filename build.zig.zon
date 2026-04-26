@@ -1,0 +1,15 @@
+.{
+    .name = .vitrail,
+    .version = "0.0.0",
+    .fingerprint = 0x4965166f859f559f,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "build",
+        "LICENSE",
+        "README.md",
+    },
+}

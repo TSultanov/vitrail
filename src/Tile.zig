@@ -1,10 +1,11 @@
 const std = @import("std");
-const w = @import("windows.zig");
+const wh = @import("windows.zig");
+const w = wh.c;
 const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
 
 pub const Callbacks = struct {
-    clicked: fn (tile: *Self) anyerror!void,
+    clicked: *const fn (tile: *Self) anyerror!void,
 };
 
 const Self = @This();
@@ -26,44 +27,44 @@ desktopNumberString: [:0]u16,
 callbacks: *Callbacks,
 
 fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     window.deinit();
     self.allocator.free(self.desktopNumberString);
     self.allocator.destroy(window);
 }
 
 fn onDestroy(event_handlers: *Window.EventHandlers, _: *Window) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     _ = w.DeleteObject(self.font);
     _ = w.DeleteObject(self.desktopFont);
 }
 
 pub fn onClick(event_handlers: *Window.EventHandlers, _: *Window) !void {
-    const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     try self.callbacks.clicked(self);
 }
 
 pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
-    const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
 
     var ps: w.PAINTSTRUCT = undefined;
-    var hdc = w.BeginPaint(self.window.hwnd, &ps);
+    const hdc = w.BeginPaint(self.window.hwnd, &ps);
     defer _ = w.EndPaint(self.window.hwnd, &ps);
     defer _ = w.ReleaseDC(self.window.hwnd, hdc);
 
-    var hbrushBg = w.CreateSolidBrush(0);
+    const hbrushBg = w.CreateSolidBrush(0);
     defer _ = w.DeleteObject(hbrushBg);
-    try w.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
+    try wh.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
 
-    var colorFg: w.COLORREF = if (self.selected) self.colorFocused else self.color;
-    var hbrushFg = w.CreateSolidBrush(colorFg);
+    const colorFg: w.COLORREF = if (self.selected) self.colorFocused else self.color;
+    const hbrushFg = w.CreateSolidBrush(colorFg);
     defer _ = w.DeleteObject(hbrushFg);
     var rect = try self.window.getClientRect();
     rect.left = window.scaleDpi(1);
     rect.top = window.scaleDpi(1);
     rect.right -= window.scaleDpi(1);
     rect.bottom -= window.scaleDpi(1);
-    try w.mapFailure(w.FillRect(hdc, &rect, hbrushFg));
+    try wh.mapFailure(w.FillRect(hdc, &rect, hbrushFg));
 
     try self.drawDesktopNo(hdc);
     try self.drawText(hdc);
@@ -77,17 +78,17 @@ pub fn resetFonts(self: *Self) !void {
 }
 
 pub fn onMouseMove(event_handlers: *Window.EventHandlers, _: *Window, _: u64, _: i16, _: i16) !void {
-    const self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     try self.window.focus();
 }
 
 fn onSetFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     try self.select();
 }
 
 fn onKillFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     try self.unselect();
 }
 
@@ -102,40 +103,37 @@ fn unselect(self: *Self) !void {
 }
 
 fn onKeyDown(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
 
-    if(wParam == w.VK_RETURN) {
-         // Handle return
+    if (wParam == w.VK_RETURN) {
         try self.callbacks.clicked(self);
-    }
-    else
-    if(self.window.parent) |p| {
-        // Relay event to parent if key is not return
+    } else if (self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_KEYDOWN, wParam, lParam);
     }
 }
 
 fn onChar(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    var self = @fieldParentPtr(Self, "event_handlers", event_handlers);
-    if(self.window.parent) |p| {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    if (self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
     }
 }
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.DesktopWindow, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
-    const windowConfig = Window.WindowParameters {
+    const windowConfig = Window.WindowParameters{
         .title = desktopWindow.title,
         .className = sys.toUtf16const("VitrailTile"),
-        .width = 100, .height = 25,
+        .width = 100,
+        .height = 25,
         .style = w.WS_VISIBLE | w.WS_CHILD,
         .parent = parent,
         .register_class = true,
-        //.exStyle = w.WS_EX_LAYERED
     };
 
-    var desktopNumberUtf16 = blk: {
-            var desktopNumber = try std.fmt.allocPrint(allocator, "{d}", .{desktopWindow.desktopNumber.? + 1});
-            break :blk try std.unicode.utf8ToUtf16LeWithNull(allocator, desktopNumber);
+    const desktopNumberUtf16 = blk: {
+        const desktopNumber = try std.fmt.allocPrint(allocator, "{d}", .{desktopWindow.desktopNumber.? + 1});
+        defer allocator.free(desktopNumber);
+        break :blk try std.unicode.utf8ToUtf16LeAllocZ(allocator, desktopNumber);
     };
 
     var self = try allocator.create(Self);
@@ -160,13 +158,11 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.Deskto
             .onAfterDestroy = onAfterDestroy,
             .onChar = onChar,
         },
-        .callbacks = callbacks
+        .callbacks = callbacks,
     };
 
-    var window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
+    const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    // _ = w.SetWindowLong(window.hwnd, w.GWL_EXSTYLE, w.WS_EX_LAYERED);
-    //_ = w.SetLayeredWindowAttributes(window.hwnd, 0, 255, w.LWA_ALPHA);
 
     try self.setFonts();
 
@@ -175,9 +171,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.Deskto
 
 fn setFonts(self: *Self) !void {
     self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
-    self.desktopFont = w.CreateFontW(self.window.scaleDpi(desktop_no_font_size), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, 
-                        w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, 
-                        w.DEFAULT_PITCH | w.FF_DONTCARE, sys.toUtf16const("Segoe UI"));
+    self.desktopFont = w.CreateFontW(self.window.scaleDpi(desktop_no_font_size), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, w.DEFAULT_PITCH | w.FF_DONTCARE, sys.toUtf16const("Segoe UI"));
 }
 
 pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
@@ -186,7 +180,7 @@ pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
     rect.right -= self.window.scaleDpi(5);
     rect.bottom -= self.window.scaleDpi(5);
 
-    if(self.selected) {
+    if (self.selected) {
         _ = w.SetTextColor(hdc, 0x00000000);
     } else {
         _ = w.SetTextColor(hdc, 0x00ffffff);
@@ -202,7 +196,7 @@ pub fn drawText(self: Self, hdc: w.HDC) !void {
     rect.left = self.window.scaleDpi(5);
     rect.right -= self.window.scaleDpi(5);
     rect.bottom -= self.window.scaleDpi(5);
-    if(self.selected) {
+    if (self.selected) {
         _ = w.SetTextColor(hdc, 0x00ffffff);
     } else {
         _ = w.SetTextColor(hdc, 0x00000000);
@@ -227,39 +221,39 @@ pub fn drawIcon(self: Self, hdc: w.HDC) !void {
 
     const center_x = @divFloor((rect.right - rect.left), 2) + margin_left;
     const center_y = @divFloor((rect.bottom - rect.top), 2) + margin_top;
-    const icon_size = std.math.min((rect.bottom - rect.top), (rect.right - rect.left));
+    const icon_size = @min((rect.bottom - rect.top), (rect.right - rect.left));
 
-    var icon_x = center_x - @divFloor(icon_size, 2);
-    var icon_y = center_y - @divFloor(icon_size, 2);
+    const icon_x = center_x - @divFloor(icon_size, 2);
+    const icon_y = center_y - @divFloor(icon_size, 2);
     _ = w.DrawIconEx(hdc, icon_x, icon_y, self.desktopWindow.icon, icon_size, icon_size, 0, null, w.DI_NORMAL);
 }
 
 fn createColor(text: []const u16, focused: bool) w.COLORREF {
-    var crc = getCrc16(text, text.len);
+    const crc = getCrc16(text, text.len);
 
-    var pre_h: u16 = (((crc >> 8) & 0xFF) + color_offset) % 256;
-    var pre_s = ((crc << 0) & 0xFF);
-    var h: f32 = @intToFloat(f32, pre_h) / 255.0;
-    var s: f32 = 0.1 + @intToFloat(f32, pre_s) / 512.0;
-    var l: f32 = if (focused) 0.4 else 0.6;
+    const pre_h: u16 = (((crc >> 8) & 0xFF) + color_offset) % 256;
+    const pre_s = ((crc << 0) & 0xFF);
+    const h: f32 = @as(f32, @floatFromInt(pre_h)) / 255.0;
+    const s: f32 = 0.1 + @as(f32, @floatFromInt(pre_s)) / 512.0;
+    const l: f32 = if (focused) 0.4 else 0.6;
 
-    var q = if (l < 0.5) l * (1.0 + s) else l + s - l * s;
-    var p = 2.0 * l - q;
-    var r = hue2rgb(p, q, h + 1.0 / 3.0);
-    var g = hue2rgb(p, q, h);
-    var b = hue2rgb(p, q, h - 1.0 / 3.0);
+    const q = if (l < 0.5) l * (1.0 + s) else l + s - l * s;
+    const p = 2.0 * l - q;
+    const r = hue2rgb(p, q, h + 1.0 / 3.0);
+    const g = hue2rgb(p, q, h);
+    const b = hue2rgb(p, q, h - 1.0 / 3.0);
 
-    var ri: w.COLORREF = @floatToInt(w.COLORREF, r * 255);
-    var bi: w.COLORREF = @floatToInt(w.COLORREF, b * 255);
-    var gi: w.COLORREF = @floatToInt(w.COLORREF, g * 255);
+    const ri: w.COLORREF = @intFromFloat(r * 255);
+    const bi: w.COLORREF = @intFromFloat(b * 255);
+    const gi: w.COLORREF = @intFromFloat(g * 255);
 
-    var color = ri + (gi << 8) + (bi << 16);
+    const color = ri + (gi << 8) + (bi << 16);
 
     return color;
 }
 
 fn getCrc16(a: []const u16, len: usize) u16 {
-    var crc16_poly: u16 = 0x8408;
+    const crc16_poly: u16 = 0x8408;
 
     var data: u16 = undefined;
     var crc: u16 = 0xffff;
@@ -270,8 +264,7 @@ fn getCrc16(a: []const u16, len: usize) u16 {
     while (i < len) : (i += 1) {
         var j: usize = 8;
         data = 0xff & a[i];
-        while (j > 0) : (j -= 1)
-        {
+        while (j > 0) : (j -= 1) {
             if ((crc & 0x0001) ^ (data & 0x0001) != 0) {
                 crc = (crc >> 1) ^ crc16_poly;
             } else {

@@ -1,4 +1,4 @@
-const w = @cImport({
+pub const c = @cImport({
     @cDefine("WINVER", "0x0606");
     @cDefine("_UNICODE", "1");
     @cDefine("UNICODE", "1");
@@ -12,28 +12,23 @@ const w = @cImport({
     @cInclude("psapi.h");
     @cInclude("shlwapi.h");
     @cInclude("shlobj.h");
-    // @cInclude("shlobj_core.h");
     @cInclude("uxtheme.h");
     @cInclude("dwmapi.h");
 });
 
-pub usingnamespace w;
-
 const std = @import("std");
 
-//pub const HICON_a1 = *opaque {};
+pub const WinApiError = error{ GenericError, Failure };
 
-pub const WinApiError = error{GenericError, Failure};
-
-pub fn mapErr(hResult: w.HRESULT) anyerror!void {
-    if ((hResult >> 31) == w.SEVERITY_ERROR) {
+pub fn mapErr(hResult: c.HRESULT) anyerror!void {
+    if ((hResult >> 31) == c.SEVERITY_ERROR) {
         return WinApiError.GenericError;
     }
 }
 
-pub fn mapFailure(res: w.BOOL) anyerror!void {
-    if(res == 0) {
-        var errCode = w.GetLastError();
+pub fn mapFailure(res: c.BOOL) anyerror!void {
+    if (res == 0) {
+        const errCode = c.GetLastError();
         std.log.err("WIN32ERRCODE: {x}\n", .{errCode});
 
         return WinApiError.Failure;
@@ -41,7 +36,7 @@ pub fn mapFailure(res: w.BOOL) anyerror!void {
 }
 
 pub fn logGdiObjects(comptime message: []const u8) void {
-    var hProc = w.GetCurrentProcess();
-    var gdiObjects = w.GetGuiResources(hProc, w.GR_GDIOBJECTS);
-    std.log.info("{s}: gdiObjects: {}\n", .{message, gdiObjects});
+    const hProc = c.GetCurrentProcess();
+    const gdiObjects = c.GetGuiResources(hProc, c.GR_GDIOBJECTS);
+    std.log.info("{s}: gdiObjects: {}\n", .{ message, gdiObjects });
 }
