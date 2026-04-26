@@ -5,12 +5,28 @@ const com = @import("com.zig");
 const IServiceProvider = @import("IServiceProvider.zig");
 const IObjectArray = @import("IObjectArray.zig").IObjectArray;
 
-//{F31574D6-B682-4CDC-BD56-1827860ABEC6}
-const IID_IVirtualDesktopManagerInternal = w.IID{
-    .Data1 = 0xF31574D6,
-    .Data2 = 0xB682,
-    .Data3 = 0x4CDC,
-    .Data4 = [8]u8{ 0xBD, 0x56, 0x18, 0x27, 0x86, 0x0A, 0xBE, 0xC6 },
+// Microsoft rotates this IID across Windows 11 builds; probe each at runtime.
+const IID_CANDIDATES = [_]struct { name: []const u8, iid: w.IID }{
+    .{
+        .name = "F31574D6-B682-4CDC-BD56-1827860ABEC6 (Win10/early Win11)",
+        .iid = w.IID{ .Data1 = 0xF31574D6, .Data2 = 0xB682, .Data3 = 0x4CDC, .Data4 = [8]u8{ 0xBD, 0x56, 0x18, 0x27, 0x86, 0x0A, 0xBE, 0xC6 } },
+    },
+    .{
+        .name = "B2F925B9-5A0F-4D2E-9F4D-2B1507593C10 (Win11 22621)",
+        .iid = w.IID{ .Data1 = 0xB2F925B9, .Data2 = 0x5A0F, .Data3 = 0x4D2E, .Data4 = [8]u8{ 0x9F, 0x4D, 0x2B, 0x15, 0x07, 0x59, 0x3C, 0x10 } },
+    },
+    .{
+        .name = "A3175F2D-239C-4BD2-8AA0-EEBA8B0B138E (Win11 23H2/24H2)",
+        .iid = w.IID{ .Data1 = 0xA3175F2D, .Data2 = 0x239C, .Data3 = 0x4BD2, .Data4 = [8]u8{ 0x8A, 0xA0, 0xEE, 0xBA, 0x8B, 0x0B, 0x13, 0x8E } },
+    },
+    .{
+        .name = "4970BA3D-FD4E-4647-BEA3-D89076EF4B9C (Win11 24H2 26100)",
+        .iid = w.IID{ .Data1 = 0x4970BA3D, .Data2 = 0xFD4E, .Data3 = 0x4647, .Data4 = [8]u8{ 0xBE, 0xA3, 0xD8, 0x90, 0x76, 0xEF, 0x4B, 0x9C } },
+    },
+    .{
+        .name = "53F5CA0B-158F-4124-900C-057E60B1A6F1 (Win11 Insider)",
+        .iid = w.IID{ .Data1 = 0x53F5CA0B, .Data2 = 0x158F, .Data3 = 0x4124, .Data4 = [8]u8{ 0x90, 0x0C, 0x05, 0x7E, 0x60, 0xB1, 0xA6, 0xF1 } },
+    },
 };
 
 const CLSID_VirtualDesktopAPI_Unknown = w.CLSID{
@@ -79,7 +95,6 @@ const IVirtualDesktopManagerInternalVtbl = extern struct {
 
 pub const IVirtualDesktopManagerInternal = extern struct {
     lpVtbl: [*c]IVirtualDesktopManagerInternalVtbl,
-    iid: w.IID = IID_IVirtualDesktopManagerInternal,
 
     pub fn QueryInterface(self: *IVirtualDesktopManagerInternal, riid: com.REFIID, ppvObject: [*c][*c]anyopaque) w.HRESULT {
         return self.lpVtbl.*.QueryInterface(self, riid, ppvObject);
@@ -117,13 +132,11 @@ pub const IVirtualDesktopManagerInternal = extern struct {
 
     pub fn create(serviceProvider: *IServiceProvider) !*IVirtualDesktopManagerInternal {
         var virtualDesktopManagerInternal: *IVirtualDesktopManagerInternal = undefined;
-        const hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &IID_IVirtualDesktopManagerInternal, @ptrFromInt(@intFromPtr(&virtualDesktopManagerInternal)));
-        if (hr == 0) {
-            return virtualDesktopManagerInternal;
-        } else {
-            std.log.info("virtualDesktopManagerInternal hr: {x}\n", .{@as(u32, @bitCast(hr))});
-            return com.ComError.FailedToCreateComObject;
+        for (IID_CANDIDATES) |cand| {
+            const hr = serviceProvider.QueryService(&CLSID_VirtualDesktopAPI_Unknown, &cand.iid, @ptrFromInt(@intFromPtr(&virtualDesktopManagerInternal)));
+            if (hr == 0) return virtualDesktopManagerInternal;
         }
+        return com.ComError.FailedToCreateComObject;
     }
 };
 
