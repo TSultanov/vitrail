@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{
         .default_target = .{
-            .cpu_arch = .x86_64,
+            .cpu_arch = @import("builtin").cpu.arch,
             .os_tag = .windows,
             .abi = .gnu,
         },
