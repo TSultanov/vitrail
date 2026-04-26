@@ -44,6 +44,29 @@ const IID_IVirtualDesktop = w.IID{
     .Data4 = [8]u8{ 0x9C, 0x03, 0xAD, 0x81, 0x68, 0x1E, 0x88, 0xE4 },
 };
 
+pub const IVD_IID_CANDIDATES = [_]struct { name: []const u8, iid: w.IID }{
+    .{
+        .name = "FF72FFDD-BE7E-43FC-9C03-AD81681E88E4 (Win10)",
+        .iid = w.IID{ .Data1 = 0xFF72FFDD, .Data2 = 0xBE7E, .Data3 = 0x43FC, .Data4 = [8]u8{ 0x9C, 0x03, 0xAD, 0x81, 0x68, 0x1E, 0x88, 0xE4 } },
+    },
+    .{
+        .name = "62FDF88B-11CA-4AFB-8BD8-2296DFAE49E2 (Win11 22000)",
+        .iid = w.IID{ .Data1 = 0x62FDF88B, .Data2 = 0x11CA, .Data3 = 0x4AFB, .Data4 = [8]u8{ 0x8B, 0xD8, 0x22, 0x96, 0xDF, 0xAE, 0x49, 0xE2 } },
+    },
+    .{
+        .name = "536D3495-B208-4CC9-AE26-DE8111275BF8 (Win11 22621)",
+        .iid = w.IID{ .Data1 = 0x536D3495, .Data2 = 0xB208, .Data3 = 0x4CC9, .Data4 = [8]u8{ 0xAE, 0x26, 0xDE, 0x81, 0x11, 0x27, 0x5B, 0xF8 } },
+    },
+    .{
+        .name = "3F07F4BE-B107-441A-AF0F-39D82529072C (Win11 23H2)",
+        .iid = w.IID{ .Data1 = 0x3F07F4BE, .Data2 = 0xB107, .Data3 = 0x441A, .Data4 = [8]u8{ 0xAF, 0x0F, 0x39, 0xD8, 0x25, 0x29, 0x07, 0x2C } },
+    },
+    .{
+        .name = "8AC9D33B-99A2-4D7B-A4D8-D7B7DDDC9E12 (Win11 24H2)",
+        .iid = w.IID{ .Data1 = 0x8AC9D33B, .Data2 = 0x99A2, .Data3 = 0x4D7B, .Data4 = [8]u8{ 0xA4, 0xD8, 0xD7, 0xB7, 0xDD, 0xDC, 0x9E, 0x12 } },
+    },
+};
+
 const IApplicationView = extern struct {
     unused: u8,
 };

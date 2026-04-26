@@ -41,4 +41,13 @@ pub const IObjectArray = extern struct {
             return ObjectArrayError.Unknown;
         }
     }
+
+    pub fn GetAtWithIID(self: *IObjectArray, uiIndex: usize, iid: *const w.IID, comptime T: type) struct { hr: w.HRESULT, ptr: ?*T } {
+        var object: ?*anyopaque = undefined;
+        const hr = self.lpVtbl.*.GetAt(self, @intCast(uiIndex), iid, &object);
+        if (hr == 0) {
+            return .{ .hr = hr, .ptr = @ptrCast(@alignCast(object.?)) };
+        }
+        return .{ .hr = hr, .ptr = null };
+    }
 };

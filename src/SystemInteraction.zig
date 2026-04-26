@@ -3,6 +3,8 @@ const w = wh.c;
 const std = @import("std");
 const com = @import("ComInterface.zig");
 
+var resolved_ivd_iid: ?w.IID = null;
+
 const Self = @This();
 
 desktopManager: *com.IVirtualDesktopManager,
@@ -77,20 +79,35 @@ pub fn deinit(self: Self) !void {
 }
 
 pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.Managed(DesktopWindow) {
-    var desktopsNullable: ?*com.IObjectArray = undefined;
+    var desktopsNullable: ?*com.IObjectArray = null;
     _ = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
-    var desktops = desktopsNullable orelse unreachable;
+    var desktops = desktopsNullable orelse return error.Unknown;
     defer _ = desktops.Release();
 
-    var dCount: c_uint = undefined;
+    var dCount: c_uint = 0;
     _ = desktops.GetCount(&dCount);
 
     var desktopsMap = std.hash_map.AutoHashMap(w.GUID, usize).init(allocator);
     defer desktopsMap.deinit();
 
+    const ivd_iid = resolved_ivd_iid orelse blk: {
+        const IVDM = @import("IVirtualDesktopManagerInternal.zig");
+        for (IVDM.IVD_IID_CANDIDATES) |cand| {
+            const r = desktops.GetAtWithIID(0, &cand.iid, com.IVirtualDesktop);
+            if (r.hr == 0) {
+                _ = r.ptr.?.Release();
+                resolved_ivd_iid = cand.iid;
+                break :blk cand.iid;
+            }
+        }
+        return error.Unknown;
+    };
+
     var i: usize = 0;
     while (i < dCount) {
-        const desktop = try desktops.GetAtGeneric(i, com.IVirtualDesktop);
+        const r = desktops.GetAtWithIID(i, &ivd_iid, com.IVirtualDesktop);
+        if (r.hr != 0) return error.Unknown;
+        const desktop = r.ptr.?;
         var desktopId: w.GUID = undefined;
         _ = desktop.GetID(&desktopId);
         try desktopsMap.put(desktopId, i);
