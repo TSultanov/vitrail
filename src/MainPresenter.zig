@@ -33,8 +33,6 @@ pub fn init(hInstance: w.HINSTANCE, allocator: std.mem.Allocator, test_mode: boo
 
     self.view = main_window;
 
-    _ = main_window.window.show();
-
     return self;
 }
 

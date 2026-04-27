@@ -140,13 +140,13 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
     try wh.mapFailure(w.GetWindowRect(desktop, &desktopRect));
 
     const windowConfig = Window.WindowParameters{
-        .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
+        .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW | w.WS_EX_LAYERED,
         .x = desktopRect.left,
         .y = desktopRect.top,
         .width = desktopRect.right,
         .height = desktopRect.bottom,
         .title = sys.toUtf16const("MainWindow"),
-        .style = w.WS_OVERLAPPEDWINDOW,
+        .style = w.WS_POPUP,
     };
 
     var self = try allocator.create(Self);
@@ -175,8 +175,6 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
 
     const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    _ = w.SetWindowLongW(window.hwnd, w.GWL_STYLE, 0);
-    _ = w.SetWindowLongW(window.hwnd, w.GWL_EXSTYLE, w.GetWindowLongW(window.hwnd, w.GWL_EXSTYLE) | w.WS_EX_LAYERED);
     _ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
 
     self.layout = try Layout.create(hInstance, window, allocator);
@@ -185,6 +183,8 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
     _ = self.search_box.window.hide();
 
     try self.setFonts();
+
+    try window.setSize(desktopRect.left, desktopRect.top, desktopRect.right - desktopRect.left, desktopRect.bottom - desktopRect.top);
 
     return self;
 }
