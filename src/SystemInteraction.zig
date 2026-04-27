@@ -2,6 +2,7 @@ const wh = @import("windows.zig");
 const w = wh.c;
 const std = @import("std");
 const com = @import("ComInterface.zig");
+const UwpIcon = @import("UwpIcon.zig");
 
 var resolved_ivd_iid: ?w.IID = null;
 
@@ -214,6 +215,9 @@ fn isUwpFrame(hwnd: w.HWND) bool {
 }
 
 fn getWindowIcon(hwnd: w.HWND) !w.HICON {
+    if (isUwpFrame(hwnd)) {
+        if (UwpIcon.tryGetUwpIcon(hwnd)) |icon| return icon;
+    }
     const realHwnd: w.HWND = if (isUwpFrame(hwnd)) (getUwpContentWindow(hwnd) orelse hwnd) else hwnd;
 
     for ([_]w.WPARAM{ w.ICON_BIG, w.ICON_SMALL2, w.ICON_SMALL }) |which| {

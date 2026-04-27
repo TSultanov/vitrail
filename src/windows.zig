@@ -23,6 +23,7 @@ pub const c = @cImport({
     @cInclude("psapi.h");
     @cInclude("shlwapi.h");
     @cInclude("shlobj.h");
+    @cInclude("propsys.h");
     @cInclude("uxtheme.h");
     @cInclude("dwmapi.h");
 });
