@@ -84,16 +84,50 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
             try child.resize();
         }
     }
+
+    try self.updateRegion();
+}
+
+fn updateRegion(self: *Self) !void {
+    var window_rect: w.RECT = undefined;
+    try wh.mapFailure(w.GetWindowRect(self.window.hwnd, &window_rect));
+
+    const rgn = w.CreateRectRgn(0, 0, 0, 0);
+
+    for (self.layout.window.children.items) |tile_window| {
+        if (!tile_window.isVisible()) continue;
+        var rect: w.RECT = undefined;
+        try wh.mapFailure(w.GetWindowRect(tile_window.hwnd, &rect));
+        const tile_rgn = w.CreateRectRgn(
+            rect.left - window_rect.left,
+            rect.top - window_rect.top,
+            rect.right - window_rect.left,
+            rect.bottom - window_rect.top,
+        );
+        defer _ = w.DeleteObject(tile_rgn);
+        _ = w.CombineRgn(rgn, rgn, tile_rgn, w.RGN_OR);
+    }
+
+    if (self.search_box.window.isVisible()) {
+        var rect: w.RECT = undefined;
+        try wh.mapFailure(w.GetWindowRect(self.search_box.window.hwnd, &rect));
+        const sb_rgn = w.CreateRectRgn(
+            rect.left - window_rect.left,
+            rect.top - window_rect.top,
+            rect.right - window_rect.left,
+            rect.bottom - window_rect.top,
+        );
+        defer _ = w.DeleteObject(sb_rgn);
+        _ = w.CombineRgn(rgn, rgn, sb_rgn, w.RGN_OR);
+    }
+
+    _ = w.SetWindowRgn(self.window.hwnd, rgn, 1);
 }
 
 fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
     var ps: w.PAINTSTRUCT = undefined;
-    const hdc = w.BeginPaint(window.hwnd, &ps);
-    defer _ = w.EndPaint(window.hwnd, &ps);
-    defer _ = w.ReleaseDC(window.hwnd, hdc);
-    const hbrushBg = w.CreateSolidBrush(0xff000000);
-    defer wh.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
-    try wh.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
+    _ = w.BeginPaint(window.hwnd, &ps);
+    _ = w.EndPaint(window.hwnd, &ps);
 }
 
 fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
@@ -140,7 +174,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
     try wh.mapFailure(w.GetWindowRect(desktop, &desktopRect));
 
     const windowConfig = Window.WindowParameters{
-        .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW | w.WS_EX_LAYERED,
+        .exStyle = w.WS_EX_TOPMOST | w.WS_EX_TOOLWINDOW,
         .x = desktopRect.left,
         .y = desktopRect.top,
         .width = desktopRect.right,
@@ -175,7 +209,6 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
 
     const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
-    _ = w.SetLayeredWindowAttributes(window.hwnd, 0x00ff00ff, 255, w.LWA_COLORKEY);
 
     self.layout = try Layout.create(hInstance, window, allocator);
 
@@ -209,6 +242,7 @@ pub fn hideBoxes(self: *Self) !void {
     }
     self.desktop_windows = null;
     self.desktopHwndTileMap.clearAndFree();
+    try self.updateRegion();
 }
 
 fn updateVisibility(self: *Self) !void {
@@ -250,6 +284,7 @@ fn updateVisibility(self: *Self) !void {
         }
 
         try self.layout.layout(reset_focus);
+        try self.updateRegion();
     }
 }
 
@@ -266,6 +301,7 @@ fn updateBoxes(self: *Self) !void {
             try self.layout.layout(true);
             _ = self.search_box.window.show();
             try self.search_box.window.bringToTop();
+            try self.updateRegion();
         }
     }
 }

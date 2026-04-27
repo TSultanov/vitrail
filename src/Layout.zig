@@ -46,12 +46,8 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
 
 fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
     var ps: w.PAINTSTRUCT = undefined;
-    const hdc = w.BeginPaint(window.hwnd, &ps);
-    defer _ = w.EndPaint(window.hwnd, &ps);
-    defer _ = w.ReleaseDC(window.hwnd, hdc);
-    const hbrushBg = w.CreateSolidBrush(0x00ff00ff);
-    defer wh.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
-    try wh.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
+    _ = w.BeginPaint(window.hwnd, &ps);
+    _ = w.EndPaint(window.hwnd, &ps);
 }
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
