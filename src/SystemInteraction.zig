@@ -125,7 +125,9 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
 
         const title_lower = try allocator.allocSentinel(u16, title.len, 0);
         @memcpy(title_lower[0..title.len], title);
-        _ = w.CharLowerBuffW(title_lower, @intCast(title_lower.len - 1));
+        if (title_lower.len > 0) {
+            _ = w.CharLowerBuffW(title_lower, @intCast(title_lower.len - 1));
+        }
 
         const class = try getWindowClass(hwnd, allocator);
         const icon: w.HICON = try getWindowIcon(hwnd);
@@ -140,20 +142,18 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
             executableName = std.mem.span(name);
         }
 
-        if (shouldShow) {
-            try windowList.append(DesktopWindow{
-                .hwnd = hwnd,
-                .title = title,
-                .title_lower = title_lower,
-                .class = class,
-                .icon = icon,
-                .executablePath = executablePath,
-                .executableName = executableName,
-                .shouldShow = shouldShow,
-                .desktopNumber = desktopsMap.get(desktopId),
-                .originalAllocator = allocator,
-            });
-        }
+        try windowList.append(DesktopWindow{
+            .hwnd = hwnd,
+            .title = title,
+            .title_lower = title_lower,
+            .class = class,
+            .icon = icon,
+            .executablePath = executablePath,
+            .executableName = executableName,
+            .shouldShow = shouldShow,
+            .desktopNumber = desktopsMap.get(desktopId),
+            .originalAllocator = allocator,
+        });
     }
     return windowList;
 }
@@ -173,22 +173,63 @@ fn getWindowClass(hwnd: w.HWND, allocator: std.mem.Allocator) ![:0]u16 {
     return class;
 }
 
+fn getClassName(hwnd: w.HWND, buf: []u16) []u16 {
+    const n = w.GetClassNameW(hwnd, buf.ptr, @intCast(buf.len));
+    if (n <= 0) return buf[0..0];
+    return buf[0..@intCast(n)];
+}
+
+fn classEquals(hwnd: w.HWND, comptime literal: []const u8) bool {
+    var buf: [256]u16 = undefined;
+    const class = getClassName(hwnd, &buf);
+    return std.mem.eql(u16, class, toUtf16const(literal));
+}
+
+const FindUwpCtx = struct {
+    host_pid: w.DWORD,
+    found: ?w.HWND,
+};
+
+fn findUwpChildProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.c) c_int {
+    const ctx: *FindUwpCtx = @ptrFromInt(@as(usize, @intCast(lParam)));
+    var pid: w.DWORD = 0;
+    _ = w.GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != 0 and pid != ctx.host_pid) {
+        ctx.found = hwnd;
+        return 0;
+    }
+    return 1;
+}
+
+fn getUwpContentWindow(hwnd: w.HWND) ?w.HWND {
+    var host_pid: w.DWORD = 0;
+    _ = w.GetWindowThreadProcessId(hwnd, &host_pid);
+    var ctx = FindUwpCtx{ .host_pid = host_pid, .found = null };
+    _ = w.EnumChildWindows(hwnd, @ptrCast(&findUwpChildProc), @intCast(@intFromPtr(&ctx)));
+    return ctx.found;
+}
+
+fn isUwpFrame(hwnd: w.HWND) bool {
+    return classEquals(hwnd, "ApplicationFrameWindow");
+}
+
 fn getWindowIcon(hwnd: w.HWND) !w.HICON {
-    const fileIcon = try extractIconFromExecutable(hwnd);
-    if (fileIcon != null) return fileIcon.?;
+    const realHwnd: w.HWND = if (isUwpFrame(hwnd)) (getUwpContentWindow(hwnd) orelse hwnd) else hwnd;
 
-    var iconAddr: usize = undefined;
-    const lResult = w.SendMessageTimeoutW(hwnd, w.WM_GETICON, w.ICON_BIG, 0, w.SMTO_ABORTIFHUNG, 10, &iconAddr);
-    if (lResult != 0 and iconAddr != 0) {
-        const icon: w.HICON = @ptrFromInt(iconAddr);
-        return icon;
+    for ([_]w.WPARAM{ w.ICON_BIG, w.ICON_SMALL2, w.ICON_SMALL }) |which| {
+        var iconAddr: usize = 0;
+        const lResult = w.SendMessageTimeoutW(realHwnd, w.WM_GETICON, which, 0, w.SMTO_ABORTIFHUNG, 100, &iconAddr);
+        if (lResult != 0 and iconAddr != 0) {
+            return @ptrFromInt(iconAddr);
+        }
     }
 
-    const wndClassLongPtr = w.GetClassLongPtrW(hwnd, w.GCLP_HICON);
-    if (wndClassLongPtr != 0) {
-        const icon: w.HICON = @ptrFromInt(wndClassLongPtr);
-        return icon;
+    for ([_]c_int{ w.GCLP_HICON, w.GCLP_HICONSM }) |which| {
+        const ptr = w.GetClassLongPtrW(realHwnd, which);
+        if (ptr != 0) return @ptrFromInt(ptr);
     }
+
+    if (try extractIconFromExecutable(realHwnd)) |icon| return icon;
 
     return @ptrCast(w.LoadIconW(null, @ptrFromInt(32512)));
 }
@@ -215,12 +256,22 @@ fn extractIconFromExecutable(hwnd: w.HWND) !?w.HICON {
     const windowFileName = try getWindowFilePath(hwnd, fba.allocator());
     if (windowFileName) |fileName| {
         defer fba.allocator().free(fileName);
-        const iconIndex: w.WORD = 0;
-        var largeIcon: w.HICON = undefined;
-        var smallIcon: w.HICON = undefined;
-        _ = w.SHDefExtractIconW(fileName, iconIndex, 0, &largeIcon, &smallIcon, 0);
-        _ = w.DestroyIcon(smallIcon);
-        return largeIcon;
+
+        var largeIconEx: w.HICON = null;
+        var smallIconEx: w.HICON = null;
+        const extracted = w.ExtractIconExW(fileName, 0, &largeIconEx, &smallIconEx, 1);
+        if (extracted > 0 and @intFromPtr(largeIconEx) != 0) {
+            if (@intFromPtr(smallIconEx) != 0) _ = w.DestroyIcon(smallIconEx);
+            return largeIconEx;
+        }
+        if (@intFromPtr(smallIconEx) != 0) _ = w.DestroyIcon(smallIconEx);
+
+        var largeIcon: w.HICON = null;
+        var smallIcon: w.HICON = null;
+        _ = w.SHDefExtractIconW(fileName, 0, 0, &largeIcon, &smallIcon, 0);
+        if (@intFromPtr(smallIcon) != 0) _ = w.DestroyIcon(smallIcon);
+        if (@intFromPtr(largeIcon) != 0) return largeIcon;
+        return null;
     }
 
     return null;
@@ -262,18 +313,9 @@ fn shouldShowWindow(hwnd: w.HWND) !bool {
     };
     if (taskListDeleted != null) return false;
 
-    var classBuf = [_]u8{0} ** 1026;
-    var fba = std.heap.FixedBufferAllocator.init(&classBuf);
-    const class = try getWindowClass(hwnd, fba.allocator());
-    defer fba.allocator().free(class);
+    if (classEquals(hwnd, "Windows.UI.Core.CoreWindow")) return false;
 
-    const coreWindowClass = toUtf16const("Windows.UI.Core.CoreWindow");
-    if (std.mem.eql(u16, class, coreWindowClass)) return false;
-
-    const uwpAppClass = toUtf16const("ApplicationFrameWindow");
-    const isUwpApp = std.mem.eql(u16, class, uwpAppClass);
-
-    if (isUwpApp) {
+    if (classEquals(hwnd, "ApplicationFrameWindow")) {
         var validCloak: bool = false;
         _ = w.EnumPropsExA(hwnd, @ptrCast(&verifyUwpCloak), @intCast(@intFromPtr(&validCloak)));
         return validCloak;
