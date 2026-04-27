@@ -22,9 +22,17 @@ pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdL
     var gpa: std.heap.DebugAllocator(.{ .safety = true }) = .init;
     defer std.debug.assert(gpa.deinit() == .ok);
 
-    _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
+    const test_mode = parseTestMode(gpa.allocator()) catch false;
 
-    var main_presenter = MainPresenter.init(hInstanceWinApi, std.heap.page_allocator) catch unreachable;
+    if (!test_mode) {
+        _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
+    }
+
+    var main_presenter = MainPresenter.init(hInstanceWinApi, std.heap.page_allocator, test_mode) catch unreachable;
+
+    if (test_mode) {
+        main_presenter.show() catch unreachable;
+    }
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {
@@ -37,4 +45,14 @@ pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdL
     }
 
     return 0;
+}
+
+fn parseTestMode(allocator: std.mem.Allocator) !bool {
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--test-mode")) return true;
+    }
+    return false;
 }

@@ -11,6 +11,7 @@ allocator: std.mem.Allocator,
 view: *MainWindow,
 hInstance: w.HINSTANCE,
 desktop_windows: ?std.array_list.Managed(SystemInteraction.DesktopWindow) = null,
+test_mode: bool = false,
 
 window_callbacks: MainWindow.Callbacks = .{
     .activateWindow = activateWindow,
@@ -18,13 +19,14 @@ window_callbacks: MainWindow.Callbacks = .{
 },
 si: SystemInteraction,
 
-pub fn init(hInstance: w.HINSTANCE, allocator: std.mem.Allocator) !*Self {
+pub fn init(hInstance: w.HINSTANCE, allocator: std.mem.Allocator, test_mode: bool) !*Self {
     var self = try allocator.create(Self);
     self.* = .{
         .allocator = allocator,
         .view = undefined,
         .si = try SystemInteraction.init(),
         .hInstance = hInstance,
+        .test_mode = test_mode,
     };
 
     const main_window = try MainWindow.create(self.hInstance, &self.window_callbacks, self.allocator);
@@ -63,6 +65,10 @@ fn hide(main_window: *MainWindow) !void {
 
         desktop_windows.deinit();
         self.desktop_windows = null;
+    }
+
+    if (self.test_mode) {
+        w.PostQuitMessage(0);
     }
 }
 
