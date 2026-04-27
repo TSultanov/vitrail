@@ -51,6 +51,14 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
     }
 }
 
+fn onActivateHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    const state = wParam & 0xFFFF;
+    if (state == w.WA_INACTIVE and self.desktop_windows != null) {
+        try self.callbacks.hide(self);
+    }
+}
+
 fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     _ = w.SendMessageW(self.search_box.window.hwnd, w.WM_CHAR, wParam, lParam);
@@ -192,6 +200,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
             .onCommand = onCommandHandler,
             .onDpiChange = onDpiChangeHandler,
             .onEnable = onEnableHandler,
+            .onActivate = onActivateHandler,
         },
         .desktop_windows = null,
         .hInstance = hInstance,
