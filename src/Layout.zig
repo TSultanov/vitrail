@@ -101,6 +101,9 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
 
 fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    // Forwarding these to the single-line EDIT search box triggers MessageBeep;
+    // their VK_* counterparts are already consumed in onKeyDownHandler.
+    if (wParam == '\r' or wParam == '\t' or wParam == 0x1B) return;
     if (self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
     }
