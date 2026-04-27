@@ -3,10 +3,11 @@ const wh = @import("windows.zig");
 const w = wh.c;
 const sys = @import("SystemInteraction.zig");
 pub const Window = @import("Window.zig");
+pub const Tile = @import("Tile.zig");
 
 const Self = @This();
-const ChildIndexMap = std.AutoArrayHashMap(w.HWND, BoxPosition);
 const PosIdxMap = std.AutoArrayHashMap(BoxColRow, usize);
+const IdxPosMap = std.AutoArrayHashMap(usize, BoxColRow);
 
 window: *Window,
 
@@ -18,16 +19,13 @@ allocator: std.mem.Allocator,
 event_handlers: Window.EventHandlers,
 
 pos_idx_map: PosIdxMap,
-child_index_map: ChildIndexMap,
+idx_pos_map: IdxPosMap,
+tiles: std.array_list.Managed(*Tile),
+selected_idx: ?usize = null,
 
 const chWidth: c_int = 100;
 const chHeight: c_int = 100;
 const margin: c_int = -1;
-
-const BoxPosition = struct {
-    idx: usize,
-    pos: BoxColRow,
-};
 
 const BoxColRow = struct {
     col: i32,
@@ -44,10 +42,37 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
     try self.layout(false);
 }
 
-fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
+fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+
     var ps: w.PAINTSTRUCT = undefined;
-    _ = w.BeginPaint(window.hwnd, &ps);
-    _ = w.EndPaint(window.hwnd, &ps);
+    const hdc = w.BeginPaint(window.hwnd, &ps);
+    defer _ = w.EndPaint(window.hwnd, &ps);
+
+    const client = try window.getClientRect();
+    const width = client.right - client.left;
+    const height = client.bottom - client.top;
+
+    const memDc = w.CreateCompatibleDC(hdc);
+    defer _ = w.DeleteDC(memDc);
+    const memBmp = w.CreateCompatibleBitmap(hdc, width, height);
+    defer _ = w.DeleteObject(memBmp);
+    const oldBmp = w.SelectObject(memDc, memBmp);
+    defer _ = w.SelectObject(memDc, oldBmp);
+
+    const hbrushBg = w.CreateSolidBrush(0);
+    defer _ = w.DeleteObject(hbrushBg);
+    var fillRect: w.RECT = .{ .left = 0, .top = 0, .right = width, .bottom = height };
+    _ = w.FillRect(memDc, &fillRect, hbrushBg);
+
+    const dpi = window.dpi;
+    for (self.tiles.items, 0..) |tile, idx| {
+        if (!tile.visible) continue;
+        const selected = if (self.selected_idx) |s| s == idx else false;
+        try tile.paint(memDc, dpi, selected);
+    }
+
+    _ = w.BitBlt(hdc, 0, 0, width, height, memDc, 0, 0, w.SRCCOPY);
 }
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
@@ -67,6 +92,8 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
         try self.up();
     } else if (wParam == w.VK_DOWN) {
         try self.down();
+    } else if (wParam == w.VK_RETURN) {
+        try self.activate();
     } else if (self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_KEYDOWN, wParam, lParam);
     }
@@ -81,8 +108,10 @@ fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WP
 
 fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    self.child_index_map.deinit();
+    self.idx_pos_map.deinit();
     self.pos_idx_map.deinit();
+    for (self.tiles.items) |tile| tile.destroy();
+    self.tiles.deinit();
     self.allocator.destroy(window);
 }
 
@@ -91,6 +120,27 @@ fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
     if (self.window.parent) |p| {
         _ = w.SendMessageW(p.hwnd, w.WM_COMMAND, wParam, lParam);
     }
+}
+
+fn onMouseMoveHandler(event_handlers: *Window.EventHandlers, _: *Window, _: u64, x: i16, y: i16) !void {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    const px: i32 = x;
+    const py: i32 = y;
+    for (self.tiles.items, 0..) |tile, idx| {
+        if (!tile.visible) continue;
+        if (px >= tile.bounds.left and px < tile.bounds.right and py >= tile.bounds.top and py < tile.bounds.bottom) {
+            if (self.selected_idx == null or self.selected_idx.? != idx) {
+                self.selected_idx = idx;
+                try self.window.redraw();
+            }
+            return;
+        }
+    }
+}
+
+fn onClickHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    try self.activate();
 }
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Allocator) !*Self {
@@ -105,8 +155,9 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Alloca
     self.* = .{
         .window = undefined,
         .allocator = allocator,
-        .child_index_map = ChildIndexMap.init(allocator),
+        .idx_pos_map = IdxPosMap.init(allocator),
         .pos_idx_map = PosIdxMap.init(allocator),
+        .tiles = std.array_list.Managed(*Tile).init(allocator),
         .event_handlers = .{
             .onResize = onResizeHandler,
             .onPaint = onPaintHandler,
@@ -114,6 +165,8 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Alloca
             .onAfterDestroy = onAfterDestroyHandler,
             .onChar = onCharHandler,
             .onCommand = onCommandHandler,
+            .onMouseMove = onMouseMoveHandler,
+            .onClick = onClickHandler,
         },
     };
 
@@ -124,18 +177,26 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Alloca
     return self;
 }
 
+pub fn addTile(self: *Self, tile: *Tile) !void {
+    try self.tiles.append(tile);
+}
+
 pub fn clear(self: *Self) !void {
-    self.child_index_map.clearAndFree();
+    self.idx_pos_map.clearAndFree();
     self.pos_idx_map.clearAndFree();
-    while (self.window.children.pop()) |child| {
-        child.destroy();
-    }
+    for (self.tiles.items) |tile| tile.destroy();
+    self.tiles.clearRetainingCapacity();
+    self.selected_idx = null;
+    try self.window.redraw();
 }
 
 pub fn layout(self: *Self, reset_focus: bool) !void {
-    if (self.window.children.items.len == 0) return;
+    if (self.tiles.items.len == 0) {
+        try self.window.redraw();
+        return;
+    }
 
-    self.child_index_map.clearAndFree();
+    self.idx_pos_map.clearAndFree();
     self.pos_idx_map.clearAndFree();
 
     self.rows_max = std.math.minInt(i64);
@@ -147,7 +208,7 @@ pub fn layout(self: *Self, reset_focus: bool) !void {
     const chWidthScaled = self.window.scaleDpi(chWidth);
     const chHeightScaled: c_int = self.window.scaleDpi(chHeight);
 
-    const rect = try self.window.getRect();
+    const rect = try self.window.getClientRect();
 
     const width = rect.right - rect.left;
     const height = rect.bottom - rect.top;
@@ -164,16 +225,16 @@ pub fn layout(self: *Self, reset_focus: bool) !void {
     var idx: i64 = 0;
     var offset: i64 = 0;
 
-    var lowest_visible_idx: i64 = 0;
+    var lowest_visible_idx: i64 = -1;
 
-    while (idx < self.window.children.items.len and idx < maxNumberOfCells) : (idx += 1) {
-        if (!self.window.children.items[@intCast(idx)].isVisible()) {
-            if (lowest_visible_idx == idx) {
-                lowest_visible_idx += 1;
-            }
+    while (idx < self.tiles.items.len and idx < maxNumberOfCells) : (idx += 1) {
+        const tile = self.tiles.items[@intCast(idx)];
+        if (!tile.visible) {
             offset -= 1;
             continue;
         }
+
+        if (lowest_visible_idx == -1) lowest_visible_idx = idx;
 
         var col = numToCol(@intCast(idx + offset));
         var row = numToRow(@intCast(idx + offset));
@@ -191,75 +252,106 @@ pub fn layout(self: *Self, reset_focus: bool) !void {
         const x = @divFloor(width, 2) + col * (chWidthScaled + marginScaled) - @divFloor(chWidthScaled, 2);
         const y = @divFloor(height, 2) + row * (chHeightScaled + marginScaled) - @divFloor(chHeightScaled, 2);
 
-        try self.child_index_map.put(self.window.children.items[@intCast(idx)].hwnd, .{ .idx = @intCast(idx), .pos = .{ .col = col, .row = row } });
-        try self.pos_idx_map.put(.{ .col = col, .row = row }, @intCast(idx));
+        tile.bounds = .{ .left = x, .top = y, .right = x + chWidthScaled, .bottom = y + chHeightScaled };
 
-        try self.window.children.items[@intCast(idx)].setSize(x, y, chWidthScaled, chHeightScaled);
+        try self.idx_pos_map.put(@intCast(idx), .{ .col = col, .row = row });
+        try self.pos_idx_map.put(.{ .col = col, .row = row }, @intCast(idx));
     }
 
     if (reset_focus) {
-        if (lowest_visible_idx < self.window.children.items.len) {
-            try self.window.children.items[@intCast(lowest_visible_idx)].focus();
+        if (lowest_visible_idx >= 0) {
+            self.selected_idx = @intCast(lowest_visible_idx);
+        } else {
+            self.selected_idx = null;
         }
+    } else if (self.selected_idx) |s| {
+        if (s >= self.tiles.items.len or !self.tiles.items[s].visible) {
+            if (lowest_visible_idx >= 0) {
+                self.selected_idx = @intCast(lowest_visible_idx);
+            } else {
+                self.selected_idx = null;
+            }
+        }
+    }
+
+    try self.window.redraw();
+}
+
+fn nextVisible(self: *Self, from: usize) ?usize {
+    var i: usize = from + 1;
+    while (i < self.tiles.items.len) : (i += 1) {
+        if (self.tiles.items[i].visible and self.idx_pos_map.contains(i)) return i;
+    }
+    i = 0;
+    while (i <= from) : (i += 1) {
+        if (self.tiles.items[i].visible and self.idx_pos_map.contains(i)) return i;
+    }
+    return null;
+}
+
+fn prevVisible(self: *Self, from: usize) ?usize {
+    if (from > 0) {
+        var i: usize = from;
+        while (i > 0) {
+            i -= 1;
+            if (self.tiles.items[i].visible and self.idx_pos_map.contains(i)) return i;
+        }
+    }
+    var j: usize = self.tiles.items.len;
+    while (j > from) {
+        j -= 1;
+        if (self.tiles.items[j].visible and self.idx_pos_map.contains(j)) return j;
+    }
+    return null;
+}
+
+fn setSelected(self: *Self, idx: usize) !void {
+    if (self.selected_idx == null or self.selected_idx.? != idx) {
+        self.selected_idx = idx;
+        try self.window.redraw();
     }
 }
 
 pub fn next(self: *Self) !void {
-    const focused_hwnd = w.GetFocus();
-    if (self.child_index_map.get(focused_hwnd)) |box_position| {
-        if (box_position.idx < self.window.children.items.len - 1) {
-            try self.window.children.items[box_position.idx + 1].focus();
-        } else {
-            try self.window.children.items[0].focus();
-        }
-    }
+    const cur = self.selected_idx orelse return;
+    if (self.nextVisible(cur)) |i| try self.setSelected(i);
 }
 
 pub fn prev(self: *Self) !void {
-    const focused_hwnd = w.GetFocus();
-    if (self.child_index_map.get(focused_hwnd)) |box_position| {
-        if (box_position.idx > 0) {
-            try self.window.children.items[box_position.idx - 1].focus();
-        } else {
-            try self.window.children.items[self.window.children.items.len - 1].focus();
-        }
-    }
+    const cur = self.selected_idx orelse return;
+    if (self.prevVisible(cur)) |i| try self.setSelected(i);
 }
 
 pub fn right(self: *Self) !void {
-    const focused_hwnd = w.GetFocus();
-    if (self.child_index_map.get(focused_hwnd)) |box_position| {
-        if (self.pos_idx_map.get(.{ .col = box_position.pos.col + 1, .row = box_position.pos.row })) |pos| {
-            try self.window.children.items[pos].focus();
-        }
-    }
+    const cur = self.selected_idx orelse return;
+    const pos = self.idx_pos_map.get(cur) orelse return;
+    if (self.pos_idx_map.get(.{ .col = pos.col + 1, .row = pos.row })) |i| try self.setSelected(i);
 }
 
 pub fn left(self: *Self) !void {
-    const focused_hwnd = w.GetFocus();
-    if (self.child_index_map.get(focused_hwnd)) |box_position| {
-        if (self.pos_idx_map.get(.{ .col = box_position.pos.col - 1, .row = box_position.pos.row })) |pos| {
-            try self.window.children.items[pos].focus();
-        }
-    }
+    const cur = self.selected_idx orelse return;
+    const pos = self.idx_pos_map.get(cur) orelse return;
+    if (self.pos_idx_map.get(.{ .col = pos.col - 1, .row = pos.row })) |i| try self.setSelected(i);
 }
 
 pub fn down(self: *Self) !void {
-    const focused_hwnd = w.GetFocus();
-    if (self.child_index_map.get(focused_hwnd)) |box_position| {
-        if (self.pos_idx_map.get(.{ .col = box_position.pos.col, .row = box_position.pos.row + 1 })) |pos| {
-            try self.window.children.items[pos].focus();
-        }
-    }
+    const cur = self.selected_idx orelse return;
+    const pos = self.idx_pos_map.get(cur) orelse return;
+    if (self.pos_idx_map.get(.{ .col = pos.col, .row = pos.row + 1 })) |i| try self.setSelected(i);
 }
 
 pub fn up(self: *Self) !void {
-    const focused_hwnd = w.GetFocus();
-    if (self.child_index_map.get(focused_hwnd)) |box_position| {
-        if (self.pos_idx_map.get(.{ .col = box_position.pos.col, .row = box_position.pos.row - 1 })) |pos| {
-            try self.window.children.items[pos].focus();
-        }
-    }
+    const cur = self.selected_idx orelse return;
+    const pos = self.idx_pos_map.get(cur) orelse return;
+    if (self.pos_idx_map.get(.{ .col = pos.col, .row = pos.row - 1 })) |i| try self.setSelected(i);
+}
+
+pub fn activate(self: *Self) !void {
+    const idx = self.selected_idx orelse return;
+    if (idx >= self.tiles.items.len) return;
+    const tile = self.tiles.items[idx];
+    if (!tile.visible) return;
+    try tile.callbacks.clicked(tile);
 }
 
 fn numToRow(n: usize) i32 {

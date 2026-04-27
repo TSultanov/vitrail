@@ -9,8 +9,6 @@ pub const TextBox = @import("TextBox.zig");
 
 const Self = @This();
 
-const DesktopHwndTile = std.AutoArrayHashMap(w.HWND, *Tile);
-
 const search_box_width = 100;
 const search_box_height = 20;
 
@@ -27,9 +25,7 @@ desktop_windows: ?std.array_list.Managed(sys.DesktopWindow),
 hInstance: w.HINSTANCE,
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
-boxes: std.array_list.Managed(*Tile),
 font: w.HGDIOBJ,
-desktopHwndTileMap: DesktopHwndTile,
 previous_hidden: bool = false,
 
 tile_callbacks: Tile.Callbacks = .{
@@ -41,11 +37,6 @@ fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, _: *Window) !voi
 
     _ = w.DeleteObject(self.font);
 
-    while (self.boxes.pop()) |box| {
-        self.allocator.destroy(box);
-    }
-
-    self.boxes.deinit();
     self.allocator.destroy(self.window);
     self.allocator.destroy(self.layout);
     self.allocator.destroy(self.search_box);
@@ -92,17 +83,21 @@ fn updateRegion(self: *Self) !void {
     var window_rect: w.RECT = undefined;
     try wh.mapFailure(w.GetWindowRect(self.window.hwnd, &window_rect));
 
+    var layout_rect: w.RECT = undefined;
+    try wh.mapFailure(w.GetWindowRect(self.layout.window.hwnd, &layout_rect));
+
+    const layout_offset_x = layout_rect.left - window_rect.left;
+    const layout_offset_y = layout_rect.top - window_rect.top;
+
     const rgn = w.CreateRectRgn(0, 0, 0, 0);
 
-    for (self.layout.window.children.items) |tile_window| {
-        if (!tile_window.isVisible()) continue;
-        var rect: w.RECT = undefined;
-        try wh.mapFailure(w.GetWindowRect(tile_window.hwnd, &rect));
+    for (self.layout.tiles.items) |tile| {
+        if (!tile.visible) continue;
         const tile_rgn = w.CreateRectRgn(
-            rect.left - window_rect.left,
-            rect.top - window_rect.top,
-            rect.right - window_rect.left,
-            rect.bottom - window_rect.top,
+            tile.bounds.left + layout_offset_x,
+            tile.bounds.top + layout_offset_y,
+            tile.bounds.right + layout_offset_x,
+            tile.bounds.bottom + layout_offset_y,
         );
         defer _ = w.DeleteObject(tile_rgn);
         _ = w.CombineRgn(rgn, rgn, tile_rgn, w.RGN_OR);
@@ -151,8 +146,8 @@ pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window
     try wh.mapFailure(w.GetWindowRect(desktop, &rect));
     try window.setSizeScaled(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 
-    for (self.boxes.items) |box| {
-        try box.resetFonts();
+    for (self.layout.tiles.items) |tile| {
+        try tile.resetFonts(self.layout.window.dpi);
     }
 }
 
@@ -202,9 +197,7 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
         .hInstance = hInstance,
         .allocator = allocator,
         .callbacks = callbacks,
-        .boxes = std.array_list.Managed(*Tile).init(allocator),
         .font = undefined,
-        .desktopHwndTileMap = DesktopHwndTile.init(allocator),
     };
 
     const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
@@ -237,11 +230,7 @@ fn tileCallback(tile: *Tile) !void {
 pub fn hideBoxes(self: *Self) !void {
     try self.layout.clear();
     _ = self.search_box.window.hide();
-    while (self.boxes.pop()) |box| {
-        self.allocator.destroy(box);
-    }
     self.desktop_windows = null;
-    self.desktopHwndTileMap.clearAndFree();
     try self.updateRegion();
 }
 
@@ -254,53 +243,51 @@ fn updateVisibility(self: *Self) !void {
     @memcpy(search_text_lower[0..search_text.len], search_text);
     _ = w.CharLowerBuffW(search_text_lower, @intCast(search_text_lower.len - 1));
 
-    if (self.desktop_windows) |desktop_windows| {
-        var reset_focus = self.previous_hidden;
+    var reset_focus = self.previous_hidden;
+    var hidden_num: usize = 0;
 
-        var hidden_num: usize = 0;
-
-        for (desktop_windows.items) |dw| {
-            if (self.desktopHwndTileMap.get(dw.hwnd)) |tile| {
-                if (search_text.len <= 1) {
-                    _ = tile.window.show();
-                } else {
-                    if (std.mem.containsAtLeast(u16, dw.title_lower[0..(dw.title.len - 1)], 1, search_text_lower[0..(search_text.len - 1)])) {
-                        _ = tile.window.show();
-                    } else {
-                        if (tile.selected) {
-                            reset_focus = true;
-                        }
-                        hidden_num += 1;
-                        _ = tile.window.hide();
+    for (self.layout.tiles.items) |tile| {
+        const dw = tile.desktopWindow;
+        if (search_text.len <= 1) {
+            tile.visible = true;
+        } else {
+            if (std.mem.containsAtLeast(u16, dw.title_lower[0..(dw.title.len - 1)], 1, search_text_lower[0..(search_text.len - 1)])) {
+                tile.visible = true;
+            } else {
+                if (self.layout.selected_idx) |s| {
+                    if (s < self.layout.tiles.items.len and self.layout.tiles.items[s] == tile) {
+                        reset_focus = true;
                     }
                 }
+                hidden_num += 1;
+                tile.visible = false;
             }
         }
-
-        if (hidden_num == desktop_windows.items.len) {
-            self.previous_hidden = true;
-        } else {
-            self.previous_hidden = false;
-        }
-
-        try self.layout.layout(reset_focus);
-        try self.updateRegion();
     }
+
+    if (hidden_num == self.layout.tiles.items.len) {
+        self.previous_hidden = true;
+    } else {
+        self.previous_hidden = false;
+    }
+
+    try self.layout.layout(reset_focus);
+    try self.updateRegion();
 }
 
 fn updateBoxes(self: *Self) !void {
     if (self.desktop_windows) |desktop_windows| {
         if (desktop_windows.items.len > 0) {
             for (desktop_windows.items) |dw| {
-                const box = try Tile.create(self.hInstance, self.layout.window, dw, &self.tile_callbacks, self.allocator);
-                try self.boxes.append(box);
-                try self.desktopHwndTileMap.put(dw.hwnd, box);
+                const tile = try Tile.create(dw, &self.tile_callbacks, self.layout.window.dpi, self.allocator);
+                try self.layout.addTile(tile);
             }
             try self.search_box.clearText();
             self.previous_hidden = false;
             try self.layout.layout(true);
             _ = self.search_box.window.show();
             try self.search_box.window.bringToTop();
+            try self.layout.window.focus();
             try self.updateRegion();
         }
     }

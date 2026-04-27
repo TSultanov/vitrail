@@ -198,8 +198,8 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             return 0;
         },
         w.WM_MOUSEMOVE => {
-            const x: i16 = @intCast(lParam & 0xff);
-            const y: i16 = @intCast((lParam >> 16) & 0xff);
+            const x: i16 = @truncate(lParam);
+            const y: i16 = @truncate(lParam >> 16);
             try self.event_handlers.onMouseMove(self.event_handlers, self, wParam, x, y);
             self.startMouseTracking();
             return 0;

@@ -2,7 +2,6 @@ const std = @import("std");
 const wh = @import("windows.zig");
 const w = wh.c;
 const sys = @import("SystemInteraction.zig");
-pub const Window = @import("Window.zig");
 
 pub const Callbacks = struct {
     clicked: *const fn (tile: *Self) anyerror!void,
@@ -14,122 +13,18 @@ const color_offset = 50;
 const desktop_no_font_size = 32;
 
 allocator: std.mem.Allocator,
-window: *Window,
-event_handlers: Window.EventHandlers,
-selected: bool,
 desktopWindow: sys.DesktopWindow,
 color: w.COLORREF,
 colorFocused: w.COLORREF,
 font: w.HGDIOBJ,
 desktopFont: w.HGDIOBJ,
 desktopNumberString: [:0]u16,
+visible: bool = true,
+bounds: w.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
 callbacks: *Callbacks,
 
-fn onAfterDestroy(event_handlers: *Window.EventHandlers, window: *Window) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    window.deinit();
-    self.allocator.free(self.desktopNumberString);
-    self.allocator.destroy(window);
-}
-
-fn onDestroy(event_handlers: *Window.EventHandlers, _: *Window) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    _ = w.DeleteObject(self.font);
-    _ = w.DeleteObject(self.desktopFont);
-}
-
-pub fn onClick(event_handlers: *Window.EventHandlers, _: *Window) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    try self.callbacks.clicked(self);
-}
-
-pub fn onPaint(event_handlers: *Window.EventHandlers, window: *Window) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-
-    var ps: w.PAINTSTRUCT = undefined;
-    const hdc = w.BeginPaint(self.window.hwnd, &ps);
-    defer _ = w.EndPaint(self.window.hwnd, &ps);
-    defer _ = w.ReleaseDC(self.window.hwnd, hdc);
-
-    const hbrushBg = w.CreateSolidBrush(0);
-    defer _ = w.DeleteObject(hbrushBg);
-    try wh.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
-
-    const colorFg: w.COLORREF = if (self.selected) self.colorFocused else self.color;
-    const hbrushFg = w.CreateSolidBrush(colorFg);
-    defer _ = w.DeleteObject(hbrushFg);
-    var rect = try self.window.getClientRect();
-    rect.left = window.scaleDpi(1);
-    rect.top = window.scaleDpi(1);
-    rect.right -= window.scaleDpi(1);
-    rect.bottom -= window.scaleDpi(1);
-    try wh.mapFailure(w.FillRect(hdc, &rect, hbrushFg));
-
-    try self.drawDesktopNo(hdc);
-    try self.drawText(hdc);
-    try self.drawIcon(hdc);
-}
-
-pub fn resetFonts(self: *Self) !void {
-    _ = w.DeleteObject(self.font);
-    _ = w.DeleteObject(self.desktopFont);
-    try self.setFonts();
-}
-
-pub fn onMouseMove(event_handlers: *Window.EventHandlers, _: *Window, _: u64, _: i16, _: i16) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    try self.window.focus();
-}
-
-fn onSetFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    try self.select();
-}
-
-fn onKillFocus(event_handlers: *Window.EventHandlers, _: *Window, _: w.WPARAM, _: w.LPARAM) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    try self.unselect();
-}
-
-fn select(self: *Self) !void {
-    self.selected = true;
-    try self.window.redraw();
-}
-
-fn unselect(self: *Self) !void {
-    self.selected = false;
-    try self.window.redraw();
-}
-
-fn onKeyDown(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-
-    if (wParam == w.VK_RETURN) {
-        try self.callbacks.clicked(self);
-    } else if (self.window.parent) |p| {
-        _ = w.SendMessageW(p.hwnd, w.WM_KEYDOWN, wParam, lParam);
-    }
-}
-
-fn onChar(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    if (self.window.parent) |p| {
-        _ = w.SendMessageW(p.hwnd, w.WM_CHAR, wParam, lParam);
-    }
-}
-
-pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.DesktopWindow, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
-    const windowConfig = Window.WindowParameters{
-        .title = desktopWindow.title,
-        .className = sys.toUtf16const("VitrailTile"),
-        .width = 100,
-        .height = 25,
-        .style = w.WS_VISIBLE | w.WS_CHILD,
-        .parent = parent,
-        .register_class = true,
-    };
-
+pub fn create(desktopWindow: sys.DesktopWindow, callbacks: *Callbacks, dpi: u32, allocator: std.mem.Allocator) !*Self {
     const desktopNumberUtf16 = blk: {
         const desktopNumber = if (desktopWindow.desktopNumber) |n|
             try std.fmt.allocPrint(allocator, "{d}", .{n + 1})
@@ -142,48 +37,73 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, desktopWindow: sys.Deskto
     var self = try allocator.create(Self);
     self.* = .{
         .allocator = allocator,
-        .window = undefined,
-        .selected = false,
         .desktopWindow = desktopWindow,
         .color = if (desktopWindow.executableName) |en| createColor(en, false) else createColor(desktopWindow.class, false),
         .colorFocused = if (desktopWindow.executableName) |en| createColor(en, true) else createColor(desktopWindow.class, true),
         .desktopNumberString = desktopNumberUtf16,
         .font = undefined,
         .desktopFont = undefined,
-        .event_handlers = .{
-            .onClick = onClick,
-            .onPaint = onPaint,
-            .onMouseMove = onMouseMove,
-            .onSetFocus = onSetFocus,
-            .onKillFocus = onKillFocus,
-            .onKeyDown = onKeyDown,
-            .onDestroy = onDestroy,
-            .onAfterDestroy = onAfterDestroy,
-            .onChar = onChar,
-        },
         .callbacks = callbacks,
     };
 
-    const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
-    self.window = window;
-
-    try self.setFonts();
+    try self.setFonts(dpi);
 
     return self;
 }
 
-fn setFonts(self: *Self) !void {
-    self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
-    self.desktopFont = w.CreateFontW(self.window.scaleDpi(desktop_no_font_size), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, w.DEFAULT_PITCH | w.FF_DONTCARE, sys.toUtf16const("Segoe UI"));
+pub fn destroy(self: *Self) void {
+    _ = w.DeleteObject(self.font);
+    _ = w.DeleteObject(self.desktopFont);
+    self.allocator.free(self.desktopNumberString);
+    self.allocator.destroy(self);
 }
 
-pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
-    var rect = try self.window.getClientRect();
-    rect.left = self.window.scaleDpi(5);
-    rect.right -= self.window.scaleDpi(5);
-    rect.bottom -= self.window.scaleDpi(5);
+pub fn resetFonts(self: *Self, dpi: u32) !void {
+    _ = w.DeleteObject(self.font);
+    _ = w.DeleteObject(self.desktopFont);
+    try self.setFonts(dpi);
+}
 
-    if (self.selected) {
+fn setFonts(self: *Self, dpi: u32) !void {
+    self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
+    self.desktopFont = w.CreateFontW(scale(desktop_no_font_size, dpi), 0, 0, 0, w.FW_BOLD, 0, 0, 0, w.DEFAULT_CHARSET, w.OUT_TT_PRECIS, w.CLIP_DEFAULT_PRECIS, w.DEFAULT_QUALITY, w.DEFAULT_PITCH | w.FF_DONTCARE, sys.toUtf16const("Segoe UI"));
+}
+
+fn scale(x: i32, dpi: u32) i32 {
+    return w.MulDiv(x, @as(i32, @intCast(dpi)), 96);
+}
+
+pub fn paint(self: *Self, hdc: w.HDC, dpi: u32, selected: bool) !void {
+    const hbrushBg = w.CreateSolidBrush(0);
+    defer _ = w.DeleteObject(hbrushBg);
+    var bgRect = self.bounds;
+    try wh.mapFailure(w.FillRect(hdc, &bgRect, hbrushBg));
+
+    const colorFg: w.COLORREF = if (selected) self.colorFocused else self.color;
+    const hbrushFg = w.CreateSolidBrush(colorFg);
+    defer _ = w.DeleteObject(hbrushFg);
+    var fgRect: w.RECT = .{
+        .left = self.bounds.left + scale(1, dpi),
+        .top = self.bounds.top + scale(1, dpi),
+        .right = self.bounds.right - scale(1, dpi),
+        .bottom = self.bounds.bottom - scale(1, dpi),
+    };
+    try wh.mapFailure(w.FillRect(hdc, &fgRect, hbrushFg));
+
+    try self.drawDesktopNo(hdc, dpi, selected);
+    try self.drawText(hdc, dpi, selected);
+    try self.drawIcon(hdc, dpi);
+}
+
+pub fn drawDesktopNo(self: *Self, hdc: w.HDC, dpi: u32, selected: bool) !void {
+    var rect: w.RECT = .{
+        .left = self.bounds.left + scale(5, dpi),
+        .top = self.bounds.top,
+        .right = self.bounds.right - scale(5, dpi),
+        .bottom = self.bounds.bottom - scale(5, dpi),
+    };
+
+    if (selected) {
         _ = w.SetTextColor(hdc, 0x00000000);
     } else {
         _ = w.SetTextColor(hdc, 0x00ffffff);
@@ -194,12 +114,14 @@ pub fn drawDesktopNo(self: Self, hdc: w.HDC) !void {
     _ = w.DrawTextW(hdc, self.desktopNumberString, -1, &rect, w.DT_SINGLELINE | w.DT_TOP | w.DT_RIGHT | w.DT_WORD_ELLIPSIS);
 }
 
-pub fn drawText(self: Self, hdc: w.HDC) !void {
-    var rect = try self.window.getClientRect();
-    rect.left = self.window.scaleDpi(5);
-    rect.right -= self.window.scaleDpi(5);
-    rect.bottom -= self.window.scaleDpi(5);
-    if (self.selected) {
+pub fn drawText(self: *Self, hdc: w.HDC, dpi: u32, selected: bool) !void {
+    var rect: w.RECT = .{
+        .left = self.bounds.left + scale(5, dpi),
+        .top = self.bounds.top,
+        .right = self.bounds.right - scale(5, dpi),
+        .bottom = self.bounds.bottom - scale(5, dpi),
+    };
+    if (selected) {
         _ = w.SetTextColor(hdc, 0x00ffffff);
     } else {
         _ = w.SetTextColor(hdc, 0x00000000);
@@ -209,22 +131,23 @@ pub fn drawText(self: Self, hdc: w.HDC) !void {
     _ = w.DrawTextW(hdc, self.desktopWindow.title, -1, &rect, w.DT_SINGLELINE | w.DT_BOTTOM | w.DT_CENTER | w.DT_WORD_ELLIPSIS);
 }
 
-pub fn drawIcon(self: Self, hdc: w.HDC) !void {
-    var rect = try self.window.getRect();
+pub fn drawIcon(self: *Self, hdc: w.HDC, dpi: u32) !void {
+    const margin_top = scale(20, dpi);
+    const margin_left = scale(14, dpi);
+    const margin_right = scale(14, dpi);
+    const margin_bot = scale(32, dpi);
 
-    const margin_top = self.window.scaleDpi(20);
-    const margin_left = self.window.scaleDpi(14);
-    const margin_right = self.window.scaleDpi(14);
-    const margin_bot = self.window.scaleDpi(32);
+    const inner_left = self.bounds.left + margin_left;
+    const inner_top = self.bounds.top + margin_top;
+    const inner_right = self.bounds.right - margin_right;
+    const inner_bottom = self.bounds.bottom - margin_bot;
 
-    rect.top += margin_top;
-    rect.bottom -= margin_bot;
-    rect.left += margin_left;
-    rect.right -= margin_right;
+    const inner_w = inner_right - inner_left;
+    const inner_h = inner_bottom - inner_top;
+    const icon_size = @min(inner_h, inner_w);
 
-    const center_x = @divFloor((rect.right - rect.left), 2) + margin_left;
-    const center_y = @divFloor((rect.bottom - rect.top), 2) + margin_top;
-    const icon_size = @min((rect.bottom - rect.top), (rect.right - rect.left));
+    const center_x = inner_left + @divFloor(inner_w, 2);
+    const center_y = inner_top + @divFloor(inner_h, 2);
 
     const icon_x = center_x - @divFloor(icon_size, 2);
     const icon_y = center_y - @divFloor(icon_size, 2);
