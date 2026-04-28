@@ -86,6 +86,11 @@ pub fn deinit(self: Self) void {
 pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     _ = c.wl_display_roundtrip(self.display);
 
+    std.log.debug("getWindowList: {d} toplevels collected (protocol: {s})", .{
+        self.state.toplevels.items.len,
+        if (self.state.foreign_toplevel_mgr != null) "wlroots" else "kde-plasma",
+    });
+
     var list = std.array_list.Managed(common.DesktopWindow).init(allocator);
     errdefer {
         for (list.items) |dw| dw.destroy();
