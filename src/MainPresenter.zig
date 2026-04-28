@@ -23,7 +23,7 @@ pub fn init(args: platform.PlatformArgs, allocator: std.mem.Allocator, test_mode
     self.* = .{
         .allocator = allocator,
         .view = undefined,
-        .si = try SystemInteraction.init(),
+        .si = try SystemInteraction.init(allocator),
         .test_mode = test_mode,
     };
 

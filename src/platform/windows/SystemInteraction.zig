@@ -44,7 +44,7 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.c) c_int {
     return 1;
 }
 
-pub fn init() !Self {
+pub fn init(_: std.mem.Allocator) !Self {
     const serviceProvider = try com.IServiceProvider.create();
     return Self{
         .desktopManager = try com.IVirtualDesktopManager.create(),
