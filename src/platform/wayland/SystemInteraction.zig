@@ -64,6 +64,12 @@ pub fn init(allocator: std.mem.Allocator) !Self {
     _ = c.wl_display_roundtrip(display); // collect initial_state / done events
 
     if (state.foreign_toplevel_mgr == null and state.plasma_window_mgr == null) {
+        std.log.err(
+            \\No Wayland window-list protocol exposed by this compositor.
+            \\Tried: zwlr_foreign_toplevel_management_v1, org_kde_plasma_window_management.
+            \\KWin 6.6.4 gates org_kde_plasma_window_management to privileged plasmashell only
+            \\and does not yet advertise ext_foreign_toplevel_list_v1.
+        , .{});
         return error.NoWindowListProtocol;
     }
 
@@ -231,12 +237,16 @@ const foreign_toplevel_handle_listener = c.zwlr_foreign_toplevel_handle_v1_liste
 
 // ─── KDE plasma window management listener ────────────────────────────────────
 
-fn plasmaWindow(data: ?*anyopaque, _: ?*c.org_kde_plasma_window_management, handle: ?*c.org_kde_plasma_window) callconv(.c) void {
-    plasmaMakeEntry(@ptrCast(@alignCast(data)), handle);
+fn plasmaWindow(_: ?*anyopaque, _: ?*c.org_kde_plasma_window_management, _: u32) callconv(.c) void {
+    // Deprecated event — superseded by window_with_uuid; takes a uint internal id.
+    // We rely on window_with_uuid (since v13) and ignore the legacy callback.
 }
 
-fn plasmaWindowWithUuid(data: ?*anyopaque, _: ?*c.org_kde_plasma_window_management, _: [*c]const u8, handle: ?*c.org_kde_plasma_window) callconv(.c) void {
-    plasmaMakeEntry(@ptrCast(@alignCast(data)), handle);
+fn plasmaWindowWithUuid(data: ?*anyopaque, mgr: ?*c.org_kde_plasma_window_management, _: u32, uuid: [*c]const u8) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    const m = mgr orelse return;
+    const handle = c.org_kde_plasma_window_management_get_window_by_uuid(m, uuid);
+    plasmaMakeEntry(state, handle);
 }
 
 fn plasmaMakeEntry(state: *State, handle: ?*c.org_kde_plasma_window) void {
@@ -293,11 +303,12 @@ fn pwUnmapped(data: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void
 }
 
 fn pwNoop0(_: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {}
-fn pwNoop1(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: u32) callconv(.c) void {}
+fn pwNoop1u(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: u32) callconv(.c) void {}
+fn pwNoop1i(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: i32) callconv(.c) void {}
 fn pwNoop2(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: [*c]const u8) callconv(.c) void {}
 fn pwParentWindow(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: ?*c.org_kde_plasma_window) callconv(.c) void {}
 fn pwGeometry(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: i32, _: i32, _: u32, _: u32) callconv(.c) void {}
-fn pwPidChanged(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: u32) callconv(.c) void {}
+// pid_changed listener uses pwNoop1u above
 fn pwAppMenu(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: [*c]const u8, _: [*c]const u8) callconv(.c) void {}
 fn pwIconChanged(_: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {}
 fn pwClientGeometry(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: i32, _: i32, _: u32, _: u32) callconv(.c) void {}
@@ -306,14 +317,14 @@ const plasma_window_listener = c.org_kde_plasma_window_listener{
     .title_changed = pwTitleChanged,
     .app_id_changed = pwAppIdChanged,
     .state_changed = pwStateChanged,
-    .virtual_desktop_changed = pwNoop1,
+    .virtual_desktop_changed = pwNoop1i,
     .themed_icon_name_changed = pwNoop2,
     .unmapped = pwUnmapped,
     .initial_state = pwNoop0,
     .parent_window = pwParentWindow,
     .geometry = pwGeometry,
     .icon_changed = pwIconChanged,
-    .pid_changed = pwPidChanged,
+    .pid_changed = pwNoop1u,
     .virtual_desktop_entered = pwNoop2,
     .virtual_desktop_left = pwNoop2,
     .application_menu = pwAppMenu,

@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
 
 fn buildWindows(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/platform/windows/Entry.zig"),
+        .root_source_file = b.path("src/main_windows.zig"),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
@@ -94,7 +94,7 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     }
 
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/platform/wayland/Entry.zig"),
+        .root_source_file = b.path("src/main_wayland.zig"),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
@@ -102,9 +102,12 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
 
     exe_mod.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
     exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
+    exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/freetype2" });
     exe_mod.linkSystemLibrary("c", .{});
     exe_mod.linkSystemLibrary("wayland-client", .{});
     exe_mod.linkSystemLibrary("xkbcommon", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("freetype", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .no });
     exe_mod.addIncludePath(generated_headers.getDirectory());
 
     // Compile each generated private-code C file into the binary.

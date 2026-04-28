@@ -20,6 +20,7 @@ si: SystemInteraction,
 
 pub fn init(args: platform.PlatformArgs, allocator: std.mem.Allocator, test_mode: bool) !*Self {
     var self = try allocator.create(Self);
+    errdefer allocator.destroy(self);
     self.* = .{
         .allocator = allocator,
         .view = undefined,
