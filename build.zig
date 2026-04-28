@@ -108,6 +108,7 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     exe_mod.linkSystemLibrary("xkbcommon", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("freetype", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("systemd", .{ .use_pkg_config = .no });
     exe_mod.addIncludePath(generated_headers.getDirectory());
 
     // Compile each generated private-code C file into the binary.
