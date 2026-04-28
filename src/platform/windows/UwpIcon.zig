@@ -1,7 +1,7 @@
 const std = @import("std");
 const wh = @import("windows.zig");
 const w = wh.c;
-const com = @import("com.zig");
+const com = @import("com/com.zig");
 
 const IID_IPropertyStore: w.IID = .{
     .Data1 = 0x886D8EEB,

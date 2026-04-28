@@ -1,8 +1,10 @@
 const wh = @import("windows.zig");
 const w = wh.c;
 const std = @import("std");
-const com = @import("ComInterface.zig");
+const com = @import("com/ComInterface.zig");
 const UwpIcon = @import("UwpIcon.zig");
+const common = @import("../../common/DesktopWindow.zig");
+const icon_rgba = @import("icon_rgba.zig");
 
 var resolved_ivd_iid: ?w.IID = null;
 
@@ -25,28 +27,6 @@ pub fn toUtf16const(comptime str: []const u8) [:0]const u16 {
 pub fn toUtf8(str: []u16, allocator: std.mem.Allocator) ![]u8 {
     return try std.unicode.utf16LeToUtf8Alloc(allocator, str);
 }
-
-pub const DesktopWindow = struct {
-    hwnd: w.HWND,
-    title: [:0]u16,
-    title_lower: [:0]u16,
-    class: [:0]u16,
-    icon: w.HICON,
-    executablePath: ?[:0]u16,
-    executableName: ?[:0]u16,
-    shouldShow: bool,
-    desktopNumber: ?usize,
-    originalAllocator: std.mem.Allocator,
-
-    pub fn destroy(self: DesktopWindow) !void {
-        self.originalAllocator.free(self.title);
-        self.originalAllocator.free(self.title_lower);
-        self.originalAllocator.free(self.class);
-        if (self.executablePath) |fname| self.originalAllocator.free(fname);
-
-        _ = w.DestroyIcon(self.icon);
-    }
-};
 
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.c) c_int {
     const windows: *std.array_list.Managed(w.HWND) = @ptrFromInt(@as(usize, @intCast(lParam)));
@@ -73,13 +53,18 @@ pub fn init() !Self {
     };
 }
 
-pub fn deinit(self: Self) !void {
+pub fn deinit(self: Self) void {
     self.desktopManager.Release();
     self.serviceProvider.Release();
     self.desktopManagerInternal.Release();
 }
 
-pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.Managed(DesktopWindow) {
+pub fn activateWindow(_: *Self, dw: common.DesktopWindow) void {
+    const hwnd: w.HWND = @ptrFromInt(dw.platform_handle);
+    _ = w.SwitchToThisWindow(hwnd, 1);
+}
+
+pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     var desktopsNullable: ?*com.IObjectArray = null;
     _ = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
     var desktops = desktopsNullable orelse return error.Unknown;
@@ -92,7 +77,7 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
     defer desktopsMap.deinit();
 
     const ivd_iid = resolved_ivd_iid orelse blk: {
-        const IVDM = @import("IVirtualDesktopManagerInternal.zig");
+        const IVDM = @import("com/IVirtualDesktopManagerInternal.zig");
         for (IVDM.IVD_IID_CANDIDATES) |cand| {
             const r = desktops.GetAtWithIID(0, &cand.iid, com.IVirtualDesktop);
             if (r.hr == 0) {
@@ -118,42 +103,63 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
     var hwndList = std.array_list.Managed(w.HWND).init(allocator);
     defer hwndList.deinit();
     _ = w.EnumWindows(@ptrCast(&enumWindowProc), @intCast(@intFromPtr(&hwndList)));
-    var windowList = std.array_list.Managed(DesktopWindow).init(allocator);
+
+    var windowList = std.array_list.Managed(common.DesktopWindow).init(allocator);
+    errdefer {
+        for (windowList.items) |dw| dw.destroy();
+        windowList.deinit();
+    }
+
     for (hwndList.items) |hwnd| {
         const shouldShow = try shouldShowWindow(hwnd);
         if (!shouldShow) continue;
-        const title = try getWindowTitle(hwnd, allocator);
 
-        const title_lower = try allocator.allocSentinel(u16, title.len, 0);
-        @memcpy(title_lower[0..title.len], title);
-        if (title_lower.len > 0) {
-            _ = w.CharLowerBuffW(title_lower, @intCast(title_lower.len - 1));
+        const title_utf16 = try getWindowTitle(hwnd, allocator);
+        defer allocator.free(title_utf16);
+
+        const title_lower_utf16 = try allocator.allocSentinel(u16, title_utf16.len, 0);
+        defer allocator.free(title_lower_utf16);
+        @memcpy(title_lower_utf16[0..title_utf16.len], title_utf16);
+        if (title_lower_utf16.len > 0) {
+            _ = w.CharLowerBuffW(title_lower_utf16, @intCast(title_lower_utf16.len - 1));
         }
 
-        const class = try getWindowClass(hwnd, allocator);
-        const icon: w.HICON = try getWindowIcon(hwnd);
+        const actual_title = std.mem.sliceTo(title_utf16, 0);
+        const title = try std.unicode.utf16LeToUtf8AllocZ(allocator, actual_title);
+        errdefer allocator.free(title);
+
+        const actual_lower = std.mem.sliceTo(title_lower_utf16, 0);
+        const title_lower = try std.unicode.utf16LeToUtf8AllocZ(allocator, actual_lower);
+        errdefer allocator.free(title_lower);
+
+        const class_utf16 = try getWindowClass(hwnd, allocator);
+        defer allocator.free(class_utf16);
+        const actual_class = std.mem.sliceTo(class_utf16, 0);
+        const app_id = try std.unicode.utf16LeToUtf8AllocZ(allocator, actual_class);
+        errdefer allocator.free(app_id);
+
+        const icon_opt: ?common.RgbaIcon = blk: {
+            const hicon = getWindowIcon(hwnd) catch break :blk null;
+            const rgba = icon_rgba.hIconToRgba(hicon, allocator) catch {
+                _ = w.DestroyIcon(hicon);
+                break :blk null;
+            };
+            _ = w.DestroyIcon(hicon);
+            break :blk rgba;
+        };
+        errdefer if (icon_opt) |ic| ic.destroy();
 
         var desktopId: w.GUID = undefined;
         _ = self.desktopManager.GetWindowDesktopId(hwnd, &desktopId);
 
-        const executablePath = try getWindowFilePath(hwnd, allocator);
-        var executableName: ?[:0]u16 = null;
-        if (executablePath) |ep| {
-            const name: [*:0]u16 = w.PathFindFileNameW(ep);
-            executableName = std.mem.span(name);
-        }
-
-        try windowList.append(DesktopWindow{
-            .hwnd = hwnd,
+        try windowList.append(common.DesktopWindow{
+            .platform_handle = @intFromPtr(hwnd),
             .title = title,
             .title_lower = title_lower,
-            .class = class,
-            .icon = icon,
-            .executablePath = executablePath,
-            .executableName = executableName,
-            .shouldShow = shouldShow,
+            .app_id = app_id,
+            .icon = icon_opt,
             .desktopNumber = desktopsMap.get(desktopId),
-            .originalAllocator = allocator,
+            .allocator = allocator,
         });
     }
     return windowList;

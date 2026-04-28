@@ -1,4 +1,4 @@
-const wh = @import("windows.zig");
+const wh = @import("../windows.zig");
 const w = wh.c;
 const std = @import("std");
 const com = @import("com.zig");

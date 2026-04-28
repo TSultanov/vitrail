@@ -2,6 +2,7 @@ const std = @import("std");
 const wh = @import("windows.zig");
 const w = wh.c;
 const sys = @import("SystemInteraction.zig");
+const common = @import("../../common/DesktopWindow.zig");
 pub const Window = @import("Window.zig");
 pub const Layout = @import("Layout.zig");
 pub const Tile = @import("Tile.zig");
@@ -12,8 +13,12 @@ const Self = @This();
 const search_box_width = 100;
 const search_box_height = 20;
 
+pub const PlatformArgs = struct {
+    hInstance: w.HINSTANCE,
+};
+
 pub const Callbacks = struct {
-    activateWindow: *const fn (main_window: *Self, dw: sys.DesktopWindow) anyerror!void,
+    activateWindow: *const fn (main_window: *Self, dw: common.DesktopWindow) anyerror!void,
     hide: *const fn (main_window: *Self) anyerror!void,
 };
 
@@ -21,7 +26,7 @@ window: *Window,
 layout: *Layout,
 search_box: *TextBox,
 event_handlers: Window.EventHandlers,
-desktop_windows: ?std.array_list.Managed(sys.DesktopWindow),
+desktop_windows: ?std.array_list.Managed(common.DesktopWindow),
 hInstance: w.HINSTANCE,
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
@@ -171,7 +176,8 @@ pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, w
     }
 }
 
-pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
+pub fn create(args: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
+    const hInstance = args.hInstance;
     const desktop = w.GetDesktopWindow();
     var desktopRect: w.RECT = undefined;
     try wh.mapFailure(w.GetWindowRect(desktop, &desktopRect));
@@ -224,7 +230,20 @@ pub fn create(hInstance: w.HINSTANCE, callbacks: *Callbacks, allocator: std.mem.
     return self;
 }
 
-pub fn setDesktopWindows(self: *Self, desktopWindows: std.array_list.Managed(sys.DesktopWindow)) !void {
+pub fn show(self: *Self) !void {
+    _ = self.window.show();
+}
+
+pub fn activate(self: *Self) void {
+    self.window.activate();
+    _ = w.SetForegroundWindow(self.window.hwnd);
+}
+
+pub fn requestQuit(_: *Self) void {
+    w.PostQuitMessage(0);
+}
+
+pub fn setDesktopWindows(self: *Self, desktopWindows: std.array_list.Managed(common.DesktopWindow)) !void {
     try self.hideBoxes();
     self.desktop_windows = desktopWindows;
     try self.updateBoxes();
@@ -244,23 +263,31 @@ pub fn hideBoxes(self: *Self) !void {
 }
 
 fn updateVisibility(self: *Self) !void {
-    const search_text = try self.search_box.window.getText(self.allocator);
-    defer self.allocator.free(search_text);
+    const search_utf16 = try self.search_box.window.getText(self.allocator);
+    defer self.allocator.free(search_utf16);
 
-    const search_text_lower = try self.allocator.allocSentinel(u16, search_text.len, 0);
-    defer self.allocator.free(search_text_lower);
-    @memcpy(search_text_lower[0..search_text.len], search_text);
-    _ = w.CharLowerBuffW(search_text_lower, @intCast(search_text_lower.len - 1));
+    const search_lower_utf16 = try self.allocator.allocSentinel(u16, search_utf16.len, 0);
+    defer self.allocator.free(search_lower_utf16);
+    @memcpy(search_lower_utf16[0..search_utf16.len], search_utf16);
+    if (search_lower_utf16.len > 0) {
+        _ = w.CharLowerBuffW(search_lower_utf16, @intCast(search_lower_utf16.len - 1));
+    }
+
+    // Convert the lowercased search query to UTF-8 for comparison with dw.title_lower
+    var search_utf8_buf: [1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&search_utf8_buf);
+    const search_actual = std.mem.sliceTo(search_lower_utf16, 0);
+    const search_utf8: []const u8 = std.unicode.utf16LeToUtf8Alloc(fba.allocator(), search_actual) catch "";
 
     var reset_focus = self.previous_hidden;
     var hidden_num: usize = 0;
 
     for (self.layout.tiles.items) |tile| {
         const dw = tile.desktopWindow;
-        if (search_text.len <= 1) {
+        if (search_utf8.len <= 1) {
             tile.visible = true;
         } else {
-            if (std.mem.containsAtLeast(u16, dw.title_lower[0..(dw.title.len - 1)], 1, search_text_lower[0..(search_text.len - 1)])) {
+            if (std.mem.containsAtLeast(u8, dw.title_lower, 1, search_utf8)) {
                 tile.visible = true;
             } else {
                 if (self.layout.selected_idx) |s| {

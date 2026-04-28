@@ -11,11 +11,21 @@ pub fn build(b: *std.Build) void {
         .whitelist = &.{
             .{ .cpu_arch = .x86_64, .os_tag = .windows, .abi = .gnu },
             .{ .cpu_arch = .aarch64, .os_tag = .windows, .abi = .gnu },
+            .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
+            .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu },
         },
     });
 
+    switch (target.result.os.tag) {
+        .windows => buildWindows(b, target, optimize),
+        .linux => buildLinux(b, target, optimize),
+        else => @panic("unsupported OS"),
+    }
+}
+
+fn buildWindows(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/wmain.zig"),
+        .root_source_file = b.path("src/platform/windows/Entry.zig"),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
@@ -47,7 +57,30 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
+}
 
+fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/wayland/Entry.zig"),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = true,
+    });
+
+    // Wayland system libraries — to be expanded in Phase 5.
+    exe_mod.linkSystemLibrary("c", .{});
+
+    const exe = b.addExecutable(.{
+        .name = "vitrail",
+        .root_module = exe_mod,
+    });
+
+    b.installArtifact(exe);
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 }

@@ -1,11 +1,8 @@
-pub const wh = @import("windows.zig");
-pub const w = wh.c;
-pub const std = @import("std");
-pub const zw = std.os.windows;
-pub const toUtf16const = @import("SystemInteraction.zig").toUtf16const;
-pub const toUtf16 = @import("SystemInteraction.zig").toUtf16;
-pub const toUtf8 = @import("SystemInteraction.zig").toUtf8;
-const MainPresenter = @import("MainPresenter.zig");
+const wh = @import("windows.zig");
+const w = wh.c;
+const std = @import("std");
+const zw = std.os.windows;
+const MainPresenter = @import("../../MainPresenter.zig");
 
 pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.winapi) c_int {
     _ = hPrevInstance;
@@ -28,7 +25,7 @@ pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdL
         _ = w.RegisterHotKey(null, 0, w.MOD_ALT, w.VK_SPACE);
     }
 
-    var main_presenter = MainPresenter.init(hInstanceWinApi, std.heap.page_allocator, test_mode) catch unreachable;
+    var main_presenter = MainPresenter.init(.{ .hInstance = hInstanceWinApi }, std.heap.page_allocator, test_mode) catch unreachable;
 
     if (test_mode) {
         main_presenter.show() catch unreachable;
