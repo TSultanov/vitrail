@@ -122,7 +122,7 @@ fn rgbaToHIconImpl(rgba: common.RgbaIcon, allocator: std.mem.Allocator) !w.HICON
     if (hbm_mask == null) return error.CreateMaskFailed;
     defer _ = w.DeleteObject(hbm_mask);
 
-    const icon_info = w.ICONINFO{
+    var icon_info = w.ICONINFO{
         .fIcon = 1,
         .xHotspot = 0,
         .yHotspot = 0,
