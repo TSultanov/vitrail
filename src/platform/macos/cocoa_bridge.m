@@ -321,3 +321,27 @@ char *vt_app_name_for_pid(int pid) {
     memcpy(out, utf8, len + 1);
     return out;
 }
+
+// ─── Process enumeration ────────────────────────────────────────────────────
+
+int *vt_running_pids(int *out_count) {
+    *out_count = 0;
+    NSArray<NSRunningApplication *> *apps =
+        [NSWorkspace sharedWorkspace].runningApplications;
+    if (apps.count == 0) return NULL;
+    pid_t self_pid = [NSProcessInfo processInfo].processIdentifier;
+    int *buf = (int *)malloc(sizeof(int) * apps.count);
+    if (!buf) return NULL;
+    int n = 0;
+    for (NSRunningApplication *app in apps) {
+        if (app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
+        if (app.processIdentifier == self_pid) continue;
+        buf[n++] = (int)app.processIdentifier;
+    }
+    *out_count = n;
+    return buf;
+}
+
+void vt_free(void *p) {
+    free(p);
+}

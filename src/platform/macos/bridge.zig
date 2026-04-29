@@ -57,3 +57,8 @@ pub extern "c" fn vt_icon_for_pid(
     out_h: *u32,
 ) c_int;
 pub extern "c" fn vt_app_name_for_pid(pid: c_int) ?[*:0]u8;
+
+// Returns a malloc'd array of `*out_count` pids for regular-activation-
+// policy apps, excluding our own pid. Caller frees with vt_free.
+pub extern "c" fn vt_running_pids(out_count: *c_int) ?[*]c_int;
+pub extern "c" fn vt_free(p: ?*anyopaque) void;

@@ -80,6 +80,19 @@ int vt_icon_for_pid(int pid,
 // NUL-terminated buffer the caller free()s. Returns NULL on failure.
 char *vt_app_name_for_pid(int pid);
 
+// ─── Process enumeration ─────────────────────────────────────────────────────
+
+// Returns a malloc'd array of pids for currently-running apps with
+// activationPolicy == NSApplicationActivationPolicyRegular (skips daemons,
+// menubar-only agents) and excludes our own pid. *out_count receives the
+// number of pids written. Caller frees the returned buffer with vt_free.
+// Returns NULL on allocation failure.
+int *vt_running_pids(int *out_count);
+
+// Frees a pointer returned by vt_running_pids (or any malloc'd buffer the
+// bridge hands back).
+void vt_free(void *p);
+
 #ifdef __cplusplus
 }
 #endif

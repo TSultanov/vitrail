@@ -1,8 +1,13 @@
-// One-off debug binary: dump every entry CGWindowListCopyWindowInfo returns
-// with the same options the production code uses, plus all the fields we
-// filter on. Build via `zig build dump-windows`, run, inspect stderr.
+// One-off debug binary: walk the same AX path the production backend uses
+// and print every AX window encountered, with the kept-or-dropped tag and
+// reason. Build via `zig build dump-windows`, run, inspect stderr.
+//
+// Mirrors AXWindowBackend.getWindowList: NSWorkspace.runningApplications →
+// per-pid kAXWindowsAttribute → subrole + size filter → CGS Space lookup.
 
 const std = @import("std");
+const ax = @import("ax.zig");
+const bridge = @import("bridge.zig");
 const cf = @import("cf.zig");
 const cgs = @import("cgs.zig");
 
@@ -10,14 +15,28 @@ const cg = @cImport({
     @cInclude("CoreGraphics/CoreGraphics.h");
 });
 
+fn cfStr(s: [*:0]const u8) ?cf.c.CFStringRef {
+    return cf.c.CFStringCreateWithCString(null, s, cf.c.kCFStringEncodingUTF8);
+}
+
+fn copyStringAttr(allocator: std.mem.Allocator, elem: ax.UIElementRef, key: cf.c.CFStringRef) ?[]u8 {
+    var ref: cf.c.CFTypeRef = null;
+    if (ax.AXUIElementCopyAttributeValue(elem, key, &ref) != ax.kAXErrorSuccess) return null;
+    if (ref == null) return null;
+    defer cf.c.CFRelease(ref);
+    const s: cf.c.CFStringRef = @ptrCast(@constCast(ref));
+    return cf.cfStringDupe(allocator, s) catch null;
+}
+
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{ .safety = true }) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     const print = std.debug.print;
+    print("[ax] AXIsProcessTrusted = {d}\n", .{ax.AXIsProcessTrusted()});
 
-    // Build Space-ID → index map for context.
+    // Build Space-ID → 0-based-index map.
     const cid = cgs.CGSMainConnectionID();
     var space_index = std.AutoHashMap(i64, usize).init(allocator);
     defer space_index.deinit();
@@ -31,7 +50,6 @@ pub fn main() !void {
             const ddict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dptr));
             const spaces_arr = cf.cfDictGetArray(ddict, "Spaces") orelse continue;
             const scount = cg.CFArrayGetCount(@ptrCast(spaces_arr));
-            print("[spaces] display {d}: {d} space(s)\n", .{ di, scount });
             var si: cg.CFIndex = 0;
             while (si < scount) : (si += 1) {
                 const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), si) orelse continue;
@@ -40,173 +58,198 @@ pub fn main() !void {
                 const id = cf.cfNumberToI64(id_n) orelse continue;
                 const idx = space_index.count();
                 try space_index.put(id, idx);
-                print("[spaces]   id64={d} → idx={d}\n", .{ id, idx });
             }
         }
-    } else {
-        print("[spaces] CGSCopyManagedDisplaySpaces returned null\n", .{});
     }
 
-    const variants = [_]struct { label: []const u8, opts: cg.CGWindowListOption }{
-        .{ .label = "OnScreenOnly", .opts = cg.kCGWindowListOptionOnScreenOnly | cg.kCGWindowListExcludeDesktopElements },
-        .{ .label = "All", .opts = cg.kCGWindowListOptionAll | cg.kCGWindowListExcludeDesktopElements },
+    if (ax.AXIsProcessTrusted() == 0) {
+        print("[ax] not trusted — production backend would return empty list. Aborting dump.\n", .{});
+        return;
+    }
+
+    const k_windows = cfStr("AXWindows") orelse return;
+    defer cf.c.CFRelease(k_windows);
+    const k_main_window = cfStr("AXMainWindow") orelse return;
+    defer cf.c.CFRelease(k_main_window);
+    const k_title = cfStr("AXTitle") orelse return;
+    defer cf.c.CFRelease(k_title);
+    const k_subrole = cfStr("AXSubrole") orelse return;
+    defer cf.c.CFRelease(k_subrole);
+    const k_role = cfStr("AXRole") orelse return;
+    defer cf.c.CFRelease(k_role);
+    const k_size = cfStr("AXSize") orelse return;
+    defer cf.c.CFRelease(k_size);
+    const k_position = cfStr("AXPosition") orelse return;
+    defer cf.c.CFRelease(k_position);
+    const v_standard = cfStr("AXStandardWindow") orelse return;
+    defer cf.c.CFRelease(v_standard);
+    const v_dialog = cfStr("AXDialog") orelse return;
+    defer cf.c.CFRelease(v_dialog);
+
+    var pid_count: c_int = 0;
+    const pids_ptr = bridge.vt_running_pids(&pid_count) orelse {
+        print("[pids] vt_running_pids returned null\n", .{});
+        return;
     };
-    for (variants) |variant| {
-        const label = variant.label;
-        const opts = variant.opts;
-        print("\n========== {s} ==========\n", .{label});
+    defer bridge.vt_free(@ptrCast(pids_ptr));
+    print("[pids] {d} regular-policy app(s)\n\n", .{pid_count});
+    if (pid_count <= 0) return;
+    const pids = pids_ptr[0..@intCast(pid_count)];
 
-        var seen_tabs = std.AutoHashMap(u64, void).init(allocator);
-        defer seen_tabs.deinit();
-
-        const arr = cg.CGWindowListCopyWindowInfo(opts, cg.kCGNullWindowID);
-        if (arr == null) {
-            print("  CGWindowListCopyWindowInfo returned null\n", .{});
+    for (pids) |pid_c| {
+        const pid: i32 = @intCast(pid_c);
+        const app_elem = ax.AXUIElementCreateApplication(pid) orelse {
+            print("pid={d:<6} <AXUIElementCreateApplication returned null>\n", .{pid});
             continue;
-        }
-        defer cf.c.CFRelease(arr);
+        };
+        defer cf.c.CFRelease(app_elem);
 
-        const count = cg.CFArrayGetCount(@ptrCast(arr));
-        print("  {d} entries\n", .{count});
+        const app_name_c = bridge.vt_app_name_for_pid(pid);
+        defer if (app_name_c) |p| bridge.vt_free(@ptrCast(@constCast(p)));
+        const app_name: []const u8 = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "(?)";
 
-        var i: cg.CFIndex = 0;
-        while (i < count) : (i += 1) {
-            const dict_ptr = cg.CFArrayGetValueAtIndex(@ptrCast(arr), i) orelse continue;
-            const dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dict_ptr));
-
-            const layer: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowLayer")) |n|
-                cf.cfNumberToI64(n) orelse 999
-            else
-                999;
-            const pid: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowOwnerPID")) |n|
-                cf.cfNumberToI64(n) orelse -1
-            else
-                -1;
-            const wid: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowNumber")) |n|
-                cf.cfNumberToI64(n) orelse -1
-            else
-                -1;
-            const store: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowStoreType")) |n|
-                cf.cfNumberToI64(n) orelse -1
-            else
-                -1;
-            const alpha: f64 = blk: {
-                const n = cf.cfDictGetNumber(dict, "kCGWindowAlpha") orelse break :blk -1;
-                var v: f64 = 0;
-                if (cf.c.CFNumberGetValue(n, cf.c.kCFNumberFloat64Type, &v) == 0) break :blk -1;
-                break :blk v;
-            };
-            const onscreen: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowIsOnscreen")) |n|
-                cf.cfNumberToI64(n) orelse -1
-            else
-                -1;
-
-            var bx: f64 = 0;
-            var by: f64 = 0;
-            var bw: f64 = 0;
-            var bh: f64 = 0;
-            if (cf.c.CFDictionaryGetValue(dict, blk: {
-                const k = cf.c.CFStringCreateWithCString(null, "kCGWindowBounds", cf.c.kCFStringEncodingUTF8) orelse break :blk null;
-                break :blk k;
-            })) |bv| {
-                const bdict: cf.c.CFDictionaryRef = @ptrCast(@constCast(bv));
-                var rect: cg.CGRect = undefined;
-                if (cg.CGRectMakeWithDictionaryRepresentation(@ptrCast(bdict), &rect)) {
-                    bx = rect.origin.x;
-                    by = rect.origin.y;
-                    bw = rect.size.width;
-                    bh = rect.size.height;
+        var wins_ref: cf.c.CFTypeRef = null;
+        const err = ax.AXUIElementCopyAttributeValue(app_elem, k_windows, &wins_ref);
+        var emitted_any = false;
+        if (err == ax.kAXErrorSuccess and wins_ref != null) {
+            defer cf.c.CFRelease(wins_ref);
+            const wins_arr: cf.c.CFArrayRef = @ptrCast(@constCast(wins_ref));
+            const wcount = cg.CFArrayGetCount(@ptrCast(wins_arr));
+            print("pid={d:<6} app=\"{s}\" wins={d}\n", .{ pid, app_name, wcount });
+            var wi: cg.CFIndex = 0;
+            while (wi < wcount) : (wi += 1) {
+                const wptr = cg.CFArrayGetValueAtIndex(@ptrCast(wins_arr), wi) orelse continue;
+                const win_elem: ax.UIElementRef = @ptrCast(@constCast(wptr));
+                if (try printAxWindow(allocator, win_elem, "AXWindows", k_role, k_subrole, k_title, k_size, k_position, &space_index, cid)) {
+                    emitted_any = true;
                 }
             }
-            const sharing: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowSharingState")) |n|
-                cf.cfNumberToI64(n) orelse -1
-            else
-                -1;
-            const memuse: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowMemoryUsage")) |n|
-                cf.cfNumberToI64(n) orelse -1
-            else
-                -1;
+        } else {
+            const reason: []const u8 = switch (err) {
+                ax.kAXErrorAPIDisabled => "axdisabled",
+                ax.kAXErrorAttributeUnsupported => "unsupported",
+                ax.kAXErrorNoValue => "novalue",
+                else => if (err == ax.kAXErrorSuccess) "nullref" else "axerr",
+            };
+            print("pid={d:<6} app=\"{s}\" wins=- [{s}={d}]\n", .{ pid, app_name, reason, err });
+        }
 
-            const owner_buf = blk: {
-                const s = cf.cfDictGetString(dict, "kCGWindowOwnerName") orelse break :blk null;
-                break :blk cf.cfStringDupe(allocator, s) catch null;
-            };
-            defer if (owner_buf) |b| allocator.free(b);
-            const title_buf = blk: {
-                const s = cf.cfDictGetString(dict, "kCGWindowName") orelse break :blk null;
-                break :blk cf.cfStringDupe(allocator, s) catch null;
-            };
-            defer if (title_buf) |b| allocator.free(b);
-
-            // Lookup space.
-            var sid_text: [64]u8 = undefined;
-            const sid_str = blk: {
-                if (wid < 0) break :blk @as([]const u8, "?");
-                var wid_val: c_int = @intCast(wid);
-                const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse
-                    break :blk @as([]const u8, "?");
-                defer cf.c.CFRelease(wid_cfnum);
-                var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
-                const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse
-                    break :blk @as([]const u8, "?");
-                defer cf.c.CFRelease(wids_arr);
-                const spaces_arr = cgs.CGSCopySpacesForWindows(cid, cgs.SPACE_MASK_ALL, wids_arr) orelse
-                    break :blk @as([]const u8, "null");
-                defer cf.c.CFRelease(spaces_arr);
-                const sc = cg.CFArrayGetCount(@ptrCast(spaces_arr));
-                if (sc == 0) break :blk @as([]const u8, "[]");
-                if (sc == 1) {
-                    const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse
-                        break :blk @as([]const u8, "?");
-                    const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
-                    const sid = cf.cfNumberToI64(sn) orelse break :blk @as([]const u8, "?");
-                    if (space_index.get(sid)) |idx| {
-                        break :blk std.fmt.bufPrint(&sid_text, "{d}→idx{d}", .{ sid, idx }) catch "?";
-                    }
-                    break :blk std.fmt.bufPrint(&sid_text, "{d}→?", .{sid}) catch "?";
-                }
-                break :blk std.fmt.bufPrint(&sid_text, "many({d})", .{sc}) catch "?";
-            };
-
-            // Apply production filter and tag.
-            const has_title = if (title_buf) |b| b.len > 0 else false;
-            const is_onscreen = onscreen == 1;
-            const has_no_space = std.mem.eql(u8, sid_str, "[]");
-            const passes_filter = layer == 0 and
-                bw >= 100 and bh >= 50 and
-                (is_onscreen or has_title) and
-                !(has_no_space and !is_onscreen);
-            const tab_key: u64 = blk: {
-                var h = std.hash.Wyhash.init(0);
-                h.update(std.mem.asBytes(&pid));
-                const w_i: i32 = @intFromFloat(@round(bw));
-                const h_i: i32 = @intFromFloat(@round(bh));
-                h.update(std.mem.asBytes(&w_i));
-                h.update(std.mem.asBytes(&h_i));
-                break :blk h.final();
-            };
-            const is_tab_dup = passes_filter and seen_tabs.contains(tab_key);
-            if (passes_filter and !is_tab_dup) try seen_tabs.put(tab_key, {});
-            const passes = passes_filter and !is_tab_dup;
-            const tag: []const u8 = if (passes) "KEEP" else if (is_tab_dup) "TAB " else "drop";
-            print("  [{s}] pid={d:>5} wid={d:>6} L={d:>3} st={d} a={d:.1} on={d:>2} share={d} mem={d:>9} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} owner={s:<24} title={s}\n", .{
-                tag,
-                pid,
-                wid,
-                layer,
-                store,
-                alpha,
-                onscreen,
-                sharing,
-                memuse,
-                bx,
-                by,
-                bw,
-                bh,
-                sid_str,
-                if (owner_buf) |b| b else "(null)",
-                if (title_buf) |b| b else "(null)",
-            });
+        // AXMainWindow fallback (mirrors AXWindowBackend §3a). Real off-
+        // Space apps return a usable AX window here; phantoms return
+        // kAXErrorNoValue.
+        if (!emitted_any) {
+            var main_ref: cf.c.CFTypeRef = null;
+            const merr = ax.AXUIElementCopyAttributeValue(app_elem, k_main_window, &main_ref);
+            if (merr == ax.kAXErrorSuccess and main_ref != null) {
+                defer cf.c.CFRelease(main_ref);
+                const main_elem: ax.UIElementRef = @ptrCast(@constCast(main_ref));
+                _ = try printAxWindow(allocator, main_elem, "AXMainWindow", k_role, k_subrole, k_title, k_size, k_position, &space_index, cid);
+            } else {
+                const reason: []const u8 = switch (merr) {
+                    ax.kAXErrorNoValue => "novalue",
+                    ax.kAXErrorAttributeUnsupported => "unsupported",
+                    ax.kAXErrorAPIDisabled => "axdisabled",
+                    else => if (merr == ax.kAXErrorSuccess) "nullref" else "axerr",
+                };
+                print("  [phantom     ] AXMainWindow={s}={d}\n", .{ reason, merr });
+            }
         }
     }
+}
+
+fn printAxWindow(
+    allocator: std.mem.Allocator,
+    win_elem: ax.UIElementRef,
+    source: []const u8,
+    k_role: cf.c.CFStringRef,
+    k_subrole: cf.c.CFStringRef,
+    k_title: cf.c.CFStringRef,
+    k_size: cf.c.CFStringRef,
+    k_position: cf.c.CFStringRef,
+    space_index: *std.AutoHashMap(i64, usize),
+    cid: cgs.ConnectionID,
+) !bool {
+    const print = std.debug.print;
+
+    const role = copyStringAttr(allocator, win_elem, k_role) orelse try allocator.dupe(u8, "(?)");
+    defer allocator.free(role);
+    const subrole = copyStringAttr(allocator, win_elem, k_subrole) orelse try allocator.dupe(u8, "(?)");
+    defer allocator.free(subrole);
+    const title = copyStringAttr(allocator, win_elem, k_title) orelse try allocator.dupe(u8, "");
+    defer allocator.free(title);
+
+    var size: cg.CGSize = .{ .width = 0, .height = 0 };
+    var have_size = false;
+    {
+        var size_ref: cf.c.CFTypeRef = null;
+        if (ax.AXUIElementCopyAttributeValue(win_elem, k_size, &size_ref) == ax.kAXErrorSuccess and size_ref != null) {
+            defer cf.c.CFRelease(size_ref);
+            have_size = ax.AXValueGetValue(@ptrCast(@constCast(size_ref)), ax.kAXValueTypeCGSize, &size) != 0;
+        }
+    }
+
+    var pos: cg.CGPoint = .{ .x = 0, .y = 0 };
+    {
+        var pos_ref: cf.c.CFTypeRef = null;
+        if (ax.AXUIElementCopyAttributeValue(win_elem, k_position, &pos_ref) == ax.kAXErrorSuccess and pos_ref != null) {
+            defer cf.c.CFRelease(pos_ref);
+            _ = ax.AXValueGetValue(@ptrCast(@constCast(pos_ref)), ax.kAXValueTypeCGPoint, &pos);
+        }
+    }
+
+    var wid: u32 = 0;
+    const wid_err = ax._AXUIElementGetWindow(win_elem, &wid);
+
+    const subrole_ok = std.mem.eql(u8, subrole, "AXStandardWindow") or std.mem.eql(u8, subrole, "AXDialog");
+    const size_ok = have_size and size.width >= 100 and size.height >= 50;
+    const wid_ok = wid_err == ax.kAXErrorSuccess;
+    const passes = subrole_ok and size_ok and wid_ok;
+
+    var sid_text: [64]u8 = undefined;
+    const sid_str: []const u8 = if (!wid_ok) "?" else blk: {
+        var wid_val: c_int = @intCast(wid);
+        const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk "?";
+        defer cf.c.CFRelease(wid_cfnum);
+        var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
+        const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk "?";
+        defer cf.c.CFRelease(wids_arr);
+        const spaces_arr = cgs.CGSCopySpacesForWindows(cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk "null";
+        defer cf.c.CFRelease(spaces_arr);
+        const sc = cg.CFArrayGetCount(@ptrCast(spaces_arr));
+        if (sc == 0) break :blk "[]";
+        if (sc == 1) {
+            const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :blk "?";
+            const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
+            const sid = cf.cfNumberToI64(sn) orelse break :blk "?";
+            if (space_index.get(sid)) |idx| {
+                break :blk std.fmt.bufPrint(&sid_text, "{d}→idx{d}", .{ sid, idx }) catch "?";
+            }
+            break :blk std.fmt.bufPrint(&sid_text, "{d}→?", .{sid}) catch "?";
+        }
+        break :blk std.fmt.bufPrint(&sid_text, "many({d})", .{sc}) catch "?";
+    };
+
+    const tag: []const u8 = if (passes)
+        "KEEP"
+    else if (!subrole_ok)
+        "drop:subrole"
+    else if (!size_ok)
+        "drop:size"
+    else
+        "drop:wid";
+
+    print("  [{s:<12}] src={s:<12} role={s:<12} subrole={s:<20} wid={d:>6} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} title=\"{s}\"\n", .{
+        tag,
+        source,
+        role,
+        subrole,
+        wid,
+        pos.x,
+        pos.y,
+        size.width,
+        size.height,
+        sid_str,
+        title,
+    });
+    return passes;
 }

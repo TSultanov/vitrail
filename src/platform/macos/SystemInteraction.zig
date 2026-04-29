@@ -1,20 +1,20 @@
-// macOS SystemInteraction. Composes CGWindowBackend (window enumeration +
+// macOS SystemInteraction. Composes AXWindowBackend (window enumeration +
 // activation) with IconLoader (NSWorkspace-backed app icons).
 
 const std = @import("std");
 const common = @import("../../common/DesktopWindow.zig");
 
-const CGWindowBackend = @import("CGWindowBackend.zig");
+const AXWindowBackend = @import("AXWindowBackend.zig");
 const IconLoader = @import("IconLoader.zig");
 
 const Self = @This();
 
-backend: CGWindowBackend,
+backend: AXWindowBackend,
 icon_loader: IconLoader,
 
 pub fn init(allocator: std.mem.Allocator) !Self {
     return .{
-        .backend = try CGWindowBackend.init(allocator),
+        .backend = try AXWindowBackend.init(allocator),
         .icon_loader = IconLoader.init(allocator),
     };
 }

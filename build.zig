@@ -229,8 +229,9 @@ fn buildMacos(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Debug-only: dump every CGWindowListCopyWindowInfo entry with the
-    // fields we filter on. Run via `zig build dump-windows`.
+    // Debug-only: dump every AX window the production backend would
+    // consider, with kept-or-dropped tag and reason. Run via
+    // `zig build dump-windows`.
     const dump_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/macos/dump_windows.zig"),
         .target = target,
@@ -238,14 +239,21 @@ fn buildMacos(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .single_threaded = true,
     });
     dump_mod.linkSystemLibrary("c", .{});
+    dump_mod.linkFramework("Cocoa", .{});
     dump_mod.linkFramework("CoreFoundation", .{});
     dump_mod.linkFramework("CoreGraphics", .{});
+    dump_mod.linkFramework("ApplicationServices", .{});
+    dump_mod.linkFramework("QuartzCore", .{});
+    dump_mod.addCSourceFile(.{
+        .file = b.path("src/platform/macos/cocoa_bridge.m"),
+        .flags = &.{ "-fobjc-arc", "-Wno-deprecated-declarations" },
+    });
     const dump_exe = b.addExecutable(.{
         .name = "dump_windows",
         .root_module = dump_mod,
     });
     const dump_run = b.addRunArtifact(dump_exe);
-    const dump_step = b.step("dump-windows", "Dump CGWindowList entries");
+    const dump_step = b.step("dump-windows", "Dump AX window enumeration");
     dump_step.dependOn(&dump_run.step);
 }
 

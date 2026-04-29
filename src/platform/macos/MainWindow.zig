@@ -5,6 +5,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const common = @import("../../common/DesktopWindow.zig");
 
+const ax = @import("ax.zig");
 const bridge = @import("bridge.zig");
 const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
@@ -56,6 +57,11 @@ running: bool,
 
 pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
     bridge.vt_app_init();
+
+    // Surface the Accessibility prompt once during launch rather than
+    // lazily on the first window-list refresh, so the user can grant the
+    // permission before they ever pop the switcher.
+    _ = ax.promptTrust();
 
     var self = try allocator.create(Self);
     errdefer allocator.destroy(self);
