@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("platform.zig");
 const common = @import("common/DesktopWindow.zig");
 
@@ -60,7 +61,11 @@ fn hide(main_window: *MainWindow) !void {
         self.desktop_windows = null;
     }
 
-    if (self.test_mode) {
+    // On Wayland the launch-on-demand model means hide ⇒ exit (the
+    // compositor's hotkey re-launches the binary). On Windows the binary
+    // stays resident so the registered Alt+Space hotkey can re-show it,
+    // unless test_mode forces an exit.
+    if (builtin.target.os.tag == .linux or self.test_mode) {
         self.view.requestQuit();
     }
 }
