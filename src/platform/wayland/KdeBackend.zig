@@ -179,16 +179,31 @@ fn matchAll(self: *Self) !void {
         // Skip the a{sv} props dict — we don't need subtext / icon-data yet.
         if (c.sd_bus_message_skip(reply, "a{sv}") < 0) return error.UnexpectedReply;
 
+        if (c.sd_bus_message_exit_container(reply) < 0) return error.UnexpectedReply;
+
+        // KWin's WindowsRunner emits one match per (window, action) pair —
+        // for an empty query that means several actions per window, so 2
+        // windows can come back as 8+ entries (most repeated). We don't
+        // know KWin's matchId format reliably across versions, so dedupe
+        // by title: same window ⇒ same title.
+        const title_str = cstr(title_raw);
+        var dup = false;
+        for (self.entries.items) |existing| {
+            if (std.mem.eql(u8, existing.title, title_str)) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) continue;
+
         const entry = Entry{
-            .title = try self.allocator.dupeZ(u8, cstr(title_raw)),
+            .title = try self.allocator.dupeZ(u8, title_str),
             .icon_name = try self.allocator.dupeZ(u8, cstr(icon_raw)),
             .match_id = try self.allocator.dupeZ(u8, cstr(match_id_raw)),
             .allocator = self.allocator,
         };
         errdefer entry.destroy();
         try self.entries.append(self.allocator, entry);
-
-        if (c.sd_bus_message_exit_container(reply) < 0) return error.UnexpectedReply;
     }
 
     _ = c.sd_bus_message_exit_container(reply);
