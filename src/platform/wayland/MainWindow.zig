@@ -6,6 +6,8 @@ const c = wc.c;
 const LayerSurface = @import("LayerSurface.zig");
 const ShmPool = @import("ShmPool.zig");
 const Keyboard = @import("Keyboard.zig");
+const Mouse = @import("Mouse.zig");
+const Cursor = @import("Cursor.zig");
 const Grid = @import("Grid.zig");
 const Renderer = @import("Renderer.zig");
 const text = @import("text.zig");
@@ -42,6 +44,9 @@ registry_listener: c.wl_registry_listener,
 layer: LayerSurface,
 shm_pool: ShmPool,
 keyboard: Keyboard,
+mouse: Mouse,
+cursor: Cursor,
+seat_listener: c.wl_seat_listener,
 grid: Grid,
 tile_text: text.Renderer,
 search_text: text.Renderer,
@@ -66,6 +71,9 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
         .layer = undefined,
         .shm_pool = undefined,
         .keyboard = undefined,
+        .mouse = undefined,
+        .cursor = undefined,
+        .seat_listener = .{ .capabilities = onSeatCaps, .name = onSeatName },
         .grid = Grid.init(allocator),
         .tile_text = undefined,
         .search_text = undefined,
@@ -73,6 +81,12 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
         .closed = false,
         .running = true,
     };
+
+    // Init input action sinks BEFORE the registry roundtrip — onRegistryGlobal
+    // attaches the seat listener as soon as it binds the seat, and the
+    // capabilities event arrives in this same roundtrip.
+    try self.keyboard.init(.{ .on_action = onKeyboardAction, .ctx = self });
+    self.mouse.init(.{ .on_action = onMouseAction, .ctx = self });
 
     const registry = c.wl_display_get_registry(display) orelse return error.RegistryFailed;
     _ = c.wl_registry_add_listener(registry, &self.registry_listener, self);
@@ -88,8 +102,13 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
     if (!self.layer.configured) return error.LayerSurfaceNotConfigured;
 
     try self.shm_pool.init(self.globals.shm.?, self.layer.width, self.layer.height);
-    try self.keyboard.init(.{ .on_action = onKeyboardAction, .ctx = self });
-    if (self.globals.seat) |seat| self.keyboard.attachSeat(seat);
+    try self.cursor.init(self.globals.compositor.?, self.globals.shm.?);
+    self.mouse.setCursor(&self.cursor);
+
+    // Now that input action sinks are real (init() was called earlier, before
+    // the registry roundtrip), drive a roundtrip so any seat-capabilities
+    // event delivered to onSeatCaps wires the keyboard/pointer.
+    _ = c.wl_display_roundtrip(display);
 
     self.grid.setViewport(@intCast(self.layer.width), @intCast(self.layer.height));
 
@@ -108,6 +127,8 @@ pub fn deinit(self: *Self) void {
     self.search_text.destroy();
     self.tile_text.destroy();
     self.grid.deinit();
+    self.cursor.deinit();
+    self.mouse.deinit();
     self.keyboard.deinit();
     self.shm_pool.deinit();
     self.layer.deinit();
@@ -129,9 +150,35 @@ pub fn requestQuit(self: *Self) void {
 }
 
 pub fn setDesktopWindows(self: *Self, dws: std.array_list.Managed(common.DesktopWindow)) !void {
-    try self.grid.setDesktopWindows(dws);
+    try self.grid.setDesktopWindows(dws.items);
     try self.repaint();
     _ = c.wl_display_flush(self.display);
+}
+
+// ─── Test hooks ───────────────────────────────────────────────────────────────
+// Direct entry points for the in-process test driver. Production code never
+// calls these; they let tests bypass wl_keyboard / wl_pointer.
+
+pub fn synthesizeKey(self: *Self, action: Keyboard.Action) void {
+    onKeyboardAction(self, action);
+}
+pub fn synthesizeMouse(self: *Self, action: Mouse.Action) void {
+    onMouseAction(self, action);
+}
+pub fn renderInto(self: *Self, pixels: []u32) void {
+    Renderer.render(
+        pixels,
+        self.layer.width,
+        self.layer.height,
+        &self.grid,
+        &self.tile_text,
+        &self.search_text,
+        &self.desktop_text,
+        .{},
+    );
+}
+pub fn viewportSize(self: *const Self) struct { w: u32, h: u32 } {
+    return .{ .w = self.layer.width, .h = self.layer.height };
 }
 
 pub fn hideBoxes(self: *Self) !void {
@@ -180,11 +227,31 @@ fn onRegistryGlobal(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, ifa
     } else if (std.mem.eql(u8, s, "zwlr_layer_shell_v1")) {
         self.globals.layer_shell = @ptrCast(c.wl_registry_bind(registry, name, &c.zwlr_layer_shell_v1_interface, @min(version, 4)));
     } else if (std.mem.eql(u8, s, "wl_seat")) {
-        self.globals.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 7)));
+        const seat: *c.wl_seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 7)));
+        self.globals.seat = seat;
+        // Attach the seat listener immediately so the capabilities event,
+        // which the compositor sends right after binding, lands in our
+        // onSeatCaps callback in this same roundtrip.
+        _ = c.wl_seat_add_listener(seat, &self.seat_listener, self);
     }
 }
 
 fn onRegistryRemove(_: ?*anyopaque, _: ?*c.wl_registry, _: u32) callconv(.c) void {}
+
+// ─── Seat capability dispatcher ───────────────────────────────────────────────
+
+fn onSeatCaps(data: ?*anyopaque, seat: ?*c.wl_seat, caps: u32) callconv(.c) void {
+    const self: *Self = @ptrCast(@alignCast(data));
+    std.log.debug("wl_seat caps: 0x{x}", .{caps});
+    if (caps & c.WL_SEAT_CAPABILITY_KEYBOARD != 0 and self.keyboard.keyboard == null) {
+        if (c.wl_seat_get_keyboard(seat)) |kb| self.keyboard.attachKeyboard(kb);
+    }
+    if (caps & c.WL_SEAT_CAPABILITY_POINTER != 0 and self.mouse.pointer == null) {
+        if (c.wl_seat_get_pointer(seat)) |p| self.mouse.attachPointer(p);
+    }
+}
+
+fn onSeatName(_: ?*anyopaque, _: ?*c.wl_seat, _: [*c]const u8) callconv(.c) void {}
 
 // ─── Keyboard action sink ─────────────────────────────────────────────────────
 
@@ -198,6 +265,28 @@ fn onKeyboardAction(ctx: *anyopaque, action: Keyboard.Action) void {
         .move => |m| self.grid.selectDir(m.dx, m.dy),
         .backspace => self.grid.popSearchCodepoint() catch {},
         .insert => |bytes| self.grid.appendSearch(bytes) catch {},
+    }
+    self.repaint() catch {};
+    _ = c.wl_display_flush(self.display);
+}
+
+// ─── Mouse action sink ────────────────────────────────────────────────────────
+
+fn onMouseAction(ctx: *anyopaque, action: Mouse.Action) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    switch (action) {
+        .move => |m| {
+            _ = self.grid.selectAt(m.x, m.y);
+        },
+        .click => |m| {
+            if (self.grid.tileAt(m.x, m.y) != null) {
+                _ = self.grid.selectAt(m.x, m.y);
+                self.activateSelected();
+            } else if (!self.grid.isInsideSearchBox(m.x, m.y)) {
+                self.callbacks.hide(self) catch {};
+            }
+            return;
+        },
     }
     self.repaint() catch {};
     _ = c.wl_display_flush(self.display);

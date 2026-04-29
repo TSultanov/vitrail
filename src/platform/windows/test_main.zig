@@ -1,13 +1,12 @@
-// Test entry point: same wWinMain shape as Entry.zig, but after show()
-// runs a baked-in keystroke + snapshot script, then exits. Compiled when
-// `-Dmock-backend=true`. SystemInteraction is comptime-swapped to MockBackend
-// in src/platform.zig.
-
+// Windows test entry point. Boots the app with MockBackend (comptime-swapped
+// in src/platform.zig), then runs the cross-platform scenarios; exits with
+// the failure count.
 const wh = @import("windows.zig");
 const w = wh.c;
 const std = @import("std");
 const MainPresenter = @import("../../MainPresenter.zig");
-const test_driver = @import("test_driver.zig");
+const TestDriver = @import("test_driver.zig").Driver;
+const ts = @import("../../test_scenarios.zig");
 
 pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdLine: w.LPWSTR, nCmdShow: c_int) callconv(.winapi) c_int {
     _ = hPrevInstance;
@@ -16,40 +15,22 @@ pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdL
 
     const hInstanceWinApi: w.HINSTANCE = @ptrCast(@alignCast(hInstance));
     _ = w.CoInitializeEx(null, 0x2);
-
     var picce = w.INITCOMMONCONTROLSEX{ .dwSize = @sizeOf(w.INITCOMMONCONTROLSEX), .dwICC = 0xff };
     _ = w.InitCommonControlsEx(&picce);
 
     var gpa: std.heap.DebugAllocator(.{ .safety = true }) = .init;
-    defer std.debug.assert(gpa.deinit() == .ok);
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    var main_presenter = MainPresenter.init(.{ .hInstance = hInstanceWinApi }, std.heap.page_allocator, true) catch unreachable;
-
-    main_presenter.show() catch unreachable;
-
-    const script = [_]test_driver.Step{
-        .{ .snapshot = "01-initial-grid" },
-        .{ .key_down = w.VK_RIGHT },
-        .{ .snapshot = "02-after-right" },
-        .{ .char = 'f' },
-        .{ .char = 'i' },
-        .{ .snapshot = "03-after-fi" },
-        .{ .key_down = w.VK_RETURN },
-        .{ .snapshot = "04-after-enter" },
-    };
+    const presenter = MainPresenter.init(.{ .hInstance = hInstanceWinApi }, std.heap.page_allocator, false) catch unreachable;
 
     const out_dir = "C:\\Users\\Public\\vitrail-screenshots";
-    test_driver.run(main_presenter.view.window.hwnd, &script, out_dir, gpa.allocator()) catch |e| {
-        std.log.err("test_driver.run failed: {t}", .{e});
-    };
+    const driver = TestDriver.create(allocator, presenter, out_dir) catch unreachable;
+    defer driver.destroy();
 
-    _ = w.PostQuitMessage(0);
+    var d = driver.driver();
+    const fails = ts.runAll(&d);
 
-    var msg: w.MSG = undefined;
-    while (w.GetMessageW(&msg, null, 0, 0) != 0) {
-        _ = w.TranslateMessage(&msg);
-        _ = w.DispatchMessageW(&msg);
-    }
-
-    return 0;
+    std.debug.print("\n{d} of {d} scenarios failed\n", .{ fails, ts.all.len });
+    return @intCast(fails);
 }

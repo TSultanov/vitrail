@@ -22,8 +22,6 @@ pub const Callbacks = struct {
 xkb_ctx: ?*c.xkb_context,
 xkb_state: ?*c.xkb_state,
 keyboard: ?*c.wl_keyboard = null,
-seat: ?*c.wl_seat = null,
-seat_listener: c.wl_seat_listener,
 kb_listener: c.wl_keyboard_listener,
 callbacks: Callbacks,
 
@@ -31,7 +29,6 @@ pub fn init(self: *Self, callbacks: Callbacks) !void {
     self.* = .{
         .xkb_ctx = c.xkb_context_new(c.XKB_CONTEXT_NO_FLAGS) orelse return error.XkbContextNew,
         .xkb_state = null,
-        .seat_listener = .{ .capabilities = onSeatCaps, .name = onSeatName },
         .kb_listener = .{
             .keymap = onKeymap,
             .enter = onEnter,
@@ -50,20 +47,15 @@ pub fn deinit(self: *Self) void {
     if (self.keyboard) |kb| c.wl_keyboard_destroy(kb);
 }
 
-pub fn attachSeat(self: *Self, seat: *c.wl_seat) void {
-    self.seat = seat;
-    _ = c.wl_seat_add_listener(seat, &self.seat_listener, self);
+pub fn attachKeyboard(self: *Self, kb: *c.wl_keyboard) void {
+    self.keyboard = kb;
+    _ = c.wl_keyboard_add_listener(kb, &self.kb_listener, self);
 }
 
-fn onSeatCaps(data: ?*anyopaque, _: ?*c.wl_seat, caps: u32) callconv(.c) void {
-    const self: *Self = @ptrCast(@alignCast(data));
-    if (caps & c.WL_SEAT_CAPABILITY_KEYBOARD != 0 and self.keyboard == null) {
-        self.keyboard = c.wl_seat_get_keyboard(self.seat);
-        if (self.keyboard) |kb| _ = c.wl_keyboard_add_listener(kb, &self.kb_listener, self);
-    }
+/// Synthesize an action — used by the in-process test driver.
+pub fn synthesize(self: *Self, action: Action) void {
+    self.callbacks.on_action(self.callbacks.ctx, action);
 }
-
-fn onSeatName(_: ?*anyopaque, _: ?*c.wl_seat, _: [*c]const u8) callconv(.c) void {}
 
 fn onKeymap(data: ?*anyopaque, _: ?*c.wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
     const self: *Self = @ptrCast(@alignCast(data));

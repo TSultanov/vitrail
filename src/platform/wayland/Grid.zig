@@ -24,7 +24,9 @@ pub const Tile = struct {
 };
 
 allocator: std.mem.Allocator,
-desktop_windows: ?std.array_list.Managed(common.DesktopWindow) = null,
+// Borrowed; the caller (MainPresenter) owns the underlying allocations and
+// is responsible for destroying the DesktopWindows.
+desktop_windows: ?[]const common.DesktopWindow = null,
 tiles: std.ArrayListUnmanaged(Tile) = .{},
 search: [256]u8 = undefined,
 search_len: usize = 0,
@@ -46,7 +48,7 @@ pub fn setViewport(self: *Self, w: i32, h: i32) void {
     self.viewport_h = h;
 }
 
-pub fn setDesktopWindows(self: *Self, dws: std.array_list.Managed(common.DesktopWindow)) !void {
+pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
     self.dropDesktopWindows();
     self.desktop_windows = dws;
     self.search_len = 0;
@@ -55,12 +57,7 @@ pub fn setDesktopWindows(self: *Self, dws: std.array_list.Managed(common.Desktop
 }
 
 pub fn dropDesktopWindows(self: *Self) void {
-    if (self.desktop_windows) |dws| {
-        for (dws.items) |dw| dw.destroy();
-        var owned = dws;
-        owned.deinit();
-        self.desktop_windows = null;
-    }
+    self.desktop_windows = null;
     self.tiles.clearRetainingCapacity();
     self.search_len = 0;
     self.selected = null;
@@ -105,7 +102,7 @@ pub fn rebuild(self: *Self) !void {
     const row_min: i32 = -row_max + 1;
 
     var visible_idx: usize = 0;
-    for (dws.items) |dw| {
+    for (dws) |dw| {
         const matches = filter.len == 0 or std.mem.indexOf(u8, dw.title_lower, filter) != null;
         if (!matches) {
             try self.tiles.append(self.allocator, .{ .dw = dw, .x = 0, .y = 0, .visible = false });
@@ -184,4 +181,44 @@ pub fn selectedWindow(self: *const Self) ?common.DesktopWindow {
     const t = self.tiles.items[idx];
     if (!t.visible) return null;
     return t.dw;
+}
+
+pub const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
+
+pub fn searchBoxRect(self: *const Self) Rect {
+    const sx = @divFloor(self.viewport_w - SEARCH_W, 2);
+    const sy = self.viewport_h - SEARCH_BOTTOM_OFFSET;
+    return .{ .x = sx, .y = sy, .w = SEARCH_W, .h = SEARCH_H };
+}
+
+pub fn tileAt(self: *const Self, x: i32, y: i32) ?usize {
+    for (self.tiles.items, 0..) |t, i| {
+        if (!t.visible) continue;
+        if (x >= t.x and x < t.x + TILE_W and y >= t.y and y < t.y + TILE_H) return i;
+    }
+    return null;
+}
+
+/// Returns true if selection changed.
+pub fn selectAt(self: *Self, x: i32, y: i32) bool {
+    const i = self.tileAt(x, y) orelse return false;
+    if (self.selected) |s| if (s == i) return false;
+    self.selected = i;
+    return true;
+}
+
+pub fn isInsideSearchBox(self: *const Self, x: i32, y: i32) bool {
+    const r = self.searchBoxRect();
+    return x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h;
+}
+
+/// Center coordinate of the visible tile matching app_id, or null.
+pub fn tileCenter(self: *const Self, app_id: []const u8) ?struct { x: i32, y: i32 } {
+    for (self.tiles.items) |t| {
+        if (!t.visible) continue;
+        if (std.mem.eql(u8, t.dw.app_id, app_id)) {
+            return .{ .x = t.x + @divFloor(TILE_W, 2), .y = t.y + @divFloor(TILE_H, 2) };
+        }
+    }
+    return null;
 }

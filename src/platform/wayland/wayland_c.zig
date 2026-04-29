@@ -3,6 +3,7 @@
 // this module keeps all files agreeing on `*wl_display`, `*wl_surface`, etc.)
 pub const c = @cImport({
     @cInclude("wayland-client-protocol.h");
+    @cInclude("wayland-cursor.h");
     @cInclude("wlr-layer-shell-unstable-v1-client-protocol.h");
     @cInclude("xkbcommon/xkbcommon.h");
 });

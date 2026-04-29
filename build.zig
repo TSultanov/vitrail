@@ -18,7 +18,7 @@ pub fn build(b: *std.Build) void {
 
     switch (target.result.os.tag) {
         .windows => buildWindows(b, target, optimize, build_options, mock_backend),
-        .linux => buildLinux(b, target, optimize, build_options),
+        .linux => buildLinux(b, target, optimize, build_options, mock_backend),
         else => @panic("unsupported OS"),
     }
 }
@@ -78,7 +78,7 @@ const wayland_protocols = [_]WaylandProtocol{
     .{ .xml = "protocols/plasma-virtual-desktop.xml", .name = "plasma-virtual-desktop-client-protocol" },
 };
 
-fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, build_options: *std.Build.Step.Options) void {
+fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, build_options: *std.Build.Step.Options, mock_backend: bool) void {
     // Generate Wayland protocol headers and private-code C files via wayland-scanner.
     var generated_headers = b.addWriteFiles();
     var proto_step = b.step("protocols", "Generate Wayland protocol bindings");
@@ -100,8 +100,9 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         proto_step.dependOn(&gen_code.step);
     }
 
+    const root = if (mock_backend) "src/main_wayland_test.zig" else "src/main_wayland.zig";
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main_wayland.zig"),
+        .root_source_file = b.path(root),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
@@ -113,6 +114,7 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/freetype2" });
     exe_mod.linkSystemLibrary("c", .{});
     exe_mod.linkSystemLibrary("wayland-client", .{});
+    exe_mod.linkSystemLibrary("wayland-cursor", .{});
     exe_mod.linkSystemLibrary("xkbcommon", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("freetype", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .no });

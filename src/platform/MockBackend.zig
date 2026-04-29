@@ -72,3 +72,9 @@ pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
     self.last_activated_app_id = fixtures[dw.platform_handle].app_id;
     std.log.info("MockBackend.activateWindow: {s}", .{fixtures[dw.platform_handle].app_id});
 }
+
+/// Forget the last activation — used between test scenarios.
+pub fn resetActivations(self: *Self) void {
+    self.activated_count = 0;
+    self.last_activated_app_id = null;
+}
