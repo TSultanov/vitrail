@@ -13,6 +13,7 @@ pub const Action = union(enum) {
     prev,
     move: struct { dx: i32, dy: i32 },
     backspace,
+    delete_word,
     insert: []const u8, // UTF-8; valid only for the duration of the callback
 };
 
@@ -34,8 +35,9 @@ const kVK_RightArrow: c_int = 0x7C;
 const kVK_DownArrow: c_int = 0x7D;
 const kVK_UpArrow: c_int = 0x7E;
 
-// NSEventModifierFlagShift mask
+// NSEvent modifier flag masks (NSEventModifierFlag* in <AppKit/NSEvent.h>).
 const NS_MOD_SHIFT: u32 = 1 << 17;
+const NS_MOD_COMMAND: u32 = 1 << 20;
 
 pub fn init(callbacks: Callbacks) Self {
     return .{ .callbacks = callbacks };
@@ -55,7 +57,9 @@ pub fn handle(self: *Self, virtual_keycode: c_int, modifiers: u32, utf8: []const
         kVK_RightArrow => emit(ctx, .{ .move = .{ .dx = 1, .dy = 0 } }),
         kVK_UpArrow => emit(ctx, .{ .move = .{ .dx = 0, .dy = -1 } }),
         kVK_DownArrow => emit(ctx, .{ .move = .{ .dx = 0, .dy = 1 } }),
-        kVK_Delete => emit(ctx, .backspace),
+        kVK_Delete => {
+            if ((modifiers & NS_MOD_COMMAND) != 0) emit(ctx, .delete_word) else emit(ctx, .backspace);
+        },
         else => {
             if (utf8.len == 0) return;
             // Filter out C0 controls and DEL — those arrived via the keyCode

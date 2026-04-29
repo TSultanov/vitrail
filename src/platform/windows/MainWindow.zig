@@ -66,7 +66,37 @@ fn onActivateHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: 
 
 fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    // Ctrl+Backspace produces WM_CHAR with wParam=0x7F (DEL). The standard
+    // Win32 edit control would otherwise insert it as a literal control
+    // character; intercept and erase the trailing word instead.
+    if (wParam == 0x7F) {
+        try self.deleteLastSearchWord();
+        return;
+    }
     _ = w.SendMessageW(self.search_box.window.hwnd, w.WM_CHAR, wParam, lParam);
+}
+
+fn deleteLastSearchWord(self: *Self) !void {
+    const text = try self.search_box.window.getText(self.allocator);
+    defer self.allocator.free(text);
+
+    // GetWindowTextW's allocSentinel sized to length+1; sliceTo strips the NUL.
+    var len: usize = std.mem.sliceTo(text, 0).len;
+    while (len > 0) {
+        const cu = text[len - 1];
+        if (cu != ' ' and cu != '\t') break;
+        len -= 1;
+    }
+    while (len > 0) {
+        const cu = text[len - 1];
+        if (cu == ' ' or cu == '\t') break;
+        len -= 1;
+    }
+
+    const new_text = try self.allocator.allocSentinel(u16, len, 0);
+    defer self.allocator.free(new_text);
+    @memcpy(new_text[0..len], text[0..len]);
+    try self.search_box.window.setText(new_text);
 }
 
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {

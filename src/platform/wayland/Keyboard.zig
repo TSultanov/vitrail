@@ -11,6 +11,7 @@ pub const Action = union(enum) {
     prev,
     move: struct { dx: i32, dy: i32 },
     backspace,
+    delete_word,
     insert: []const u8, // UTF-8 bytes; valid only for the duration of the callback
 };
 
@@ -96,7 +97,10 @@ fn onKey(data: ?*anyopaque, _: ?*c.wl_keyboard, _: u32, _: u32, key: u32, state:
         c.XKB_KEY_Left => emit(ctx, .{ .move = .{ .dx = -1, .dy = 0 } }),
         c.XKB_KEY_Down => emit(ctx, .{ .move = .{ .dx = 0, .dy = 1 } }),
         c.XKB_KEY_Up => emit(ctx, .{ .move = .{ .dx = 0, .dy = -1 } }),
-        c.XKB_KEY_BackSpace => emit(ctx, .backspace),
+        c.XKB_KEY_BackSpace => {
+            const ctrl_held = c.xkb_state_mod_name_is_active(xkb_state, "Control", c.XKB_STATE_MODS_EFFECTIVE) > 0;
+            if (ctrl_held) emit(ctx, .delete_word) else emit(ctx, .backspace);
+        },
         else => {
             var buf: [16]u8 = undefined;
             const n = c.xkb_state_key_get_utf8(xkb_state, keycode, &buf, buf.len);

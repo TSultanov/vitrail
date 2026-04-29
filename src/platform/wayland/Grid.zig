@@ -83,6 +83,23 @@ pub fn popSearchCodepoint(self: *Self) !void {
     try self.rebuild();
 }
 
+pub fn popSearchWord(self: *Self) !void {
+    if (self.search_len == 0) return;
+    // Drop trailing whitespace, then drop the run of non-whitespace bytes
+    // before it. Mirrors readline's word-erase semantics.
+    while (self.search_len > 0) {
+        const b = self.search[self.search_len - 1];
+        if (b != ' ' and b != '\t') break;
+        self.search_len -= 1;
+    }
+    while (self.search_len > 0) {
+        const b = self.search[self.search_len - 1];
+        if (b == ' ' or b == '\t') break;
+        self.search_len -= 1;
+    }
+    try self.rebuild();
+}
+
 pub fn rebuild(self: *Self) !void {
     self.tiles.clearRetainingCapacity();
     const dws = self.desktop_windows orelse return;

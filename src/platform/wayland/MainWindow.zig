@@ -312,6 +312,7 @@ fn onKeyboardAction(ctx: *anyopaque, action: Keyboard.Action) void {
         .prev => self.grid.selectNext(true),
         .move => |m| self.grid.selectDir(m.dx, m.dy),
         .backspace => self.grid.popSearchCodepoint() catch {},
+        .delete_word => self.grid.popSearchWord() catch {},
         .insert => |bytes| self.grid.appendSearch(bytes) catch {},
     }
     self.repaint() catch {};
