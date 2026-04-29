@@ -98,6 +98,13 @@ void vt_free(void *p);
 // activation observer (which is installed during vt_app_init).
 int64_t vt_app_activation_ordinal(int pid);
 
+// Subscribes the given callbacks to NSWorkspaceDidLaunchApplicationNotification
+// and NSWorkspaceDidTerminateApplicationNotification. The callbacks fire on
+// the main thread. Both pointers may be NULL to skip a side. Idempotent if
+// called more than once: the most recent callbacks win.
+typedef void (*vt_pid_cb)(int pid);
+void vt_install_app_lifecycle_observers(vt_pid_cb on_launch, vt_pid_cb on_terminate);
+
 #ifdef __cplusplus
 }
 #endif

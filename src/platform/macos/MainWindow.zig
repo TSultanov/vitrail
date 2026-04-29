@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const common = @import("../../common/DesktopWindow.zig");
 
 const ax = @import("ax.zig");
+const ax_cache = @import("ax_cache.zig");
 const bridge = @import("bridge.zig");
 const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
@@ -62,6 +63,12 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
     // lazily on the first window-list refresh, so the user can grant the
     // permission before they ever pop the switcher.
     _ = ax.promptTrust();
+
+    // Seed the AX-element cache with a high-cap brute-force scan of every
+    // currently-running app, then install observers so the cache stays
+    // fresh. Runs synchronously here — vitrail's UI isn't visible yet,
+    // so the few seconds it takes are invisible to the user.
+    ax_cache.init(allocator) catch {};
 
     var self = try allocator.create(Self);
     errdefer allocator.destroy(self);

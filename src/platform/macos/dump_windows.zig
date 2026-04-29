@@ -2,11 +2,13 @@
 // and print every AX window encountered, with the kept-or-dropped tag and
 // reason. Build via `zig build dump-windows`, run, inspect stderr.
 //
-// Mirrors AXWindowBackend.getWindowList: NSWorkspace.runningApplications →
-// per-pid kAXWindowsAttribute → subrole + size filter → CGS Space lookup.
+// Mirrors AXWindowBackend.getWindowList: per-pid Phase 0 (AXFocusedWindow /
+// AXMainWindow) → Phase 1 (kAXWindowsAttribute) → Phase 2 (ax_cache walk)
+// → subrole + size filter → CGS Space lookup.
 
 const std = @import("std");
 const ax = @import("ax.zig");
+const ax_cache = @import("ax_cache.zig");
 const bridge = @import("bridge.zig");
 const cf = @import("cf.zig");
 const cgs = @import("cgs.zig");
@@ -36,6 +38,10 @@ pub fn main() !void {
     // Init NSApp + install the activation observer so vt_app_activation_ordinal
     // returns the same seeded values the production app sees on cold start.
     bridge.vt_app_init();
+
+    // Seed the AX cache the same way the production app does.
+    ax_cache.init(allocator) catch {};
+    defer ax_cache.deinit();
 
     const print = std.debug.print;
     print("[ax] AXIsProcessTrusted = {d}\n", .{ax.AXIsProcessTrusted()});
@@ -125,7 +131,7 @@ pub fn main() !void {
     const pids = pids_ptr[0..@intCast(pid_count)];
 
     // Mirrors AXWindowBackend dedupe state. emitted_wids dedupes between
-    // phase-1 (AXWindows) and phase-2 (brute-force) for each pid.
+    // Phase 0 (Focused/Main), Phase 1 (AXWindows) and Phase 2 (cache).
     var emitted_wids = std.AutoHashMap(u32, void).init(allocator);
     defer emitted_wids.deinit();
 
@@ -179,51 +185,13 @@ pub fn main() !void {
             print("pid={d:<6} app=\"{s}\" mru={d} wins=- [{s}={d}]\n", .{ pid, app_name, app_ordinal, reason, err });
         }
 
-        // Phase 2: brute-force AX scan via _AXUIElementCreateWithRemoteToken.
-        // Iterate ax-element-id 0..1000, capped at 100ms per app, filter
-        // by AXSubrole. Discovers off-Space windows AX hides from
-        // kAXWindowsAttribute.
+        // Phase 2: walk the cache. Mirrors production.
         const before = emitted_wids.count();
-        try bruteForceMirror(allocator, pid, k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+        for (ax_cache.getForPid(pid)) |cached| {
+            _ = try printAxWindow(allocator, cached, "Cache", k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+        }
         const added = emitted_wids.count() - before;
-        if (added > 0) print("  (brute-force phase 2 added {d} window(s))\n", .{added});
-    }
-}
-
-fn bruteForceMirror(
-    allocator: std.mem.Allocator,
-    pid: i32,
-    k_role: cf.c.CFStringRef,
-    k_subrole: cf.c.CFStringRef,
-    k_title: cf.c.CFStringRef,
-    k_size: cf.c.CFStringRef,
-    k_position: cf.c.CFStringRef,
-    space_index: *std.AutoHashMap(i64, usize),
-    wid_zorder: *std.AutoHashMap(u32, u32),
-    emitted_wids: *std.AutoHashMap(u32, void),
-    cid: cgs.ConnectionID,
-) !void {
-    var token: [20]u8 = std.mem.zeroes([20]u8);
-    std.mem.writeInt(i32, token[0..4], pid, .little);
-    std.mem.writeInt(i32, token[8..12], 0x636f636f, .little);
-
-    const start_ns = std.time.nanoTimestamp();
-    var ax_id: u64 = 0;
-    while (ax_id < 1000) : (ax_id += 1) {
-        std.mem.writeInt(u64, token[12..20], ax_id, .little);
-        const data = cf.c.CFDataCreate(null, &token, 20) orelse continue;
-        defer cf.c.CFRelease(data);
-        const elem = ax._AXUIElementCreateWithRemoteToken(data) orelse continue;
-        defer cf.c.CFRelease(elem);
-
-        var wid: u32 = 0;
-        if (ax._AXUIElementGetWindow(elem, &wid) != ax.kAXErrorSuccess) continue;
-        if (wid == 0) continue;
-        if (emitted_wids.contains(wid)) continue;
-
-        _ = try printAxWindow(allocator, elem, "BruteForce", k_role, k_subrole, k_title, k_size, k_position, space_index, wid_zorder, emitted_wids, cid);
-
-        if ((std.time.nanoTimestamp() - start_ns) > 100 * std.time.ns_per_ms) break;
+        if (added > 0) print("  (cache phase 2 added {d} window(s))\n", .{added});
     }
 }
 

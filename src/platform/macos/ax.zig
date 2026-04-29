@@ -9,8 +9,16 @@ const cf = @import("cf.zig");
 
 pub const Error = c_int;
 pub const UIElementRef = ?*anyopaque;
+pub const ObserverRef = ?*anyopaque;
 pub const ValueRef = ?*anyopaque;
 pub const ValueType = u32;
+
+pub const ObserverCallback = *const fn (
+    observer: ObserverRef,
+    element: UIElementRef,
+    notification: cf.c.CFStringRef,
+    refcon: ?*anyopaque,
+) callconv(.c) void;
 
 // Common AXError codes (subset).
 pub const kAXErrorSuccess: Error = 0;
@@ -46,6 +54,33 @@ pub extern "c" fn AXValueGetValue(value: ValueRef, the_type: ValueType, value_pt
 
 pub extern "c" fn AXIsProcessTrusted() u8;
 pub extern "c" fn AXIsProcessTrustedWithOptions(options: cf.c.CFDictionaryRef) u8;
+
+// Bounds the per-message timeout for AX calls on `element` (or system-wide
+// if the system-wide element is passed). Without this, AX calls can block
+// indefinitely on unresponsive apps. Pass seconds (e.g. 1.0).
+pub extern "c" fn AXUIElementSetMessagingTimeout(element: UIElementRef, timeoutInSeconds: f32) Error;
+pub extern "c" fn AXUIElementCreateSystemWide() UIElementRef;
+
+// AXObserver — receives AX notifications for an application. Each observer
+// is bound to a single pid at create time. Add the runloop source from
+// `AXObserverGetRunLoopSource` to a CFRunLoop for callbacks to fire.
+pub extern "c" fn AXObserverCreate(
+    application: c_int, // pid
+    callback: ObserverCallback,
+    out_observer: *ObserverRef,
+) Error;
+pub extern "c" fn AXObserverAddNotification(
+    observer: ObserverRef,
+    element: UIElementRef,
+    notification: cf.c.CFStringRef,
+    refcon: ?*anyopaque,
+) Error;
+pub extern "c" fn AXObserverRemoveNotification(
+    observer: ObserverRef,
+    element: UIElementRef,
+    notification: cf.c.CFStringRef,
+) Error;
+pub extern "c" fn AXObserverGetRunLoopSource(observer: ObserverRef) cf.c.CFRunLoopSourceRef;
 
 // Private. Stable across releases. Returns the CGWindowID for an
 // AXUIElement that wraps a window. Errors signal "not a window" or

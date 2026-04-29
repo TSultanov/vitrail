@@ -171,6 +171,35 @@ int64_t vt_app_activation_ordinal(int pid) {
     return n ? n.longLongValue : 0;
 }
 
+static vt_pid_cb g_on_app_launch = NULL;
+static vt_pid_cb g_on_app_terminate = NULL;
+static BOOL g_lifecycle_observers_installed = NO;
+
+void vt_install_app_lifecycle_observers(vt_pid_cb on_launch, vt_pid_cb on_terminate) {
+    g_on_app_launch = on_launch;
+    g_on_app_terminate = on_terminate;
+    if (g_lifecycle_observers_installed) return;
+    g_lifecycle_observers_installed = YES;
+    NSNotificationCenter *nc = [NSWorkspace sharedWorkspace].notificationCenter;
+    [nc addObserverForName:NSWorkspaceDidLaunchApplicationNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+        NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+        if (!app) return;
+        if (app.activationPolicy != NSApplicationActivationPolicyRegular) return;
+        if (g_on_app_launch) g_on_app_launch((int)app.processIdentifier);
+    }];
+    [nc addObserverForName:NSWorkspaceDidTerminateApplicationNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+        NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+        if (!app) return;
+        if (g_on_app_terminate) g_on_app_terminate((int)app.processIdentifier);
+    }];
+}
+
 int vt_app_pump_one(int blocking) {
     if (g_should_stop) return 1;
     NSDate *until = blocking ? [NSDate distantFuture] : [NSDate distantPast];

@@ -66,3 +66,8 @@ pub extern "c" fn vt_free(p: ?*anyopaque) void;
 // Monotonic counter for app activations. Higher = more recently activated.
 // Returns 0 for pids the observer hasn't seen.
 pub extern "c" fn vt_app_activation_ordinal(pid: c_int) i64;
+
+pub const PidCb = *const fn (pid: c_int) callconv(.c) void;
+// Installs main-thread callbacks for NSWorkspaceDidLaunchApplication and
+// NSWorkspaceDidTerminateApplication. Idempotent.
+pub extern "c" fn vt_install_app_lifecycle_observers(on_launch: PidCb, on_terminate: PidCb) void;

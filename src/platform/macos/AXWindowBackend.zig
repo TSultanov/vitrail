@@ -17,6 +17,7 @@
 const std = @import("std");
 const common = @import("../../common/DesktopWindow.zig");
 const ax = @import("ax.zig");
+const ax_cache = @import("ax_cache.zig");
 const bridge = @import("bridge.zig");
 const cf = @import("cf.zig");
 const cgs = @import("cgs.zig");
@@ -29,10 +30,9 @@ const Self = @This();
 
 const PlatformHandle = struct {
     pid: i32,
-    wid: u32, // CGWindowID; used for phase-2 dedupe.
-    ax_window: ax.UIElementRef, // CFRetain'd. Always non-null with the
-    // brute-force phase-2 path (we get a real AX element back from
-    // _AXUIElementCreateWithRemoteToken — no CG-only entries any more).
+    wid: u32, // CGWindowID; used for cross-phase dedupe.
+    ax_window: ax.UIElementRef, // CFRetain'd. Always non-null — every
+    // emit path hands us a real AX element.
 };
 
 allocator: std.mem.Allocator,
@@ -228,13 +228,17 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
             }
         }
 
-        // Phase 2: brute-force AX scan via the private
-        // _AXUIElementCreateWithRemoteToken API. Discovers windows that
+        // Phase 2: walk the AX cache. Populated at startup with a
+        // high-cap brute-force scan and kept fresh via AXObservers for
+        // window-create/destroy events. Discovers windows that
         // kAXWindowsAttribute hides — primarily off-Space siblings of
         // multi-window apps (Ghostty with another window on a different
-        // Space) and single-window apps whose only window is off-Space
-        // (Focus To-Do, KeePassXC).
-        try self.bruteForceAxScan(&ctx, pid);
+        // Space, Safari with windows past the brute-force cap) and
+        // single-window apps whose only window is off-Space (Focus
+        // To-Do, KeePassXC).
+        for (ax_cache.getForPid(pid)) |cached| {
+            _ = try self.tryEmit(&ctx, cached);
+        }
     }
 
     std.sort.pdqContext(0, list.items.len, SortCtx{
@@ -243,41 +247,6 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
     });
 
     return list;
-}
-
-/// Brute-force AX scan: builds the 20-byte remote token (pid | 0 |
-/// magic "cooo" | ax-element-id) and iterates element-ids 0..1000,
-/// constructing AXUIElements via the private
-/// _AXUIElementCreateWithRemoteToken. Filters by `_AXUIElementGetWindow`
-/// (cheap windowness test), then hands surviving elements to `tryEmit`
-/// which applies the subrole/size/wid-dedupe filters and retains on
-/// accept. 100ms timeout per app caps cost on apps with thousands of
-/// UI elements.
-fn bruteForceAxScan(self: *Self, ctx: *EmitCtx, pid: i32) !void {
-    var token: [20]u8 = std.mem.zeroes([20]u8);
-    std.mem.writeInt(i32, token[0..4], pid, .little);
-    std.mem.writeInt(i32, token[8..12], 0x636f636f, .little);
-
-    const start_ns = std.time.nanoTimestamp();
-    var ax_id: u64 = 0;
-    while (ax_id < 1000) : (ax_id += 1) {
-        std.mem.writeInt(u64, token[12..20], ax_id, .little);
-        const data = cf.c.CFDataCreate(null, &token, 20) orelse continue;
-        defer cf.c.CFRelease(data);
-        const elem = ax._AXUIElementCreateWithRemoteToken(data) orelse continue;
-        defer cf.c.CFRelease(elem);
-
-        // Cheap "is this a window?" filter — non-window AX elements
-        // (buttons, groups, etc.) error here. Skips ~999/1000 iterations
-        // for typical apps without paying for an attribute copy.
-        var wid: u32 = 0;
-        if (ax._AXUIElementGetWindow(elem, &wid) != ax.kAXErrorSuccess) continue;
-        if (wid == 0) continue;
-
-        _ = try self.tryEmit(ctx, elem);
-
-        if ((std.time.nanoTimestamp() - start_ns) > 100 * std.time.ns_per_ms) break;
-    }
 }
 
 const SortCtx = struct {
@@ -320,10 +289,10 @@ const EmitCtx = struct {
 /// allocator failure.
 fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     // Cheap windowness + dedupe gate before the more expensive subrole
-    // copy. Brute-force phase 2 calls _AXUIElementGetWindow already, so
-    // this is redundant in that path, but it's still cheap and lets phase
-    // 1 (raw kAXWindowsAttribute children) reject duplicates AX returns
-    // (Mail.app at login is a known offender).
+    // copy. Cache walk has already filtered by _AXUIElementGetWindow, so
+    // this re-check is redundant for that path — but it's still cheap and
+    // dedupes between Phase 0/1/2 (the same wid surfaces from multiple
+    // sources for most apps; Mail.app at login also returns dup children).
     var wid: u32 = 0;
     if (ax._AXUIElementGetWindow(win_elem, &wid) != ax.kAXErrorSuccess) return false;
     if (wid == 0) return false;
