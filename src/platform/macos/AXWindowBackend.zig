@@ -138,6 +138,10 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
     // whole walk).
     const k_windows = cfStr("AXWindows") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(k_windows);
+    const k_focused_window = cfStr("AXFocusedWindow") orelse return error.CFStringCreate;
+    defer cf.c.CFRelease(k_focused_window);
+    const k_main_window = cfStr("AXMainWindow") orelse return error.CFStringCreate;
+    defer cf.c.CFRelease(k_main_window);
     const k_title = cfStr("AXTitle") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(k_title);
     const k_subrole = cfStr("AXSubrole") orelse return error.CFStringCreate;
@@ -192,6 +196,22 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         ctx.app_name = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "Unknown";
         ctx.app_ordinal = bridge.vt_app_activation_ordinal(pid);
 
+        // Phase 0: AXFocusedWindow + AXMainWindow on the AXApplication.
+        // Two cheap O(1) attribute reads that surface the app's most
+        // recently focused window even when the app is in the background
+        // and has no kAXWindowsAttribute children. Critical for long-lived
+        // apps whose AX-element-IDs have grown past the brute-force cap
+        // (Safari is the canonical case — its windows live around
+        // ax_id≈2500+).
+        for ([_]cf.c.CFStringRef{ k_focused_window, k_main_window }) |attr| {
+            var w_ref: cf.c.CFTypeRef = null;
+            if (ax.AXUIElementCopyAttributeValue(app_elem, attr, &w_ref) == ax.kAXErrorSuccess and w_ref != null) {
+                defer cf.c.CFRelease(w_ref);
+                const win_elem: ax.UIElementRef = @ptrCast(@constCast(w_ref));
+                _ = try self.tryEmit(&ctx, win_elem);
+            }
+        }
+
         // Phase 1: kAXWindowsAttribute. Returns current-Space windows and
         // sometimes off-Space ones, depending on app. Apps whose windows
         // are *all* on other Spaces tend to return an empty array here.
@@ -211,10 +231,9 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         // Phase 2: brute-force AX scan via the private
         // _AXUIElementCreateWithRemoteToken API. Discovers windows that
         // kAXWindowsAttribute hides — primarily off-Space siblings of
-        // multi-window apps (Safari with a window in native fullscreen,
-        // Ghostty with another window on a different Space) and
-        // single-window apps whose only window is off-Space (Focus
-        // To-Do, KeePassXC).
+        // multi-window apps (Ghostty with another window on a different
+        // Space) and single-window apps whose only window is off-Space
+        // (Focus To-Do, KeePassXC).
         try self.bruteForceAxScan(&ctx, pid);
     }
 

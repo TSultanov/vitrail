@@ -95,6 +95,10 @@ pub fn main() !void {
 
     const k_windows = cfStr("AXWindows") orelse return;
     defer cf.c.CFRelease(k_windows);
+    const k_focused_window = cfStr("AXFocusedWindow") orelse return;
+    defer cf.c.CFRelease(k_focused_window);
+    const k_main_window = cfStr("AXMainWindow") orelse return;
+    defer cf.c.CFRelease(k_main_window);
     const k_title = cfStr("AXTitle") orelse return;
     defer cf.c.CFRelease(k_title);
     const k_subrole = cfStr("AXSubrole") orelse return;
@@ -137,6 +141,19 @@ pub fn main() !void {
         defer if (app_name_c) |p| bridge.vt_free(@ptrCast(@constCast(p)));
         const app_name: []const u8 = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "(?)";
         const app_ordinal = bridge.vt_app_activation_ordinal(pid);
+
+        // Phase 0: AXFocusedWindow + AXMainWindow on the AXApplication.
+        for ([_]struct { key: cf.c.CFStringRef, label: []const u8 }{
+            .{ .key = k_focused_window, .label = "Focused" },
+            .{ .key = k_main_window, .label = "Main" },
+        }) |attr| {
+            var w_ref: cf.c.CFTypeRef = null;
+            if (ax.AXUIElementCopyAttributeValue(app_elem, attr.key, &w_ref) == ax.kAXErrorSuccess and w_ref != null) {
+                defer cf.c.CFRelease(w_ref);
+                const win_elem: ax.UIElementRef = @ptrCast(@constCast(w_ref));
+                _ = try printAxWindow(allocator, win_elem, attr.label, k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+            }
+        }
 
         // Phase 1: AXWindows.
         var wins_ref: cf.c.CFTypeRef = null;
