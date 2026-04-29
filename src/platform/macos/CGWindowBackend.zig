@@ -6,6 +6,7 @@ const std = @import("std");
 const common = @import("../../common/DesktopWindow.zig");
 const bridge = @import("bridge.zig");
 const cf = @import("cf.zig");
+const cgs = @import("cgs.zig");
 
 const cg = @cImport({
     @cInclude("CoreGraphics/CoreGraphics.h");
@@ -34,8 +35,38 @@ pub fn deinit(self: *Self) void {
 pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     self.handles.clearRetainingCapacity();
 
+    // Build a Space-ID → flat 0-based-index map, matching Mission-Control
+    // ordering (displays in the order CGS reports, Spaces in left-to-right
+    // order within each). The renderer reads `desktopNumber` 0-indexed and
+    // formats it as `n + 1` for the badge.
+    const cid = cgs.CGSMainConnectionID();
+    var space_index = std.AutoHashMap(i64, usize).init(allocator);
+    defer space_index.deinit();
+    if (cgs.CGSCopyManagedDisplaySpaces(cid)) |displays| {
+        defer cf.c.CFRelease(displays);
+        const dcount = cg.CFArrayGetCount(@ptrCast(displays));
+        var di: cg.CFIndex = 0;
+        while (di < dcount) : (di += 1) {
+            const dptr = cg.CFArrayGetValueAtIndex(@ptrCast(displays), di) orelse continue;
+            const ddict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dptr));
+            const spaces_arr = cf.cfDictGetArray(ddict, "Spaces") orelse continue;
+            const scount = cg.CFArrayGetCount(@ptrCast(spaces_arr));
+            var si: cg.CFIndex = 0;
+            while (si < scount) : (si += 1) {
+                const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), si) orelse continue;
+                const sdict: cf.c.CFDictionaryRef = @ptrCast(@constCast(sptr));
+                const id_n = cf.cfDictGetNumber(sdict, "id64") orelse continue;
+                const id = cf.cfNumberToI64(id_n) orelse continue;
+                const idx = space_index.count();
+                try space_index.put(id, idx);
+            }
+        }
+    }
+
+    // kCGWindowListOptionAll (vs OnScreenOnly) returns windows on every
+    // Space, including full-screen apps which each live in their own Space.
     const options: cg.CGWindowListOption =
-        cg.kCGWindowListOptionOnScreenOnly | cg.kCGWindowListExcludeDesktopElements;
+        cg.kCGWindowListOptionAll | cg.kCGWindowListExcludeDesktopElements;
     const arr = cg.CGWindowListCopyWindowInfo(options, cg.kCGNullWindowID) orelse
         return error.CGWindowListFailed;
     defer cf.c.CFRelease(arr);
@@ -54,7 +85,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const dict_ptr = cg.CFArrayGetValueAtIndex(@ptrCast(arr), i) orelse continue;
         const dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dict_ptr));
 
-        // Filter: only normal-layer (0), on-screen, with a positive alpha.
+        // Filter: only normal-layer (0).
         const layer = blk: {
             const n = cf.cfDictGetNumber(dict, "kCGWindowLayer") orelse continue;
             break :blk cf.cfNumberToI64(n) orelse continue;
@@ -68,16 +99,40 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const wid_n = cf.cfDictGetNumber(dict, "kCGWindowNumber") orelse continue;
         const wid = cf.cfNumberToI64(wid_n) orelse continue;
 
+        // Bounds: drop the 1728×33 menu-bar strips (one per app per Space)
+        // and tiny tooltip surfaces. Real user windows are >> 100×50.
+        const bounds_dict_v = cf.c.CFDictionaryGetValue(dict, blk: {
+            const k = cf.c.CFStringCreateWithCString(null, "kCGWindowBounds", cf.c.kCFStringEncodingUTF8) orelse break :blk null;
+            break :blk k;
+        });
+        if (bounds_dict_v == null) continue;
+        const bounds_dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(bounds_dict_v));
+        var bounds_rect: cg.CGRect = undefined;
+        if (!cg.CGRectMakeWithDictionaryRepresentation(@ptrCast(bounds_dict), &bounds_rect)) continue;
+        if (bounds_rect.size.width < 100 or bounds_rect.size.height < 50) continue;
+
         // Owner name is always present; window name is gated on Screen
-        // Recording permission. Fall back to owner name when the title is
-        // missing so the grid is still usable without permission.
+        // Recording permission.
         const owner_str = cf.cfDictGetString(dict, "kCGWindowOwnerName");
         const title_str = cf.cfDictGetString(dict, "kCGWindowName");
 
-        const title_src: cf.c.CFStringRef = if (title_str) |t|
-            if (cf.c.CFStringGetLength(t) > 0) t else (owner_str orelse continue)
-        else
-            (owner_str orelse continue);
+        const has_title = if (title_str) |t| cf.c.CFStringGetLength(t) > 0 else false;
+
+        // kCGWindowIsOnscreen = 1 → window lives on the current Space.
+        // Off-Space entries that are real user windows DO have titles
+        // (Anki/Safari/Calendar/etc. in our dump); off-Space CGS junk
+        // (menu-bar strips, helper UI, AutoFill stubs) does not. So:
+        // require a real title for off-Space entries, and accept
+        // owner-name fallback only for on-screen entries (so the grid
+        // remains usable when Screen Recording is not granted).
+        const is_onscreen = blk: {
+            const n = cf.cfDictGetNumber(dict, "kCGWindowIsOnscreen") orelse break :blk false;
+            const v = cf.cfNumberToI64(n) orelse 0;
+            break :blk v != 0;
+        };
+        if (!is_onscreen and !has_title) continue;
+
+        const title_src: cf.c.CFStringRef = if (has_title) title_str.? else (owner_str orelse continue);
 
         const title = try cf.cfStringDupeZ(allocator, title_src);
         errdefer allocator.free(title);
@@ -90,6 +145,26 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const app_id = try cf.cfStringDupeZ(allocator, app_id_src);
         errdefer allocator.free(app_id);
 
+        // Resolve the window's Space → flat 0-based desktop index.
+        // 1 Space → that index; 0 or many → null. Many = "Show on All
+        // Spaces"; the renderer leaves the badge blank for null, matching
+        // the KdeBackend's all-desktops convention.
+        const desktop_number: ?usize = blk: {
+            var wid_val: c_int = @intCast(wid);
+            const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk null;
+            defer cf.c.CFRelease(wid_cfnum);
+            var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
+            const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk null;
+            defer cf.c.CFRelease(wids_arr);
+            const spaces_arr = cgs.CGSCopySpacesForWindows(cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk null;
+            defer cf.c.CFRelease(spaces_arr);
+            if (cg.CFArrayGetCount(@ptrCast(spaces_arr)) != 1) break :blk null;
+            const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :blk null;
+            const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
+            const sid = cf.cfNumberToI64(sn) orelse break :blk null;
+            break :blk space_index.get(sid);
+        };
+
         const idx = self.handles.items.len;
         try self.handles.append(self.allocator, .{ .pid = @intCast(pid), .window_id = @intCast(wid) });
 
@@ -99,7 +174,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
             .title_lower = title_lower,
             .app_id = app_id,
             .icon = null,
-            .desktopNumber = null,
+            .desktopNumber = desktop_number,
             .allocator = allocator,
         });
     }

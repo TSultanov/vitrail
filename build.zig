@@ -228,6 +228,25 @@ fn buildMacos(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     run_cmd.step.dependOn(b.getInstallStep());
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    // Debug-only: dump every CGWindowListCopyWindowInfo entry with the
+    // fields we filter on. Run via `zig build dump-windows`.
+    const dump_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/macos/dump_windows.zig"),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = true,
+    });
+    dump_mod.linkSystemLibrary("c", .{});
+    dump_mod.linkFramework("CoreFoundation", .{});
+    dump_mod.linkFramework("CoreGraphics", .{});
+    const dump_exe = b.addExecutable(.{
+        .name = "dump_windows",
+        .root_module = dump_mod,
+    });
+    const dump_run = b.addRunArtifact(dump_exe);
+    const dump_step = b.step("dump-windows", "Dump CGWindowList entries");
+    dump_step.dependOn(&dump_run.step);
 }
 
 const info_plist =

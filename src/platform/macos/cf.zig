@@ -45,3 +45,10 @@ pub fn cfDictGetNumber(dict: c.CFDictionaryRef, key: [*:0]const u8) c.CFNumberRe
     const v = c.CFDictionaryGetValue(dict, k) orelse return null;
     return @ptrCast(@constCast(v));
 }
+
+pub fn cfDictGetArray(dict: c.CFDictionaryRef, key: [*:0]const u8) c.CFArrayRef {
+    const k = c.CFStringCreateWithCString(null, key, c.kCFStringEncodingUTF8) orelse return null;
+    defer c.CFRelease(k);
+    const v = c.CFDictionaryGetValue(dict, k) orelse return null;
+    return @ptrCast(@constCast(v));
+}
