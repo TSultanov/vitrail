@@ -1,5 +1,18 @@
 const std = @import("std");
 const MainPresenter = @import("../../MainPresenter.zig");
+const HotKey = @import("HotKey.zig");
+
+const App = struct {
+    presenter: *MainPresenter,
+    hotkey: HotKey,
+
+    fn onHotkey(ctx: *anyopaque) void {
+        const self: *App = @ptrCast(@alignCast(ctx));
+        self.presenter.show() catch |err| {
+            std.log.warn("show failed: {s}", .{@errorName(err)});
+        };
+    }
+};
 
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{ .safety = true }) = .init;
@@ -11,10 +24,9 @@ pub fn main() !void {
     const presenter = try MainPresenter.init(.{}, allocator, test_mode);
     defer presenter.deinit();
 
-    // Phase 6 will register a global hot key (Carbon RegisterEventHotKey) that
-    // calls presenter.show() on demand. For now show on launch so the build
-    // path is exercisable end-to-end.
-    try presenter.show();
+    var app: App = .{ .presenter = presenter, .hotkey = undefined };
+    try app.hotkey.init(HotKey.default_binding, App.onHotkey, &app);
+    defer app.hotkey.deinit();
 
     while (presenter.view.running) {
         if (!presenter.view.dispatch()) break;
