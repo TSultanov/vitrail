@@ -55,7 +55,12 @@ pub fn render(
     const tile_w = S.s(Grid.TILE_W);
     const tile_h = S.s(Grid.TILE_H);
     const tile_pad = S.s(TILE_TEXT_PAD);
+    const step_x: i32 = Grid.TILE_W + Grid.TILE_MARGIN;
+    const step_y: i32 = Grid.TILE_H + Grid.TILE_MARGIN;
 
+    // Pass 1: tile fills + content (icons, title, desktop badge). Drawn first
+    // so that adjacent tiles painted in spiral order can freely overlap into
+    // each other's edge columns — the borders go on top in pass 2.
     for (grid.tiles.items, 0..) |tile, idx| {
         if (!tile.visible) continue;
         const selected = if (grid.selected) |s| s == idx else false;
@@ -63,10 +68,8 @@ pub fn render(
         const tx = S.s(tile.x);
         const ty = S.s(tile.y);
 
-        // 1px opaque-black border, then colored fill inset by 1px.
-        fillRect(pixels, pw, tx, ty, tile_w, tile_h, theme.tile_border);
         const fill: u32 = 0xFF000000 | ColorHash.createColor(tile.dw.app_id, selected);
-        fillRect(pixels, pw, tx + 1, ty + 1, tile_w - 2, tile_h - 2, fill);
+        fillRect(pixels, pw, tx, ty, tile_w, tile_h, fill);
 
         // Application icon: square, centered inside the same inset rect the
         // Windows Tile uses (margins above/below/sides). Size is the largest
@@ -108,6 +111,32 @@ pub fn render(
         _ = desktop_text.draw(pixels, pw, pw, ph, dn_x, dn_baseline, desktop_str, desktop_color) catch 0;
     }
 
+    // Pass 2: 1px borders anchored at logical column/row boundaries. Each
+    // tile owns the seams to its right and bottom — they live at the
+    // physical pixel that maps to the logical x + step_x / y + step_y, so
+    // they line up with whatever sits in the next column/row regardless of
+    // floor() rounding. Left and top edges are painted only when no
+    // neighbor exists on that side (otherwise the neighbor's right/bottom
+    // border already covers the same physical line). Lengths run all the
+    // way to the corner pixel so adjacent borders meet cleanly when four
+    // tiles share a corner — and outer L-corners stay continuous.
+    for (grid.tiles.items) |tile| {
+        if (!tile.visible) continue;
+        const tx = S.s(tile.x);
+        const ty = S.s(tile.y);
+        const tx_end = S.s(tile.x + step_x);
+        const ty_end = S.s(tile.y + step_y);
+        const span_w = tx_end - tx + 1;
+        const span_h = ty_end - ty + 1;
+
+        fillRect(pixels, pw, tx_end, ty, 1, span_h, theme.tile_border);
+        fillRect(pixels, pw, tx, ty_end, span_w, 1, theme.tile_border);
+        if (!hasVisibleNeighbor(grid, tile, -step_x, 0))
+            fillRect(pixels, pw, tx, ty, 1, span_h, theme.tile_border);
+        if (!hasVisibleNeighbor(grid, tile, 0, -step_y))
+            fillRect(pixels, pw, tx, ty, span_w, 1, theme.tile_border);
+    }
+
     // Search box — white fill, gray border, black text.
     const search_w = S.s(Grid.SEARCH_W);
     const search_h = S.s(Grid.SEARCH_H);
@@ -121,6 +150,16 @@ pub fn render(
         const baseline = sy + search_h - @divFloor(search_h - search_text.ascent, 2);
         _ = search_text.draw(pixels, pw, pw, ph, sx + search_pad, baseline, search, theme.search_text) catch 0;
     }
+}
+
+fn hasVisibleNeighbor(grid: *const Grid, tile: Grid.Tile, dx: i32, dy: i32) bool {
+    const nx = tile.x + dx;
+    const ny = tile.y + dy;
+    for (grid.tiles.items) |o| {
+        if (!o.visible) continue;
+        if (o.x == nx and o.y == ny) return true;
+    }
+    return false;
 }
 
 fn clipForWidth(s: []const u8, r: anytype, max_w: i32) []const u8 {

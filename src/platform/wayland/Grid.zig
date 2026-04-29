@@ -7,9 +7,14 @@ const Self = @This();
 
 pub const TILE_W: i32 = 100;
 pub const TILE_H: i32 = 100;
-// Windows uses margin = -1 (1px overlap). Effective step is TILE_W-1, painted
-// with a 1px black border so adjacent tiles share a 2px black gutter visually.
-pub const TILE_MARGIN: i32 = -1;
+// Tiles are placed edge-to-edge (no overlap, no gap). Each tile owns its
+// left + top 1px border; right + bottom borders are painted only on the
+// outer tiles (those without a visible neighbor in that direction). The
+// rendering pass takes care of this — see wayland/Renderer.zig. Using a
+// non-negative margin keeps internal and external borders the same 1px
+// thickness at any scale, including macOS scaled-Retina modes where the
+// compositor downsamples a 1px-overlap design unevenly.
+pub const TILE_MARGIN: i32 = 0;
 pub const SEARCH_H: i32 = 20;
 pub const SEARCH_W: i32 = 100;
 // Windows places the search box ~100px above the bottom edge.
