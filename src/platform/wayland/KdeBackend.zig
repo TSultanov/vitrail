@@ -187,6 +187,13 @@ fn matchAll(self: *Self) !void {
         // know KWin's matchId format reliably across versions, so dedupe
         // by title: same window ⇒ same title.
         const title_str = cstr(title_raw);
+
+        // Skip system/internal windows the user can't meaningfully switch to:
+        //  - empty titles (placeholder/private windows)
+        //  - "Wayland to X" (the XWayland bridge process)
+        if (title_str.len == 0) continue;
+        if (std.mem.startsWith(u8, title_str, "Wayland to X")) continue;
+
         var dup = false;
         for (self.entries.items) |existing| {
             if (std.mem.eql(u8, existing.title, title_str)) {
