@@ -74,3 +74,15 @@ pub fn show(self: *Self) !void {
     try self.view.show();
     try self.createWidgets();
 }
+
+pub fn deinit(self: *Self) void {
+    if (self.desktop_windows) |dws| {
+        for (dws.items) |dw| dw.destroy();
+        var owned = dws;
+        owned.deinit();
+        self.desktop_windows = null;
+    }
+    self.si.deinit();
+    self.view.deinit();
+    self.allocator.destroy(self);
+}

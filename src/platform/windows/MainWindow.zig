@@ -234,6 +234,11 @@ pub fn show(self: *Self) !void {
     _ = self.window.show();
 }
 
+/// On Windows, teardown is driven by WM_DESTROY (`onAfterDestroyHandler`),
+/// not an explicit deinit; this exists so MainPresenter.deinit can call
+/// `view.deinit()` symmetrically across platforms.
+pub fn deinit(_: *Self) void {}
+
 pub fn activate(self: *Self) void {
     self.window.activate();
     _ = w.SetForegroundWindow(self.window.hwnd);

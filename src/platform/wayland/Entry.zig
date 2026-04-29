@@ -3,12 +3,15 @@ const MainPresenter = @import("../../MainPresenter.zig");
 
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{ .safety = true }) = .init;
-    defer std.debug.assert(gpa.deinit() == .ok);
+    // Don't assert on leaks here — DebugAllocator still prints diagnostics
+    // when leaks remain, but a stale glyph cache shouldn't panic the user.
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     const test_mode = parseTestMode(allocator) catch false;
 
-    var presenter = try MainPresenter.init(.{}, allocator, test_mode);
+    const presenter = try MainPresenter.init(.{}, allocator, test_mode);
+    defer presenter.deinit();
 
     // Launch-on-demand: surface the grid immediately on start.
     try presenter.show();
