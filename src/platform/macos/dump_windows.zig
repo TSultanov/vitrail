@@ -135,8 +135,10 @@ pub fn main() !void {
     var emitted_wids = std.AutoHashMap(u32, void).init(allocator);
     defer emitted_wids.deinit();
 
+    const self_pid: i32 = std.c.getpid();
     for (pids) |pid_c| {
         const pid: i32 = @intCast(pid_c);
+        if (pid == self_pid) continue;
         const app_elem = ax.AXUIElementCreateApplication(pid) orelse {
             print("pid={d:<6} <AXUIElementCreateApplication returned null>\n", .{pid});
             continue;
@@ -147,6 +149,7 @@ pub fn main() !void {
         defer if (app_name_c) |p| bridge.vt_free(@ptrCast(@constCast(p)));
         const app_name: []const u8 = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "(?)";
         const app_ordinal = bridge.vt_app_activation_ordinal(pid);
+        const pid_kept_before = emitted_wids.count();
 
         // Phase 0: AXFocusedWindow + AXMainWindow on the AXApplication.
         for ([_]struct { key: cf.c.CFStringRef, label: []const u8 }{
@@ -192,6 +195,12 @@ pub fn main() !void {
         }
         const added = emitted_wids.count() - before;
         if (added > 0) print("  (cache phase 2 added {d} window(s))\n", .{added});
+
+        // Mirror production: pids that contributed zero kept windows would
+        // surface as a synthetic windowless-app placeholder.
+        if (emitted_wids.count() == pid_kept_before) {
+            print("  [placeholder] pid={d} app=\"{s}\" mru={d}\n", .{ pid, app_name, app_ordinal });
+        }
     }
 }
 

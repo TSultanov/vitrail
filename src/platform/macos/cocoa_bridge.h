@@ -65,6 +65,14 @@ double vt_window_backing_scale(vt_window *w);
 // Brings the app with the given pid to the foreground. Returns 1 on success.
 int vt_activate_pid(int pid);
 
+// Asks the OS to "reopen" the running app at `pid` — same path the Dock
+// uses on icon click. For apps with zero windows this triggers
+// applicationShouldHandleReopen:hasVisibleWindows:NO, which makes Mail,
+// Calendar, Preview etc. open a fresh window. activateWithOptions:
+// alone only swaps the menubar — it doesn't fire reopen. Returns 1 on
+// success, 0 if the pid is unknown or has no bundleURL.
+int vt_reopen_pid(int pid);
+
 // ─── Icons ───────────────────────────────────────────────────────────────────
 
 // Fetches an RGBA bitmap (top-down, width*height*4 bytes) for the app

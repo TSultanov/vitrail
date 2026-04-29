@@ -340,9 +340,42 @@ int vt_activate_pid(int pid) {
     NSRunningApplication *app =
         [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
     if (!app) return 0;
-    BOOL ok = [app activateWithOptions:NSApplicationActivateAllWindows |
-                                       NSApplicationActivateIgnoringOtherApps];
+    // On macOS 14+ activateWithOptions: is deprecated and silently fails
+    // when the caller is still the active app — which is exactly our case
+    // (vitrail hides its window only *after* this returns). For windowed
+    // tiles AXRaise on the AX window papers over this, but windowless apps
+    // have no AX window to raise, so they wouldn't come forward.
+    // activateFromApplication:options: is the supported replacement and
+    // explicitly transfers activation from a known caller, so it works
+    // regardless of the caller's active state.
+    BOOL ok;
+    if (@available(macOS 14.0, *)) {
+        ok = [app activateFromApplication:[NSRunningApplication currentApplication]
+                                  options:NSApplicationActivateAllWindows];
+    } else {
+        ok = [app activateWithOptions:NSApplicationActivateAllWindows |
+                                      NSApplicationActivateIgnoringOtherApps];
+    }
     return ok ? 1 : 0;
+}
+
+int vt_reopen_pid(int pid) {
+    NSRunningApplication *app =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+    if (!app) return 0;
+    NSURL *bundleURL = app.bundleURL;
+    if (!bundleURL) return 0;
+    // openApplicationAtURL on a running app routes through Launch Services
+    // exactly like a Dock-icon click, so the app's
+    // applicationShouldHandleReopen:hasVisibleWindows: delegate fires —
+    // which is what makes Mail / Calendar / Preview spawn a new window.
+    // Plain activate* APIs don't trigger reopen.
+    NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
+    cfg.activates = YES;
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:bundleURL
+                                          configuration:cfg
+                                      completionHandler:nil];
+    return 1;
 }
 
 // ─── Icons & names ──────────────────────────────────────────────────────────

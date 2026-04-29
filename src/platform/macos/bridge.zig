@@ -49,6 +49,7 @@ pub extern "c" fn vt_window_logical_size(w: *VtWindow, out_w: *u32, out_h: *u32)
 pub extern "c" fn vt_window_backing_scale(w: *VtWindow) f64;
 
 pub extern "c" fn vt_activate_pid(pid: c_int) c_int;
+pub extern "c" fn vt_reopen_pid(pid: c_int) c_int;
 pub extern "c" fn vt_icon_for_pid(
     pid: c_int,
     target_size: c_int,

@@ -30,9 +30,9 @@ const Self = @This();
 
 const PlatformHandle = struct {
     pid: i32,
-    wid: u32, // CGWindowID; used for cross-phase dedupe.
-    ax_window: ax.UIElementRef, // CFRetain'd. Always non-null — every
-    // emit path hands us a real AX element.
+    wid: u32, // CGWindowID; 0 for windowless-app placeholders.
+    ax_window: ax.UIElementRef, // CFRetain'd. Null only for windowless-app
+    // placeholders (running apps with zero windows that survived AX filters).
 };
 
 allocator: std.mem.Allocator,
@@ -183,8 +183,10 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         .v_dialog = v_dialog,
     };
 
+    const self_pid: i32 = std.c.getpid();
     for (pids) |pid_c| {
         const pid: i32 = @intCast(pid_c);
+        if (pid == self_pid) continue; // never list vitrail itself
         const app_elem = ax.AXUIElementCreateApplication(pid) orelse continue;
         defer cf.c.CFRelease(app_elem);
 
@@ -195,6 +197,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         ctx.pid = pid;
         ctx.app_name = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "Unknown";
         ctx.app_ordinal = bridge.vt_app_activation_ordinal(pid);
+        const list_len_before = ctx.list.items.len;
 
         // Phase 0: AXFocusedWindow + AXMainWindow on the AXApplication.
         // Two cheap O(1) attribute reads that surface the app's most
@@ -238,6 +241,13 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         // To-Do, KeePassXC).
         for (ax_cache.getForPid(pid)) |cached| {
             _ = try self.tryEmit(&ctx, cached);
+        }
+
+        // Windowless-app placeholder. macOS apps routinely outlive their
+        // last window (Cmd-W keeps the app running); without this, such
+        // apps would silently drop out of the switcher.
+        if (ctx.list.items.len == list_len_before) {
+            try self.emitAppPlaceholder(&ctx);
         }
     }
 
@@ -390,6 +400,51 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     return true;
 }
 
+/// Emit a synthetic entry representing a running app with no surviving
+/// windows. Activation routes through `vt_activate_pid`, which lets the
+/// OS deliver `applicationShouldHandleReopen:hasVisibleWindows:NO` so
+/// the target app reopens its main window per its own conventions.
+fn emitAppPlaceholder(self: *Self, ctx: *EmitCtx) !void {
+    const title_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
+    errdefer ctx.allocator.free(title_z);
+
+    const title_lower = try ctx.allocator.allocSentinel(u8, title_z.len, 0);
+    errdefer ctx.allocator.free(title_lower);
+    for (title_z, 0..) |ch, i| title_lower[i] = std.ascii.toLower(ch);
+
+    const app_id_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
+    errdefer ctx.allocator.free(app_id_z);
+
+    const app_id_lower = try ctx.allocator.allocSentinel(u8, app_id_z.len, 0);
+    errdefer ctx.allocator.free(app_id_lower);
+    for (app_id_z, 0..) |ch, i| app_id_lower[i] = std.ascii.toLower(ch);
+
+    const idx = self.handles.items.len;
+    try self.handles.append(self.allocator, .{
+        .pid = ctx.pid,
+        .wid = 0,
+        .ax_window = null,
+    });
+
+    try ctx.list.append(.{
+        .platform_handle = idx,
+        .title = title_z,
+        .title_lower = title_lower,
+        .app_id = app_id_z,
+        .app_id_lower = app_id_lower,
+        .icon = null,
+        .desktopNumber = null,
+        .allocator = ctx.allocator,
+    });
+
+    const insertion: u32 = @intCast(ctx.list.items.len - 1);
+    try ctx.sort_infos.append(ctx.allocator, .{
+        .group = 1,
+        .rank = -ctx.app_ordinal,
+        .insertion = insertion,
+    });
+}
+
 pub fn activate(self: *Self, dw: common.DesktopWindow) void {
     if (dw.platform_handle >= self.handles.items.len) return;
     const h = self.handles.items[dw.platform_handle];
@@ -402,8 +457,14 @@ pub fn activate(self: *Self, dw: common.DesktopWindow) void {
             defer cf.c.CFRelease(k_raise);
             _ = ax.AXUIElementPerformAction(w, k_raise);
         }
+        _ = bridge.vt_activate_pid(h.pid);
+    } else {
+        // Windowless-app placeholder. Plain activate* APIs only swap the
+        // menubar; the app's reopen handler (which is what spawns a new
+        // window for Mail/Calendar/Preview) only fires when the OS routes
+        // through Launch Services. vt_reopen_pid does that.
+        _ = bridge.vt_reopen_pid(h.pid);
     }
-    _ = bridge.vt_activate_pid(h.pid);
 }
 
 fn cfStr(s: [*:0]const u8) ?cf.c.CFStringRef {
