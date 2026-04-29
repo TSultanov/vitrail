@@ -80,16 +80,17 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
     }
 
     // Dedupe macOS native window tabs: each tab is a distinct CGWindow
-    // even though only one is visible. Tabs of one window share exact
-    // size and near-identical origin (Ghostty/Terminal report each tab
-    // at the parent window's frame, with small per-tab drift). Key on
-    // (pid, x_bucket(100), y_bucket(100), w, h): same app, same size,
-    // origin within a 100-px cell. Two genuinely distinct windows of
-    // the same app at this granularity is unusual; tabs always collide.
-    // First-seen wins, and the on-screen tab appears first in the
-    // CGWindowListCopyWindowInfo order, so the visible one survives.
-    // AltTab/Rectangle use the Accessibility API (kAXTabsAttribute);
-    // this heuristic avoids that dependency.
+    // even though only one is visible. Key on (pid, w, h) — tabs always
+    // share exact size, while reported origins vary (Ghostty's tabs
+    // appear at clearly different positions and even different Spaces
+    // in CGS, despite being one user-visible tabbed window). Two
+    // genuinely distinct same-app windows at exactly the same width and
+    // height is unusual enough that this trades off favorably against
+    // the alternative of phantom tab entries. First-seen wins, and the
+    // on-screen entry appears first in CGWindowListCopyWindowInfo
+    // order, so the visible window survives. AltTab/Rectangle use the
+    // Accessibility API (kAXTabsAttribute); this heuristic avoids that
+    // dependency.
     var seen_tabs = std.AutoHashMap(u64, void).init(allocator);
     defer seen_tabs.deinit();
 
@@ -175,18 +176,12 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const title = try cf.cfStringDupeZ(allocator, title_src);
         errdefer allocator.free(title);
 
-        // Tab dedupe: (pid, x_bucket, y_bucket, w, h).
+        // Tab dedupe: (pid, w, h).
         const dedupe_key: u64 = blk: {
             var h = std.hash.Wyhash.init(0);
             h.update(std.mem.asBytes(&pid));
-            const x_i: i32 = @intFromFloat(@round(bounds_rect.origin.x));
-            const y_i: i32 = @intFromFloat(@round(bounds_rect.origin.y));
-            const x_b: i32 = @divFloor(x_i, 100);
-            const y_b: i32 = @divFloor(y_i, 100);
             const w_i: i32 = @intFromFloat(@round(bounds_rect.size.width));
             const h_i: i32 = @intFromFloat(@round(bounds_rect.size.height));
-            h.update(std.mem.asBytes(&x_b));
-            h.update(std.mem.asBytes(&y_b));
             h.update(std.mem.asBytes(&w_i));
             h.update(std.mem.asBytes(&h_i));
             break :blk h.final();

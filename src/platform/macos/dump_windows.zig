@@ -179,14 +179,8 @@ pub fn main() !void {
             const tab_key: u64 = blk: {
                 var h = std.hash.Wyhash.init(0);
                 h.update(std.mem.asBytes(&pid));
-                const x_i: i32 = @intFromFloat(@round(bx));
-                const y_i: i32 = @intFromFloat(@round(by));
-                const x_b: i32 = @divFloor(x_i, 100);
-                const y_b: i32 = @divFloor(y_i, 100);
                 const w_i: i32 = @intFromFloat(@round(bw));
                 const h_i: i32 = @intFromFloat(@round(bh));
-                h.update(std.mem.asBytes(&x_b));
-                h.update(std.mem.asBytes(&y_b));
                 h.update(std.mem.asBytes(&w_i));
                 h.update(std.mem.asBytes(&h_i));
                 break :blk h.final();
