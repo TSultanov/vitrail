@@ -1,10 +1,16 @@
-// KDE Plasma backend — talks to KWin's KRunner WindowsRunner over D-Bus.
+// KDE Plasma backend — talks to KWin via the Scripting D-Bus API.
 //
-// KWin 6.x exposes its window list through the standard KRunner protocol at
-// org.kde.KWin /WindowsRunner org.kde.krunner1. Match("") returns every visible
-// window as an array of (matchId, title, iconName, type, relevance, props),
-// and Run(matchId, "") activates the window. This is unprivileged-client safe,
-// unlike org_kde_plasma_window_management which KWin gates.
+// KWin's Scripting interface (org.kde.kwin.Scripting at /Scripting) lets an
+// unprivileged client load a small JavaScript snippet that runs inside the
+// compositor with full access to `workspace.windowList()`. We use that to
+// enumerate windows server-side, applying KWin's own classification flags
+// (`normalWindow`, `skipSwitcher`) to filter out desktops, docks, splashes,
+// notifications, OSDs, the XWayland bridge, etc. — replacing the old fragile
+// KRunner approach that needed string-match hacks per system window.
+//
+// The script ships its result back to us via `callDBus(...)` to a method we
+// expose on our own bus connection. For activation, the script just sets
+// `workspace.activeWindow` and needs no reply.
 
 const std = @import("std");
 const common = @import("../../common/DesktopWindow.zig");
@@ -17,32 +23,33 @@ const Self = @This();
 
 pub const ProbeError = error{ ServiceUnavailable, BusOpen, Probe };
 
-/// Per-window record. `matchId` is the KRunner activator key, kept in our
-/// allocator so DesktopWindow.platform_handle can index us back.
 const Entry = struct {
     title: [:0]u8,
-    icon_name: [:0]u8,
-    match_id: [:0]u8,
+    app_id: [:0]u8,
+    uuid: [:0]u8, // KWin internalId, used to address the window for activation
     allocator: std.mem.Allocator,
 
     fn destroy(self: Entry) void {
         self.allocator.free(self.title);
-        self.allocator.free(self.icon_name);
-        self.allocator.free(self.match_id);
+        self.allocator.free(self.app_id);
+        self.allocator.free(self.uuid);
     }
 };
 
 const SERVICE = "org.kde.KWin";
-const PATH = "/WindowsRunner";
-const IFACE = "org.kde.krunner1";
+const SCRIPTING_PATH = "/Scripting";
+const SCRIPTING_IFACE = "org.kde.kwin.Scripting";
+const SCRIPT_IFACE = "org.kde.kwin.Script";
+const IPC_PATH = "/vitrail";
+const IPC_IFACE = "org.vitrail.IPC";
 
 allocator: std.mem.Allocator,
 bus: ?*c.sd_bus,
 entries: std.ArrayListUnmanaged(Entry),
+ipc_slot: ?*c.sd_bus_slot = null,
+// Filled in by the IPC.Submit handler when the enumeration script reports.
+pending_payload: ?[]u8 = null,
 
-/// Open the user bus and confirm KWin owns `org.kde.KWin`. Returns
-/// `error.ServiceUnavailable` when the service isn't present (e.g. running
-/// under sway), so the dispatcher can fall back cleanly.
 pub fn init(allocator: std.mem.Allocator) !Self {
     var bus: ?*c.sd_bus = null;
     if (c.sd_bus_open_user(&bus) < 0) return ProbeError.BusOpen;
@@ -58,6 +65,8 @@ pub fn init(allocator: std.mem.Allocator) !Self {
 }
 
 pub fn deinit(self: *Self) void {
+    if (self.ipc_slot) |s| _ = c.sd_bus_slot_unref(s);
+    if (self.pending_payload) |p| self.allocator.free(p);
     self.clearEntries();
     self.entries.deinit(self.allocator);
     _ = c.sd_bus_unref(self.bus);
@@ -65,9 +74,9 @@ pub fn deinit(self: *Self) void {
 
 pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     self.clearEntries();
-    try self.matchAll();
+    try self.runEnumScript();
 
-    std.log.debug("KdeBackend: {d} windows from KRunner", .{self.entries.items.len});
+    std.log.debug("KdeBackend: {d} windows from KWin scripting", .{self.entries.items.len});
 
     var list = std.array_list.Managed(common.DesktopWindow).init(allocator);
     errdefer {
@@ -81,9 +90,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const title_lower = try allocator.dupeZ(u8, entry.title);
         errdefer allocator.free(title_lower);
         for (title_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
-        // No real app_id from KRunner; iconName is the closest stable proxy.
-        // Falls back to title for ColorHash determinism if missing.
-        const app_id_src = if (entry.icon_name.len > 0) entry.icon_name else entry.title;
+        const app_id_src = if (entry.app_id.len > 0) entry.app_id else entry.title;
         const app_id = try allocator.dupeZ(u8, app_id_src);
         errdefer allocator.free(app_id);
 
@@ -104,28 +111,19 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
 pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
     const idx = dw.platform_handle;
     if (idx >= self.entries.items.len) return;
-    const match_id = self.entries.items[idx].match_id;
+    const uuid = self.entries.items[idx].uuid;
 
-    var err: c.sd_bus_error = .{ .name = null, .message = null, ._need_free = 0 };
-    defer c.sd_bus_error_free(&err);
-    var reply: ?*c.sd_bus_message = null;
-    defer _ = c.sd_bus_message_unref(reply);
+    var script_buf: [512]u8 = undefined;
+    const script = std.fmt.bufPrint(&script_buf,
+        \\const target = "{s}";
+        \\const w = workspace.windowList().find(w => w.internalId.toString() === target);
+        \\if (w) {{ workspace.activeWindow = w; }}
+        \\
+    , .{uuid}) catch return;
 
-    const r = c.sd_bus_call_method(
-        self.bus,
-        SERVICE,
-        PATH,
-        IFACE,
-        "Run",
-        &err,
-        &reply,
-        "ss",
-        match_id.ptr,
-        @as([*c]const u8, ""),
-    );
-    if (r < 0) {
-        std.log.err("KdeBackend.activateWindow: Run failed: {s}", .{cstr(err.message)});
-    }
+    self.runScript(script, "vitrail-activate") catch |e| {
+        std.log.err("KdeBackend.activateWindow: {t}", .{e});
+    };
 }
 
 // ─── Internals ────────────────────────────────────────────────────────────────
@@ -135,85 +133,177 @@ fn clearEntries(self: *Self) void {
     self.entries.clearRetainingCapacity();
 }
 
-fn matchAll(self: *Self) !void {
-    var err: c.sd_bus_error = .{ .name = null, .message = null, ._need_free = 0 };
-    defer c.sd_bus_error_free(&err);
-    var reply: ?*c.sd_bus_message = null;
-    defer _ = c.sd_bus_message_unref(reply);
+const enum_script_template =
+    \\const me = "{s}";
+    \\const wins = workspace.windowList()
+    \\  .filter(w => w.normalWindow && !w.skipSwitcher)
+    \\  .map(w => ({{
+    \\    id: w.internalId.toString(),
+    \\    title: w.caption,
+    \\    app: w.resourceClass,
+    \\  }}));
+    \\callDBus(me, "/vitrail", "org.vitrail.IPC", "Submit", JSON.stringify(wins));
+    \\
+;
 
-    const r = c.sd_bus_call_method(
-        self.bus,
-        SERVICE,
-        PATH,
-        IFACE,
-        "Match",
-        &err,
-        &reply,
-        "s",
-        @as([*c]const u8, ""),
-    );
-    if (r < 0) {
-        std.log.err("KdeBackend.matchAll: Match failed: {s}", .{cstr(err.message)});
-        return error.MatchFailed;
+fn runEnumScript(self: *Self) !void {
+    // Get the bus connection's unique name so the KWin script can callDBus
+    // back to us.
+    var unique_name_raw: [*c]const u8 = null;
+    if (c.sd_bus_get_unique_name(self.bus, &unique_name_raw) < 0) return error.NoUniqueName;
+    const unique_name = cstr(unique_name_raw);
+
+    // Register an object handling org.vitrail.IPC.Submit if not already.
+    if (self.ipc_slot == null) {
+        var slot: ?*c.sd_bus_slot = null;
+        const r = vitrail_register_ipc(self.bus, &slot, IPC_PATH, IPC_IFACE, self);
+        if (r < 0) return error.AddObjectVtable;
+        self.ipc_slot = slot;
     }
 
-    // Reply signature: a(sssida{sv})
-    const TYPE_ARRAY: u8 = @intCast(c.SD_BUS_TYPE_ARRAY);
-    const TYPE_STRUCT: u8 = @intCast(c.SD_BUS_TYPE_STRUCT);
-    if (c.sd_bus_message_enter_container(reply, TYPE_ARRAY, "(sssida{sv})") < 0) return error.UnexpectedReply;
+    var script_buf: [1024]u8 = undefined;
+    const script = try std.fmt.bufPrint(&script_buf, enum_script_template, .{unique_name});
 
-    while (true) {
-        const stepped = c.sd_bus_message_enter_container(reply, TYPE_STRUCT, "sssida{sv}");
-        if (stepped == 0) break;
-        if (stepped < 0) return error.UnexpectedReply;
+    if (self.pending_payload) |p| {
+        self.allocator.free(p);
+        self.pending_payload = null;
+    }
 
-        var match_id_raw: [*c]const u8 = null;
-        var title_raw: [*c]const u8 = null;
-        var icon_raw: [*c]const u8 = null;
-        var type_i: i32 = 0;
-        var relevance: f64 = 0;
+    try self.runScript(script, "vitrail-enum");
 
-        if (c.sd_bus_message_read(reply, "sssid", &match_id_raw, &title_raw, &icon_raw, &type_i, &relevance) < 0)
-            return error.UnexpectedReply;
+    // Pump the bus for up to 2 seconds waiting for the script to call us back.
+    const deadline_ns = std.time.nanoTimestamp() + 2 * std.time.ns_per_s;
+    while (self.pending_payload == null) {
+        const now = std.time.nanoTimestamp();
+        if (now >= deadline_ns) return error.EnumTimeout;
+        const timeout_us: u64 = @intCast(@divTrunc(deadline_ns - now, std.time.ns_per_us));
+        _ = c.sd_bus_process(self.bus, null);
+        if (self.pending_payload != null) break;
+        _ = c.sd_bus_wait(self.bus, timeout_us);
+    }
 
-        // Skip the a{sv} props dict — we don't need subtext / icon-data yet.
-        if (c.sd_bus_message_skip(reply, "a{sv}") < 0) return error.UnexpectedReply;
+    const json = self.pending_payload.?;
+    defer {
+        self.allocator.free(json);
+        self.pending_payload = null;
+    }
 
-        if (c.sd_bus_message_exit_container(reply) < 0) return error.UnexpectedReply;
+    try self.parsePayload(json);
+}
 
-        // KWin's WindowsRunner emits one match per (window, action) pair —
-        // for an empty query that means several actions per window, so 2
-        // windows can come back as 8+ entries (most repeated). We don't
-        // know KWin's matchId format reliably across versions, so dedupe
-        // by title: same window ⇒ same title.
-        const title_str = cstr(title_raw);
+const WindowJson = struct {
+    id: []const u8,
+    title: []const u8,
+    app: []const u8,
+};
 
-        // Skip system/internal windows the user can't meaningfully switch to:
-        //  - empty titles (placeholder/private windows)
-        //  - "Wayland to X" (the XWayland bridge process)
-        if (title_str.len == 0) continue;
-        if (std.mem.startsWith(u8, title_str, "Wayland to X")) continue;
+fn parsePayload(self: *Self, json: []const u8) !void {
+    var parsed = try std.json.parseFromSlice([]WindowJson, self.allocator, json, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
 
-        var dup = false;
-        for (self.entries.items) |existing| {
-            if (std.mem.eql(u8, existing.title, title_str)) {
-                dup = true;
-                break;
-            }
-        }
-        if (dup) continue;
-
+    for (parsed.value) |w| {
         const entry = Entry{
-            .title = try self.allocator.dupeZ(u8, title_str),
-            .icon_name = try self.allocator.dupeZ(u8, cstr(icon_raw)),
-            .match_id = try self.allocator.dupeZ(u8, cstr(match_id_raw)),
+            .title = try self.allocator.dupeZ(u8, w.title),
+            .app_id = try self.allocator.dupeZ(u8, w.app),
+            .uuid = try self.allocator.dupeZ(u8, w.id),
             .allocator = self.allocator,
         };
         errdefer entry.destroy();
         try self.entries.append(self.allocator, entry);
     }
+}
 
-    _ = c.sd_bus_message_exit_container(reply);
+/// Write `script` to a fresh temp file, loadScript + run + unloadScript.
+fn runScript(self: *Self, script: []const u8, plugin_name: [*:0]const u8) !void {
+    // Build a per-call unique temp path. Zig's posix doesn't expose mkstemp,
+    // and a (pid, monotonic-ns) suffix is unique enough — the file is
+    // unlinked moments later.
+    var path_buf: [64:0]u8 = undefined;
+    const tmpl = try std.fmt.bufPrintZ(&path_buf, "/tmp/vitrail-kwin-{d}-{d}.js", .{ std.os.linux.getpid(), std.time.nanoTimestamp() });
+
+    {
+        const file = try std.fs.cwd().createFileZ(tmpl, .{ .exclusive = true });
+        defer file.close();
+        try file.writeAll(script);
+    }
+    defer std.fs.cwd().deleteFileZ(tmpl) catch {};
+
+    var err: c.sd_bus_error = .{ .name = null, .message = null, ._need_free = 0 };
+    defer c.sd_bus_error_free(&err);
+
+    var reply: ?*c.sd_bus_message = null;
+    defer _ = c.sd_bus_message_unref(reply);
+
+    const r1 = c.sd_bus_call_method(
+        self.bus,
+        SERVICE,
+        SCRIPTING_PATH,
+        SCRIPTING_IFACE,
+        "loadScript",
+        &err,
+        &reply,
+        "ss",
+        tmpl.ptr,
+        plugin_name,
+    );
+    if (r1 < 0) {
+        std.log.err("KdeBackend.runScript: loadScript failed: {s}", .{cstr(err.message)});
+        return error.LoadScript;
+    }
+
+    var script_id: i32 = 0;
+    if (c.sd_bus_message_read(reply, "i", &script_id) < 0) return error.LoadScript;
+
+    var script_path_buf: [64]u8 = undefined;
+    const script_path = try std.fmt.bufPrintZ(&script_path_buf, "/Scripting/Script{d}", .{script_id});
+
+    var run_reply: ?*c.sd_bus_message = null;
+    defer _ = c.sd_bus_message_unref(run_reply);
+    const r2 = c.sd_bus_call_method(
+        self.bus,
+        SERVICE,
+        script_path.ptr,
+        SCRIPT_IFACE,
+        "run",
+        &err,
+        &run_reply,
+        "",
+    );
+    if (r2 < 0) {
+        std.log.err("KdeBackend.runScript: run failed: {s}", .{cstr(err.message)});
+        // try to clean up regardless
+    }
+
+    var unload_reply: ?*c.sd_bus_message = null;
+    defer _ = c.sd_bus_message_unref(unload_reply);
+    _ = c.sd_bus_call_method(
+        self.bus,
+        SERVICE,
+        SCRIPTING_PATH,
+        SCRIPTING_IFACE,
+        "unloadScript",
+        null,
+        &unload_reply,
+        "s",
+        plugin_name,
+    );
+}
+
+// IPC: KWin script calls Submit(string json) on us. Vtable wired in C
+// (see kde_dbus_shim.c); this is the method handler the C side delegates to.
+extern fn vitrail_register_ipc(bus: ?*c.sd_bus, slot: *?*c.sd_bus_slot, path: [*:0]const u8, iface: [*:0]const u8, userdata: ?*anyopaque) c_int;
+
+export fn vitrail_ipc_submit_handler(msg: ?*c.sd_bus_message, userdata: ?*anyopaque, _: ?*c.sd_bus_error) callconv(.c) c_int {
+    const self: *Self = @ptrCast(@alignCast(userdata));
+    var payload_raw: [*c]const u8 = null;
+    if (c.sd_bus_message_read(msg, "s", &payload_raw) < 0) return -1;
+    const payload = cstr(payload_raw);
+
+    if (self.pending_payload) |p| self.allocator.free(p);
+    self.pending_payload = self.allocator.dupe(u8, payload) catch null;
+
+    _ = c.sd_bus_reply_method_return(msg, "");
+    return 1;
 }
 
 fn nameHasOwner(bus: ?*c.sd_bus, name: [*:0]const u8) !bool {

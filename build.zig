@@ -130,6 +130,16 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         });
     }
 
+    // sd-bus vtable construction can't go through translate-c (bitfield union),
+    // so it's a small C shim built into the binary. Only needed for the
+    // production build — the mock backend doesn't reach KdeBackend.
+    if (!mock_backend) {
+        exe_mod.addCSourceFile(.{
+            .file = b.path("src/platform/wayland/kde_dbus_shim.c"),
+            .flags = &.{"-std=c99"},
+        });
+    }
+
     const exe = b.addExecutable(.{
         .name = "vitrail",
         .root_module = exe_mod,
