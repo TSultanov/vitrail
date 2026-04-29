@@ -27,6 +27,7 @@ const Entry = struct {
     title: [:0]u8,
     app_id: [:0]u8,
     uuid: [:0]u8, // KWin internalId, used to address the window for activation
+    desktop: ?usize, // 0-based; renderer adds 1 for display
     allocator: std.mem.Allocator,
 
     fn destroy(self: Entry) void {
@@ -100,7 +101,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
             .title_lower = title_lower,
             .app_id = app_id,
             .icon = null,
-            .desktopNumber = null,
+            .desktopNumber = entry.desktop,
             .allocator = allocator,
         });
     }
@@ -141,6 +142,7 @@ const enum_script_template =
     \\    id: w.internalId.toString(),
     \\    title: w.caption,
     \\    app: w.resourceClass,
+    \\    desk: (w.desktops && w.desktops.length > 0) ? w.desktops[0].x11DesktopNumber : null,
     \\  }}));
     \\callDBus(me, "/vitrail", "org.vitrail.IPC", "Submit", JSON.stringify(wins));
     \\
@@ -195,6 +197,7 @@ const WindowJson = struct {
     id: []const u8,
     title: []const u8,
     app: []const u8,
+    desk: ?u32 = null,
 };
 
 fn parsePayload(self: *Self, json: []const u8) !void {
@@ -202,10 +205,12 @@ fn parsePayload(self: *Self, json: []const u8) !void {
     defer parsed.deinit();
 
     for (parsed.value) |w| {
+        const desktop: ?usize = if (w.desk) |d| (if (d >= 1) d - 1 else 0) else null;
         const entry = Entry{
             .title = try self.allocator.dupeZ(u8, w.title),
             .app_id = try self.allocator.dupeZ(u8, w.app),
             .uuid = try self.allocator.dupeZ(u8, w.id),
+            .desktop = desktop,
             .allocator = self.allocator,
         };
         errdefer entry.destroy();

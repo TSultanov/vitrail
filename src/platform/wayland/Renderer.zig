@@ -60,9 +60,9 @@ pub fn render(
         // Desktop number: top-right corner.
         var buf: [16]u8 = undefined;
         const desktop_str: []const u8 = if (tile.dw.desktopNumber) |n|
-            std.fmt.bufPrint(&buf, "{d}", .{n + 1}) catch "?"
+            std.fmt.bufPrint(&buf, "{d}", .{n + 1}) catch ""
         else
-            "?";
+            "";
         const dn_w = desktop_text.measure(desktop_str) catch 0;
         const dn_x = tile.x + Grid.TILE_W - TILE_TEXT_PAD - dn_w;
         const dn_baseline = tile.y + desktop_text.ascent + 2;
