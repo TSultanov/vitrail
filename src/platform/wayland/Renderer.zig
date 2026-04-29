@@ -27,34 +27,51 @@ pub fn render(
     pixels: []u32,
     pw: u32,
     ph: u32,
+    scale_q120: u32,
     grid: *const Grid,
     tile_text: *text.Renderer,
     search_text: *text.Renderer,
     desktop_text: *text.Renderer,
     theme: Theme,
 ) void {
+    // Convert a logical-pixel coordinate or length to physical pixels using
+    // the surface's fractional scale (Wayland units of 1/120).
+    const S = struct {
+        q: u32,
+        fn s(self: @This(), v: i32) i32 {
+            return @divFloor(v * @as(i32, @intCast(self.q)), 120);
+        }
+    }{ .q = scale_q120 };
+
     // Fill viewport with transparent pixels — outside tiles + search the
     // compositor's desktop shows through.
     fillRect(pixels, pw, 0, 0, @intCast(pw), @intCast(ph), theme.transparent);
+
+    const tile_w = S.s(Grid.TILE_W);
+    const tile_h = S.s(Grid.TILE_H);
+    const tile_pad = S.s(TILE_TEXT_PAD);
 
     for (grid.tiles.items, 0..) |tile, idx| {
         if (!tile.visible) continue;
         const selected = if (grid.selected) |s| s == idx else false;
 
+        const tx = S.s(tile.x);
+        const ty = S.s(tile.y);
+
         // 1px opaque-black border, then colored fill inset by 1px.
-        fillRect(pixels, pw, tile.x, tile.y, Grid.TILE_W, Grid.TILE_H, theme.tile_border);
+        fillRect(pixels, pw, tx, ty, tile_w, tile_h, theme.tile_border);
         const fill: u32 = 0xFF000000 | ColorHash.createColor(tile.dw.app_id, selected);
-        fillRect(pixels, pw, tile.x + 1, tile.y + 1, Grid.TILE_W - 2, Grid.TILE_H - 2, fill);
+        fillRect(pixels, pw, tx + 1, ty + 1, tile_w - 2, tile_h - 2, fill);
 
         const title_color: u32 = if (selected) 0xFFFFFFFF else 0xFF000000;
         const desktop_color: u32 = if (selected) 0xFF000000 else 0xFFFFFFFF;
 
         // Title: bottom-center.
-        const title_baseline = tile.y + Grid.TILE_H - TILE_TEXT_PAD;
-        const max_w = Grid.TILE_W - 2 * TILE_TEXT_PAD;
+        const title_baseline = ty + tile_h - tile_pad;
+        const max_w = tile_w - 2 * tile_pad;
         const clipped = clipForWidth(tile.dw.title, tile_text, max_w);
         const title_w = tile_text.measure(clipped) catch 0;
-        const title_x = tile.x + @divFloor(Grid.TILE_W - title_w, 2);
+        const title_x = tx + @divFloor(tile_w - title_w, 2);
         _ = tile_text.draw(pixels, pw, pw, ph, title_x, title_baseline, clipped, title_color) catch 0;
 
         // Desktop number: top-right corner.
@@ -64,20 +81,23 @@ pub fn render(
         else
             "";
         const dn_w = desktop_text.measure(desktop_str) catch 0;
-        const dn_x = tile.x + Grid.TILE_W - TILE_TEXT_PAD - dn_w;
-        const dn_baseline = tile.y + desktop_text.ascent + 2;
+        const dn_x = tx + tile_w - tile_pad - dn_w;
+        const dn_baseline = ty + desktop_text.ascent + S.s(2);
         _ = desktop_text.draw(pixels, pw, pw, ph, dn_x, dn_baseline, desktop_str, desktop_color) catch 0;
     }
 
     // Search box — white fill, gray border, black text.
-    const sx: i32 = @divFloor(@as(i32, @intCast(pw)) - Grid.SEARCH_W, 2);
-    const sy: i32 = @as(i32, @intCast(ph)) - Grid.SEARCH_BOTTOM_OFFSET;
-    fillRect(pixels, pw, sx, sy, Grid.SEARCH_W, Grid.SEARCH_H, theme.search_bg);
-    drawRect(pixels, pw, sx, sy, Grid.SEARCH_W, Grid.SEARCH_H, theme.search_border);
+    const search_w = S.s(Grid.SEARCH_W);
+    const search_h = S.s(Grid.SEARCH_H);
+    const search_pad = S.s(SEARCH_PAD);
+    const sx: i32 = @divFloor(@as(i32, @intCast(pw)) - search_w, 2);
+    const sy: i32 = @as(i32, @intCast(ph)) - S.s(Grid.SEARCH_BOTTOM_OFFSET);
+    fillRect(pixels, pw, sx, sy, search_w, search_h, theme.search_bg);
+    drawRect(pixels, pw, sx, sy, search_w, search_h, theme.search_border);
     const search = grid.searchSlice();
     if (search.len > 0) {
-        const baseline = sy + Grid.SEARCH_H - @divFloor(Grid.SEARCH_H - search_text.ascent, 2);
-        _ = search_text.draw(pixels, pw, pw, ph, sx + SEARCH_PAD, baseline, search, theme.search_text) catch 0;
+        const baseline = sy + search_h - @divFloor(search_h - search_text.ascent, 2);
+        _ = search_text.draw(pixels, pw, pw, ph, sx + search_pad, baseline, search, theme.search_text) catch 0;
     }
     _ = common; // (kept for future per-tile icon support)
 }

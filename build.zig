@@ -76,6 +76,8 @@ const wayland_protocols = [_]WaylandProtocol{
     .{ .xml = "protocols/wlr-foreign-toplevel-management-unstable-v1.xml", .name = "wlr-foreign-toplevel-management-unstable-v1-client-protocol" },
     .{ .xml = "protocols/plasma-window-management.xml", .name = "plasma-window-management-client-protocol" },
     .{ .xml = "protocols/plasma-virtual-desktop.xml", .name = "plasma-virtual-desktop-client-protocol" },
+    .{ .xml = "protocols/fractional-scale-v1.xml", .name = "fractional-scale-v1-client-protocol" },
+    .{ .xml = "protocols/viewporter.xml", .name = "viewporter-client-protocol" },
 };
 
 fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, build_options: *std.Build.Step.Options, mock_backend: bool) void {

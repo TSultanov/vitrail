@@ -26,13 +26,16 @@ const Globals = struct {
     shm: ?*c.wl_shm = null,
     layer_shell: ?*c.zwlr_layer_shell_v1 = null,
     seat: ?*c.wl_seat = null,
+    fractional_scale_mgr: ?*c.wp_fractional_scale_manager_v1 = null,
+    viewporter: ?*c.wp_viewporter = null,
 };
 
 // Sized to roughly match Win32 DEFAULT_GUI_FONT (Tahoma ~9pt → ~12px) and the
-// Segoe UI Bold 32pt-scaled badge used for the desktop number.
-const FONT_TILE: u32 = 12;
-const FONT_SEARCH: u32 = 12;
-const FONT_DESKTOP: u32 = 32;
+// Segoe UI Bold 32pt-scaled badge used for the desktop number. Logical units —
+// the actual FreeType pixel size is these values × surface scale.
+const LOGICAL_FONT_TILE: u32 = 12;
+const LOGICAL_FONT_SEARCH: u32 = 12;
+const LOGICAL_FONT_DESKTOP: u32 = 32;
 
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
@@ -96,12 +99,27 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
         return error.MissingWaylandGlobals;
     }
 
-    try self.layer.init(self.globals.compositor.?, self.globals.layer_shell.?, &self.closed);
+    try self.layer.init(
+        self.globals.compositor.?,
+        self.globals.layer_shell.?,
+        self.globals.fractional_scale_mgr,
+        self.globals.viewporter,
+        &self.closed,
+    );
 
+    // One roundtrip to get the configure (logical w/h). preferred_scale is
+    // typically delivered alongside or shortly after; we re-check below.
     _ = c.wl_display_roundtrip(display);
     if (!self.layer.configured) return error.LayerSurfaceNotConfigured;
 
-    try self.shm_pool.init(self.globals.shm.?, self.layer.width, self.layer.height);
+    // Second roundtrip lets preferred_scale settle if it didn't arrive yet.
+    _ = c.wl_display_roundtrip(display);
+
+    const phys = self.layer.physicalSize();
+    try self.shm_pool.init(self.globals.shm.?, phys.w, phys.h);
+    self.layer.applyViewport();
+    self.layer.size_dirty = false;
+
     try self.cursor.init(self.globals.compositor.?, self.globals.shm.?);
     self.mouse.setCursor(&self.cursor);
 
@@ -112,14 +130,18 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
 
     self.grid.setViewport(@intCast(self.layer.width), @intCast(self.layer.height));
 
-    self.tile_text = try text.Renderer.create(allocator, FONT_TILE, .regular);
+    self.tile_text = try text.Renderer.create(allocator, scaledFont(LOGICAL_FONT_TILE, self.layer.scale_q120), .regular);
     errdefer self.tile_text.destroy();
-    self.search_text = try text.Renderer.create(allocator, FONT_SEARCH, .regular);
+    self.search_text = try text.Renderer.create(allocator, scaledFont(LOGICAL_FONT_SEARCH, self.layer.scale_q120), .regular);
     errdefer self.search_text.destroy();
-    self.desktop_text = try text.Renderer.create(allocator, FONT_DESKTOP, .bold);
+    self.desktop_text = try text.Renderer.create(allocator, scaledFont(LOGICAL_FONT_DESKTOP, self.layer.scale_q120), .bold);
     errdefer self.desktop_text.destroy();
 
     return self;
+}
+
+fn scaledFont(logical: u32, scale_q120: u32) u32 {
+    return (logical * scale_q120 + 60) / 120;
 }
 
 pub fn deinit(self: *Self) void {
@@ -166,10 +188,12 @@ pub fn synthesizeMouse(self: *Self, action: Mouse.Action) void {
     onMouseAction(self, action);
 }
 pub fn renderInto(self: *Self, pixels: []u32) void {
+    // Test driver renders at scale 1.0 into a logical-sized buffer.
     Renderer.render(
         pixels,
         self.layer.width,
         self.layer.height,
+        120,
         &self.grid,
         &self.tile_text,
         &self.search_text,
@@ -195,11 +219,14 @@ pub fn dispatch(self: *Self) bool {
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 fn repaint(self: *Self) !void {
+    if (self.layer.size_dirty) try self.rebuildForScale();
     const buf = self.shm_pool.acquire() orelse return;
+    const phys = self.layer.physicalSize();
     Renderer.render(
         buf.pixels,
-        self.layer.width,
-        self.layer.height,
+        phys.w,
+        phys.h,
+        self.layer.scale_q120,
         &self.grid,
         &self.tile_text,
         &self.search_text,
@@ -208,6 +235,23 @@ fn repaint(self: *Self) !void {
     );
     self.layer.attachAndCommit(buf.buf);
     self.shm_pool.submit(buf);
+}
+
+fn rebuildForScale(self: *Self) !void {
+    self.shm_pool.deinit();
+    const phys = self.layer.physicalSize();
+    try self.shm_pool.init(self.globals.shm.?, phys.w, phys.h);
+    self.layer.applyViewport();
+
+    self.tile_text.destroy();
+    self.search_text.destroy();
+    self.desktop_text.destroy();
+    self.tile_text = try text.Renderer.create(self.allocator, scaledFont(LOGICAL_FONT_TILE, self.layer.scale_q120), .regular);
+    self.search_text = try text.Renderer.create(self.allocator, scaledFont(LOGICAL_FONT_SEARCH, self.layer.scale_q120), .regular);
+    self.desktop_text = try text.Renderer.create(self.allocator, scaledFont(LOGICAL_FONT_DESKTOP, self.layer.scale_q120), .bold);
+
+    self.grid.setViewport(@intCast(self.layer.width), @intCast(self.layer.height));
+    self.layer.size_dirty = false;
 }
 
 fn activateSelected(self: *Self) void {
@@ -233,6 +277,10 @@ fn onRegistryGlobal(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, ifa
         // which the compositor sends right after binding, lands in our
         // onSeatCaps callback in this same roundtrip.
         _ = c.wl_seat_add_listener(seat, &self.seat_listener, self);
+    } else if (std.mem.eql(u8, s, "wp_fractional_scale_manager_v1")) {
+        self.globals.fractional_scale_mgr = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_fractional_scale_manager_v1_interface, @min(version, 1)));
+    } else if (std.mem.eql(u8, s, "wp_viewporter")) {
+        self.globals.viewporter = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_viewporter_interface, @min(version, 1)));
     }
 }
 
