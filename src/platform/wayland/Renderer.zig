@@ -21,6 +21,12 @@ pub const Theme = struct {
 };
 
 pub const TILE_TEXT_PAD: i32 = 5;
+// Icon margins mirror the Windows Tile.drawIcon layout (Tile.zig:147-150):
+// the icon fills as large as possible inside an inset rect, then is
+// centered within that rect.
+pub const TILE_ICON_MARGIN_TOP: i32 = 20;
+pub const TILE_ICON_MARGIN_SIDE: i32 = 14;
+pub const TILE_ICON_MARGIN_BOT: i32 = 32;
 pub const SEARCH_PAD: i32 = 4;
 
 pub fn render(
@@ -63,6 +69,23 @@ pub fn render(
         const fill: u32 = 0xFF000000 | ColorHash.createColor(tile.dw.app_id, selected);
         fillRect(pixels, pw, tx + 1, ty + 1, tile_w - 2, tile_h - 2, fill);
 
+        // Application icon: square, centered inside the same inset rect the
+        // Windows Tile uses (margins above/below/sides). Size is the largest
+        // square that fits the inset.
+        if (tile.dw.icon) |ic| {
+            const m_top = S.s(TILE_ICON_MARGIN_TOP);
+            const m_side = S.s(TILE_ICON_MARGIN_SIDE);
+            const m_bot = S.s(TILE_ICON_MARGIN_BOT);
+            const inner_w = tile_w - 2 * m_side;
+            const inner_h = tile_h - m_top - m_bot;
+            if (inner_w > 0 and inner_h > 0) {
+                const icon_size = @min(inner_w, inner_h);
+                const icon_x = tx + m_side + @divFloor(inner_w - icon_size, 2);
+                const icon_y = ty + m_top + @divFloor(inner_h - icon_size, 2);
+                blitRgba(pixels, pw, ph, icon_x, icon_y, icon_size, icon_size, &ic);
+            }
+        }
+
         const title_color: u32 = if (selected) 0xFFFFFFFF else 0xFF000000;
         const desktop_color: u32 = if (selected) 0xFF000000 else 0xFFFFFFFF;
 
@@ -99,7 +122,6 @@ pub fn render(
         const baseline = sy + search_h - @divFloor(search_h - search_text.ascent, 2);
         _ = search_text.draw(pixels, pw, pw, ph, sx + search_pad, baseline, search, theme.search_text) catch 0;
     }
-    _ = common; // (kept for future per-tile icon support)
 }
 
 fn clipForWidth(s: []const u8, r: *text.Renderer, max_w: i32) []const u8 {
@@ -131,6 +153,54 @@ pub fn fillRect(pixels: []u32, stride: u32, x: i32, y: i32, rw: i32, rh: i32, co
         var px: i32 = x0;
         while (px < x1) : (px += 1) {
             pixels[row_off + @as(usize, @intCast(px))] = color;
+        }
+    }
+}
+
+/// Nearest-neighbour scale + alpha-over of an RGBA8 source onto the BGRA(8888)
+/// pixel buffer. Source is straight-alpha (un-premultiplied). Destination
+/// pixels are 0xAARRGGBB on little-endian (matching the rest of Renderer).
+fn blitRgba(pixels: []u32, stride: u32, ph: u32, x: i32, y: i32, dst_w: i32, dst_h: i32, src: *const common.RgbaIcon) void {
+    if (dst_w <= 0 or dst_h <= 0) return;
+    if (src.width == 0 or src.height == 0) return;
+
+    const max_row = @as(i32, @intCast(ph));
+    const x0 = @max(0, x);
+    const y0 = @max(0, y);
+    const x1 = @min(@as(i32, @intCast(stride)), x + dst_w);
+    const y1 = @min(max_row, y + dst_h);
+    if (x0 >= x1 or y0 >= y1) return;
+
+    var py: i32 = y0;
+    while (py < y1) : (py += 1) {
+        const dy = py - y; // 0..dst_h
+        const sy_u: u64 = (@as(u64, @intCast(dy)) * src.height) / @as(u64, @intCast(dst_h));
+        const row_off: usize = @as(usize, @intCast(py)) * stride;
+        const src_row_off: usize = @as(usize, @intCast(sy_u)) * src.width * 4;
+        var px: i32 = x0;
+        while (px < x1) : (px += 1) {
+            const dx = px - x;
+            const sx_u: u64 = (@as(u64, @intCast(dx)) * src.width) / @as(u64, @intCast(dst_w));
+            const sp = src_row_off + @as(usize, @intCast(sx_u)) * 4;
+            const sr: u32 = src.pixels[sp + 0];
+            const sg: u32 = src.pixels[sp + 1];
+            const sb: u32 = src.pixels[sp + 2];
+            const sa: u32 = src.pixels[sp + 3];
+            if (sa == 0) continue;
+            const dst_idx = row_off + @as(usize, @intCast(px));
+            if (sa == 255) {
+                pixels[dst_idx] = 0xFF000000 | (sr << 16) | (sg << 8) | sb;
+                continue;
+            }
+            const dst = pixels[dst_idx];
+            const dr: u32 = (dst >> 16) & 0xFF;
+            const dg: u32 = (dst >> 8) & 0xFF;
+            const db: u32 = dst & 0xFF;
+            const inv: u32 = 255 - sa;
+            const r = (sr * sa + dr * inv + 127) / 255;
+            const g = (sg * sa + dg * inv + 127) / 255;
+            const b = (sb * sa + db * inv + 127) / 255;
+            pixels[dst_idx] = 0xFF000000 | (r << 16) | (g << 8) | b;
         }
     }
 }

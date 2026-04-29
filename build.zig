@@ -114,6 +114,11 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     exe_mod.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
     exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
     exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/freetype2" });
+    exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/glib-2.0" });
+    exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/lib64/glib-2.0/include" });
+    exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/cairo" });
+    exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/librsvg-2.0" });
+    exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include/gdk-pixbuf-2.0" });
     exe_mod.linkSystemLibrary("c", .{});
     exe_mod.linkSystemLibrary("wayland-client", .{});
     exe_mod.linkSystemLibrary("wayland-cursor", .{});
@@ -121,6 +126,12 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     exe_mod.linkSystemLibrary("freetype", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("fontconfig", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("systemd", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("png", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("rsvg-2", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("cairo", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("gobject-2.0", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("glib-2.0", .{ .use_pkg_config = .no });
+    exe_mod.linkSystemLibrary("gio-2.0", .{ .use_pkg_config = .no });
     exe_mod.addIncludePath(generated_headers.getDirectory());
 
     // Compile each generated private-code C file into the binary.
@@ -138,6 +149,14 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     if (!mock_backend) {
         exe_mod.addCSourceFile(.{
             .file = b.path("src/platform/wayland/kde_dbus_shim.c"),
+            .flags = &.{"-std=c99"},
+        });
+        exe_mod.addCSourceFile(.{
+            .file = b.path("src/platform/wayland/png_decode.c"),
+            .flags = &.{"-std=c99"},
+        });
+        exe_mod.addCSourceFile(.{
+            .file = b.path("src/platform/wayland/svg_decode.c"),
             .flags = &.{"-std=c99"},
         });
     }

@@ -28,12 +28,14 @@ const Entry = struct {
     app_id: [:0]u8,
     uuid: [:0]u8, // KWin internalId, used to address the window for activation
     desktop: ?usize, // 0-based; renderer adds 1 for display
+    desktop_file: ?[:0]u8, // Window.desktopFileName from KWin; null if KWin didn't have one
     allocator: std.mem.Allocator,
 
     fn destroy(self: Entry) void {
         self.allocator.free(self.title);
         self.allocator.free(self.app_id);
         self.allocator.free(self.uuid);
+        if (self.desktop_file) |df| self.allocator.free(df);
     }
 };
 
@@ -95,11 +97,18 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const app_id = try allocator.dupeZ(u8, app_id_src);
         errdefer allocator.free(app_id);
 
+        const desktop_file: ?[:0]u8 = if (entry.desktop_file) |df|
+            try allocator.dupeZ(u8, df)
+        else
+            null;
+        errdefer if (desktop_file) |df| allocator.free(df);
+
         try list.append(.{
             .platform_handle = idx,
             .title = title,
             .title_lower = title_lower,
             .app_id = app_id,
+            .desktop_file = desktop_file,
             .icon = null,
             .desktopNumber = entry.desktop,
             .allocator = allocator,
@@ -143,6 +152,7 @@ const enum_script_template =
     \\    title: w.caption,
     \\    app: w.resourceClass,
     \\    desk: (w.desktops && w.desktops.length > 0) ? w.desktops[0].x11DesktopNumber : null,
+    \\    df: w.desktopFileName || "",
     \\  }}));
     \\callDBus(me, "/vitrail", "org.vitrail.IPC", "Submit", JSON.stringify(wins));
     \\
@@ -198,6 +208,7 @@ const WindowJson = struct {
     title: []const u8,
     app: []const u8,
     desk: ?u32 = null,
+    df: []const u8 = "",
 };
 
 fn parsePayload(self: *Self, json: []const u8) !void {
@@ -206,11 +217,13 @@ fn parsePayload(self: *Self, json: []const u8) !void {
 
     for (parsed.value) |w| {
         const desktop: ?usize = if (w.desk) |d| (if (d >= 1) d - 1 else 0) else null;
+        const desktop_file: ?[:0]u8 = if (w.df.len > 0) try self.allocator.dupeZ(u8, w.df) else null;
         const entry = Entry{
             .title = try self.allocator.dupeZ(u8, w.title),
             .app_id = try self.allocator.dupeZ(u8, w.app),
             .uuid = try self.allocator.dupeZ(u8, w.id),
             .desktop = desktop,
+            .desktop_file = desktop_file,
             .allocator = self.allocator,
         };
         errdefer entry.destroy();
