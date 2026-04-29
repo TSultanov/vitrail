@@ -79,6 +79,20 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         list.deinit();
     }
 
+    // Dedupe macOS native window tabs: each tab is a distinct CGWindow
+    // even though only one is visible. Tabs of one window share exact
+    // size and near-identical origin (Ghostty/Terminal report each tab
+    // at the parent window's frame, with small per-tab drift). Key on
+    // (pid, x_bucket(100), y_bucket(100), w, h): same app, same size,
+    // origin within a 100-px cell. Two genuinely distinct windows of
+    // the same app at this granularity is unusual; tabs always collide.
+    // First-seen wins, and the on-screen tab appears first in the
+    // CGWindowListCopyWindowInfo order, so the visible one survives.
+    // AltTab/Rectangle use the Accessibility API (kAXTabsAttribute);
+    // this heuristic avoids that dependency.
+    var seen_tabs = std.AutoHashMap(u64, void).init(allocator);
+    defer seen_tabs.deinit();
+
     const count = cg.CFArrayGetCount(@ptrCast(arr));
     var i: cg.CFIndex = 0;
     while (i < count) : (i += 1) {
@@ -118,13 +132,6 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
 
         const has_title = if (title_str) |t| cf.c.CFStringGetLength(t) > 0 else false;
 
-        // kCGWindowIsOnscreen = 1 → window lives on the current Space.
-        // Off-Space entries that are real user windows DO have titles
-        // (Anki/Safari/Calendar/etc. in our dump); off-Space CGS junk
-        // (menu-bar strips, helper UI, AutoFill stubs) does not. So:
-        // require a real title for off-Space entries, and accept
-        // owner-name fallback only for on-screen entries (so the grid
-        // remains usable when Screen Recording is not granted).
         const is_onscreen = blk: {
             const n = cf.cfDictGetNumber(dict, "kCGWindowIsOnscreen") orelse break :blk false;
             const v = cf.cfNumberToI64(n) orelse 0;
@@ -132,10 +139,63 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         };
         if (!is_onscreen and !has_title) continue;
 
+        // Look up the window's Space membership via CGS. Used for two
+        // things: filtering hidden helper windows, and resolving the
+        // 0-based desktop index for the badge. Real off-screen windows
+        // (Anki/Safari/Calendar on other Spaces) report ≥1 Space; pure
+        // hidden state (Activity Monitor's "Dock Icon Host", AdGuard
+        // Mini's hidden popover, Anki's preferences sheet) report 0.
+        // CGSCopySpacesForWindows is the only way to tell them apart —
+        // they all have plausible bounds and titles otherwise.
+        const SpaceInfo = struct { count: c_long, single_idx: ?usize };
+        const space_info: SpaceInfo = blk: {
+            var wid_val: c_int = @intCast(wid);
+            const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse
+                break :blk .{ .count = -1, .single_idx = null };
+            defer cf.c.CFRelease(wid_cfnum);
+            var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
+            const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse
+                break :blk .{ .count = -1, .single_idx = null };
+            defer cf.c.CFRelease(wids_arr);
+            const spaces_arr = cgs.CGSCopySpacesForWindows(cid, cgs.SPACE_MASK_ALL, wids_arr) orelse
+                break :blk .{ .count = -1, .single_idx = null };
+            defer cf.c.CFRelease(spaces_arr);
+            const sc = cg.CFArrayGetCount(@ptrCast(spaces_arr));
+            if (sc != 1) break :blk .{ .count = sc, .single_idx = null };
+            const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse
+                break :blk .{ .count = sc, .single_idx = null };
+            const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
+            const sid = cf.cfNumberToI64(sn) orelse break :blk .{ .count = sc, .single_idx = null };
+            break :blk .{ .count = sc, .single_idx = space_index.get(sid) };
+        };
+        if (!is_onscreen and space_info.count == 0) continue;
+
         const title_src: cf.c.CFStringRef = if (has_title) title_str.? else (owner_str orelse continue);
 
         const title = try cf.cfStringDupeZ(allocator, title_src);
         errdefer allocator.free(title);
+
+        // Tab dedupe: (pid, x_bucket, y_bucket, w, h).
+        const dedupe_key: u64 = blk: {
+            var h = std.hash.Wyhash.init(0);
+            h.update(std.mem.asBytes(&pid));
+            const x_i: i32 = @intFromFloat(@round(bounds_rect.origin.x));
+            const y_i: i32 = @intFromFloat(@round(bounds_rect.origin.y));
+            const x_b: i32 = @divFloor(x_i, 100);
+            const y_b: i32 = @divFloor(y_i, 100);
+            const w_i: i32 = @intFromFloat(@round(bounds_rect.size.width));
+            const h_i: i32 = @intFromFloat(@round(bounds_rect.size.height));
+            h.update(std.mem.asBytes(&x_b));
+            h.update(std.mem.asBytes(&y_b));
+            h.update(std.mem.asBytes(&w_i));
+            h.update(std.mem.asBytes(&h_i));
+            break :blk h.final();
+        };
+        if (seen_tabs.contains(dedupe_key)) {
+            allocator.free(title);
+            continue;
+        }
+        try seen_tabs.put(dedupe_key, {});
 
         const title_lower = try allocator.allocSentinel(u8, title.len, 0);
         errdefer allocator.free(title_lower);
@@ -145,25 +205,10 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const app_id = try cf.cfStringDupeZ(allocator, app_id_src);
         errdefer allocator.free(app_id);
 
-        // Resolve the window's Space → flat 0-based desktop index.
         // 1 Space → that index; 0 or many → null. Many = "Show on All
         // Spaces"; the renderer leaves the badge blank for null, matching
         // the KdeBackend's all-desktops convention.
-        const desktop_number: ?usize = blk: {
-            var wid_val: c_int = @intCast(wid);
-            const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk null;
-            defer cf.c.CFRelease(wid_cfnum);
-            var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
-            const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk null;
-            defer cf.c.CFRelease(wids_arr);
-            const spaces_arr = cgs.CGSCopySpacesForWindows(cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk null;
-            defer cf.c.CFRelease(spaces_arr);
-            if (cg.CFArrayGetCount(@ptrCast(spaces_arr)) != 1) break :blk null;
-            const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :blk null;
-            const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
-            const sid = cf.cfNumberToI64(sn) orelse break :blk null;
-            break :blk space_index.get(sid);
-        };
+        const desktop_number: ?usize = space_info.single_idx;
 
         const idx = self.handles.items.len;
         try self.handles.append(self.allocator, .{ .pid = @intCast(pid), .window_id = @intCast(wid) });

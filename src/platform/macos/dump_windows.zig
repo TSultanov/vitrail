@@ -56,6 +56,9 @@ pub fn main() !void {
         const opts = variant.opts;
         print("\n========== {s} ==========\n", .{label});
 
+        var seen_tabs = std.AutoHashMap(u64, void).init(allocator);
+        defer seen_tabs.deinit();
+
         const arr = cg.CGWindowListCopyWindowInfo(opts, cg.kCGNullWindowID);
         if (arr == null) {
             print("  CGWindowListCopyWindowInfo returned null\n", .{});
@@ -98,6 +101,8 @@ pub fn main() !void {
             else
                 -1;
 
+            var bx: f64 = 0;
+            var by: f64 = 0;
             var bw: f64 = 0;
             var bh: f64 = 0;
             if (cf.c.CFDictionaryGetValue(dict, blk: {
@@ -107,10 +112,20 @@ pub fn main() !void {
                 const bdict: cf.c.CFDictionaryRef = @ptrCast(@constCast(bv));
                 var rect: cg.CGRect = undefined;
                 if (cg.CGRectMakeWithDictionaryRepresentation(@ptrCast(bdict), &rect)) {
+                    bx = rect.origin.x;
+                    by = rect.origin.y;
                     bw = rect.size.width;
                     bh = rect.size.height;
                 }
             }
+            const sharing: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowSharingState")) |n|
+                cf.cfNumberToI64(n) orelse -1
+            else
+                -1;
+            const memuse: i64 = if (cf.cfDictGetNumber(dict, "kCGWindowMemoryUsage")) |n|
+                cf.cfNumberToI64(n) orelse -1
+            else
+                -1;
 
             const owner_buf = blk: {
                 const s = cf.cfDictGetString(dict, "kCGWindowOwnerName") orelse break :blk null;
@@ -156,11 +171,31 @@ pub fn main() !void {
             // Apply production filter and tag.
             const has_title = if (title_buf) |b| b.len > 0 else false;
             const is_onscreen = onscreen == 1;
-            const passes = layer == 0 and
+            const has_no_space = std.mem.eql(u8, sid_str, "[]");
+            const passes_filter = layer == 0 and
                 bw >= 100 and bh >= 50 and
-                (is_onscreen or has_title);
-            const tag: []const u8 = if (passes) "KEEP" else "drop";
-            print("  [{s}] pid={d:>5} wid={d:>6} layer={d:>4} store={d} alpha={d:.2} on={d} {d:>4.0}x{d:<4.0} space={s:<14} owner={s:<32} title={s}\n", .{
+                (is_onscreen or has_title) and
+                !(has_no_space and !is_onscreen);
+            const tab_key: u64 = blk: {
+                var h = std.hash.Wyhash.init(0);
+                h.update(std.mem.asBytes(&pid));
+                const x_i: i32 = @intFromFloat(@round(bx));
+                const y_i: i32 = @intFromFloat(@round(by));
+                const x_b: i32 = @divFloor(x_i, 100);
+                const y_b: i32 = @divFloor(y_i, 100);
+                const w_i: i32 = @intFromFloat(@round(bw));
+                const h_i: i32 = @intFromFloat(@round(bh));
+                h.update(std.mem.asBytes(&x_b));
+                h.update(std.mem.asBytes(&y_b));
+                h.update(std.mem.asBytes(&w_i));
+                h.update(std.mem.asBytes(&h_i));
+                break :blk h.final();
+            };
+            const is_tab_dup = passes_filter and seen_tabs.contains(tab_key);
+            if (passes_filter and !is_tab_dup) try seen_tabs.put(tab_key, {});
+            const passes = passes_filter and !is_tab_dup;
+            const tag: []const u8 = if (passes) "KEEP" else if (is_tab_dup) "TAB " else "drop";
+            print("  [{s}] pid={d:>5} wid={d:>6} L={d:>3} st={d} a={d:.1} on={d:>2} share={d} mem={d:>9} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} owner={s:<24} title={s}\n", .{
                 tag,
                 pid,
                 wid,
@@ -168,6 +203,10 @@ pub fn main() !void {
                 store,
                 alpha,
                 onscreen,
+                sharing,
+                memuse,
+                bx,
+                by,
                 bw,
                 bh,
                 sid_str,
