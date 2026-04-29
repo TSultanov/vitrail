@@ -96,6 +96,9 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         const app_id_src = if (entry.app_id.len > 0) entry.app_id else entry.title;
         const app_id = try allocator.dupeZ(u8, app_id_src);
         errdefer allocator.free(app_id);
+        const app_id_lower = try allocator.dupeZ(u8, app_id_src);
+        errdefer allocator.free(app_id_lower);
+        for (app_id_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
 
         const desktop_file: ?[:0]u8 = if (entry.desktop_file) |df|
             try allocator.dupeZ(u8, df)
@@ -108,6 +111,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
             .title = title,
             .title_lower = title_lower,
             .app_id = app_id,
+            .app_id_lower = app_id_lower,
             .desktop_file = desktop_file,
             .icon = null,
             .desktopNumber = entry.desktop,

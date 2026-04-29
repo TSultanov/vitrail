@@ -107,12 +107,16 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         for (title_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
         const app_id = try allocator.dupeZ(u8, entry.app_id);
         errdefer allocator.free(app_id);
+        const app_id_lower = try allocator.dupeZ(u8, entry.app_id);
+        errdefer allocator.free(app_id_lower);
+        for (app_id_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
 
         try list.append(.{
             .platform_handle = idx,
             .title = title,
             .title_lower = title_lower,
             .app_id = app_id,
+            .app_id_lower = app_id_lower,
             .icon = null,
             .desktopNumber = null,
             .allocator = allocator,

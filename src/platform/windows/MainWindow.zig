@@ -292,7 +292,9 @@ fn updateVisibility(self: *Self) !void {
         if (search_utf8.len <= 1) {
             tile.visible = true;
         } else {
-            if (std.mem.containsAtLeast(u8, dw.title_lower, 1, search_utf8)) {
+            if (std.mem.containsAtLeast(u8, dw.title_lower, 1, search_utf8) or
+                std.mem.containsAtLeast(u8, dw.app_id_lower, 1, search_utf8))
+            {
                 tile.visible = true;
             } else {
                 if (self.layout.selected_idx) |s| {

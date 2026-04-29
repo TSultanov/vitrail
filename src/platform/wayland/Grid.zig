@@ -103,7 +103,9 @@ pub fn rebuild(self: *Self) !void {
 
     var visible_idx: usize = 0;
     for (dws) |dw| {
-        const matches = filter.len == 0 or std.mem.indexOf(u8, dw.title_lower, filter) != null;
+        const matches = filter.len == 0 or
+            std.mem.indexOf(u8, dw.title_lower, filter) != null or
+            std.mem.indexOf(u8, dw.app_id_lower, filter) != null;
         if (!matches) {
             try self.tiles.append(self.allocator, .{ .dw = dw, .x = 0, .y = 0, .visible = false });
             continue;

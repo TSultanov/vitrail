@@ -354,6 +354,10 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     const app_id_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
     errdefer ctx.allocator.free(app_id_z);
 
+    const app_id_lower = try ctx.allocator.allocSentinel(u8, app_id_z.len, 0);
+    errdefer ctx.allocator.free(app_id_lower);
+    for (app_id_z, 0..) |ch, i| app_id_lower[i] = std.ascii.toLower(ch);
+
     _ = cf.c.CFRetain(win_elem);
     const idx = self.handles.items.len;
     self.handles.append(self.allocator, .{
@@ -370,6 +374,7 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
         .title = title_z,
         .title_lower = title_lower,
         .app_id = app_id_z,
+        .app_id_lower = app_id_lower,
         .icon = null,
         .desktopNumber = desktop_number,
         .allocator = ctx.allocator,

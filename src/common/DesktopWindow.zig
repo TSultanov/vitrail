@@ -20,6 +20,7 @@ pub const DesktopWindow = struct {
     title: [:0]u8, // UTF-8, allocator-owned
     title_lower: [:0]u8, // UTF-8 lowercase for search, allocator-owned
     app_id: [:0]u8, // Win32 class name or Wayland app_id; used for color hashing
+    app_id_lower: [:0]u8, // UTF-8 lowercase of app_id for search, allocator-owned
     // .desktop file basename (no .desktop suffix) the window's compositor
     // associates with this window. KDE provides it via Window.desktopFileName;
     // wlroots/Windows leave it null. Used as a strong icon-lookup hint.
@@ -32,6 +33,7 @@ pub const DesktopWindow = struct {
         self.allocator.free(self.title);
         self.allocator.free(self.title_lower);
         self.allocator.free(self.app_id);
+        self.allocator.free(self.app_id_lower);
         if (self.desktop_file) |df| self.allocator.free(df);
         if (self.icon) |ic| ic.destroy();
     }

@@ -137,6 +137,9 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         const actual_class = std.mem.sliceTo(class_utf16, 0);
         const app_id = try std.unicode.utf16LeToUtf8AllocZ(allocator, actual_class);
         errdefer allocator.free(app_id);
+        const app_id_lower = try allocator.dupeZ(u8, app_id);
+        errdefer allocator.free(app_id_lower);
+        for (app_id_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
 
         const icon_opt: ?common.RgbaIcon = blk: {
             const hicon = getWindowIcon(hwnd) catch break :blk null;
@@ -157,6 +160,7 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
             .title = title,
             .title_lower = title_lower,
             .app_id = app_id,
+            .app_id_lower = app_id_lower,
             .icon = icon_opt,
             .desktopNumber = desktopsMap.get(desktopId),
             .allocator = allocator,
