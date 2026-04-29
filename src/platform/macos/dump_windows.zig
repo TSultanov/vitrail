@@ -33,6 +33,10 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // Init NSApp + install the activation observer so vt_app_activation_ordinal
+    // returns the same seeded values the production app sees on cold start.
+    bridge.vt_app_init();
+
     const print = std.debug.print;
     print("[ax] AXIsProcessTrusted = {d}\n", .{ax.AXIsProcessTrusted()});
 
@@ -67,10 +71,30 @@ pub fn main() !void {
         return;
     }
 
+    // Global onscreen z-order — same map the production backend builds.
+    var wid_zorder = std.AutoHashMap(u32, u32).init(allocator);
+    defer wid_zorder.deinit();
+    {
+        const opts: u32 = cg.kCGWindowListOptionOnScreenOnly | cg.kCGWindowListExcludeDesktopElements;
+        if (cg.CGWindowListCopyWindowInfo(opts, cg.kCGNullWindowID)) |arr| {
+            defer cf.c.CFRelease(arr);
+            const n = cg.CFArrayGetCount(@ptrCast(arr));
+            var i: cg.CFIndex = 0;
+            while (i < n) : (i += 1) {
+                const dptr = cg.CFArrayGetValueAtIndex(@ptrCast(arr), i) orelse continue;
+                const dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dptr));
+                const num = cf.cfDictGetNumber(dict, "kCGWindowNumber") orelse continue;
+                var v: i64 = 0;
+                if (cf.c.CFNumberGetValue(num, cf.c.kCFNumberSInt64Type, &v) == 0) continue;
+                const wid: u32 = @intCast(v);
+                if (!wid_zorder.contains(wid)) try wid_zorder.put(wid, @intCast(i));
+            }
+        }
+    }
+    print("[zorder] {d} onscreen window(s)\n", .{wid_zorder.count()});
+
     const k_windows = cfStr("AXWindows") orelse return;
     defer cf.c.CFRelease(k_windows);
-    const k_main_window = cfStr("AXMainWindow") orelse return;
-    defer cf.c.CFRelease(k_main_window);
     const k_title = cfStr("AXTitle") orelse return;
     defer cf.c.CFRelease(k_title);
     const k_subrole = cfStr("AXSubrole") orelse return;
@@ -96,6 +120,11 @@ pub fn main() !void {
     if (pid_count <= 0) return;
     const pids = pids_ptr[0..@intCast(pid_count)];
 
+    // Mirrors AXWindowBackend dedupe state. emitted_wids dedupes between
+    // phase-1 (AXWindows) and phase-2 (brute-force) for each pid.
+    var emitted_wids = std.AutoHashMap(u32, void).init(allocator);
+    defer emitted_wids.deinit();
+
     for (pids) |pid_c| {
         const pid: i32 = @intCast(pid_c);
         const app_elem = ax.AXUIElementCreateApplication(pid) orelse {
@@ -107,22 +136,21 @@ pub fn main() !void {
         const app_name_c = bridge.vt_app_name_for_pid(pid);
         defer if (app_name_c) |p| bridge.vt_free(@ptrCast(@constCast(p)));
         const app_name: []const u8 = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "(?)";
+        const app_ordinal = bridge.vt_app_activation_ordinal(pid);
 
+        // Phase 1: AXWindows.
         var wins_ref: cf.c.CFTypeRef = null;
         const err = ax.AXUIElementCopyAttributeValue(app_elem, k_windows, &wins_ref);
-        var emitted_any = false;
         if (err == ax.kAXErrorSuccess and wins_ref != null) {
             defer cf.c.CFRelease(wins_ref);
             const wins_arr: cf.c.CFArrayRef = @ptrCast(@constCast(wins_ref));
             const wcount = cg.CFArrayGetCount(@ptrCast(wins_arr));
-            print("pid={d:<6} app=\"{s}\" wins={d}\n", .{ pid, app_name, wcount });
+            print("pid={d:<6} app=\"{s}\" mru={d} wins={d}\n", .{ pid, app_name, app_ordinal, wcount });
             var wi: cg.CFIndex = 0;
             while (wi < wcount) : (wi += 1) {
                 const wptr = cg.CFArrayGetValueAtIndex(@ptrCast(wins_arr), wi) orelse continue;
                 const win_elem: ax.UIElementRef = @ptrCast(@constCast(wptr));
-                if (try printAxWindow(allocator, win_elem, "AXWindows", k_role, k_subrole, k_title, k_size, k_position, &space_index, cid)) {
-                    emitted_any = true;
-                }
+                _ = try printAxWindow(allocator, win_elem, "AXWindows", k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
             }
         } else {
             const reason: []const u8 = switch (err) {
@@ -131,29 +159,54 @@ pub fn main() !void {
                 ax.kAXErrorNoValue => "novalue",
                 else => if (err == ax.kAXErrorSuccess) "nullref" else "axerr",
             };
-            print("pid={d:<6} app=\"{s}\" wins=- [{s}={d}]\n", .{ pid, app_name, reason, err });
+            print("pid={d:<6} app=\"{s}\" mru={d} wins=- [{s}={d}]\n", .{ pid, app_name, app_ordinal, reason, err });
         }
 
-        // AXMainWindow fallback (mirrors AXWindowBackend §3a). Real off-
-        // Space apps return a usable AX window here; phantoms return
-        // kAXErrorNoValue.
-        if (!emitted_any) {
-            var main_ref: cf.c.CFTypeRef = null;
-            const merr = ax.AXUIElementCopyAttributeValue(app_elem, k_main_window, &main_ref);
-            if (merr == ax.kAXErrorSuccess and main_ref != null) {
-                defer cf.c.CFRelease(main_ref);
-                const main_elem: ax.UIElementRef = @ptrCast(@constCast(main_ref));
-                _ = try printAxWindow(allocator, main_elem, "AXMainWindow", k_role, k_subrole, k_title, k_size, k_position, &space_index, cid);
-            } else {
-                const reason: []const u8 = switch (merr) {
-                    ax.kAXErrorNoValue => "novalue",
-                    ax.kAXErrorAttributeUnsupported => "unsupported",
-                    ax.kAXErrorAPIDisabled => "axdisabled",
-                    else => if (merr == ax.kAXErrorSuccess) "nullref" else "axerr",
-                };
-                print("  [phantom     ] AXMainWindow={s}={d}\n", .{ reason, merr });
-            }
-        }
+        // Phase 2: brute-force AX scan via _AXUIElementCreateWithRemoteToken.
+        // Iterate ax-element-id 0..1000, capped at 100ms per app, filter
+        // by AXSubrole. Discovers off-Space windows AX hides from
+        // kAXWindowsAttribute.
+        const before = emitted_wids.count();
+        try bruteForceMirror(allocator, pid, k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+        const added = emitted_wids.count() - before;
+        if (added > 0) print("  (brute-force phase 2 added {d} window(s))\n", .{added});
+    }
+}
+
+fn bruteForceMirror(
+    allocator: std.mem.Allocator,
+    pid: i32,
+    k_role: cf.c.CFStringRef,
+    k_subrole: cf.c.CFStringRef,
+    k_title: cf.c.CFStringRef,
+    k_size: cf.c.CFStringRef,
+    k_position: cf.c.CFStringRef,
+    space_index: *std.AutoHashMap(i64, usize),
+    wid_zorder: *std.AutoHashMap(u32, u32),
+    emitted_wids: *std.AutoHashMap(u32, void),
+    cid: cgs.ConnectionID,
+) !void {
+    var token: [20]u8 = std.mem.zeroes([20]u8);
+    std.mem.writeInt(i32, token[0..4], pid, .little);
+    std.mem.writeInt(i32, token[8..12], 0x636f636f, .little);
+
+    const start_ns = std.time.nanoTimestamp();
+    var ax_id: u64 = 0;
+    while (ax_id < 1000) : (ax_id += 1) {
+        std.mem.writeInt(u64, token[12..20], ax_id, .little);
+        const data = cf.c.CFDataCreate(null, &token, 20) orelse continue;
+        defer cf.c.CFRelease(data);
+        const elem = ax._AXUIElementCreateWithRemoteToken(data) orelse continue;
+        defer cf.c.CFRelease(elem);
+
+        var wid: u32 = 0;
+        if (ax._AXUIElementGetWindow(elem, &wid) != ax.kAXErrorSuccess) continue;
+        if (wid == 0) continue;
+        if (emitted_wids.contains(wid)) continue;
+
+        _ = try printAxWindow(allocator, elem, "BruteForce", k_role, k_subrole, k_title, k_size, k_position, space_index, wid_zorder, emitted_wids, cid);
+
+        if ((std.time.nanoTimestamp() - start_ns) > 100 * std.time.ns_per_ms) break;
     }
 }
 
@@ -167,6 +220,8 @@ fn printAxWindow(
     k_size: cf.c.CFStringRef,
     k_position: cf.c.CFStringRef,
     space_index: *std.AutoHashMap(i64, usize),
+    wid_zorder: *std.AutoHashMap(u32, u32),
+    emitted_wids: *std.AutoHashMap(u32, void),
     cid: cgs.ConnectionID,
 ) !bool {
     const print = std.debug.print;
@@ -238,12 +293,19 @@ fn printAxWindow(
     else
         "drop:wid";
 
-    print("  [{s:<12}] src={s:<12} role={s:<12} subrole={s:<20} wid={d:>6} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} title=\"{s}\"\n", .{
+    var z_text: [16]u8 = undefined;
+    const z_str: []const u8 = if (wid_ok) blk: {
+        if (wid_zorder.get(wid)) |z| break :blk std.fmt.bufPrint(&z_text, "{d}", .{z}) catch "?";
+        break :blk "-";
+    } else "?";
+
+    print("  [{s:<12}] src={s:<12} role={s:<12} subrole={s:<20} wid={d:>6} z={s:<3} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} title=\"{s}\"\n", .{
         tag,
         source,
         role,
         subrole,
         wid,
+        z_str,
         pos.x,
         pos.y,
         size.width,
@@ -251,5 +313,7 @@ fn printAxWindow(
         sid_str,
         title,
     });
+
+    if (passes) try emitted_wids.put(wid, {});
     return passes;
 }

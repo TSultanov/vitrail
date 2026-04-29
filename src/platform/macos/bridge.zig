@@ -62,3 +62,7 @@ pub extern "c" fn vt_app_name_for_pid(pid: c_int) ?[*:0]u8;
 // policy apps, excluding our own pid. Caller frees with vt_free.
 pub extern "c" fn vt_running_pids(out_count: *c_int) ?[*]c_int;
 pub extern "c" fn vt_free(p: ?*anyopaque) void;
+
+// Monotonic counter for app activations. Higher = more recently activated.
+// Returns 0 for pids the observer hasn't seen.
+pub extern "c" fn vt_app_activation_ordinal(pid: c_int) i64;

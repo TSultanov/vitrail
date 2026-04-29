@@ -29,13 +29,22 @@ const Self = @This();
 
 const PlatformHandle = struct {
     pid: i32,
-    ax_window: ax.UIElementRef, // CFRetain'd; released in clearHandles/deinit.
+    wid: u32, // CGWindowID; used for phase-2 dedupe.
+    ax_window: ax.UIElementRef, // CFRetain'd. Always non-null with the
+    // brute-force phase-2 path (we get a real AX element back from
+    // _AXUIElementCreateWithRemoteToken — no CG-only entries any more).
 };
 
 allocator: std.mem.Allocator,
 handles: std.ArrayListUnmanaged(PlatformHandle) = .{},
 
 var ax_warn_logged: bool = false;
+
+const SortInfo = struct {
+    group: u8, // 0 = current-Space (in z-order map), 1 = off-Space
+    rank: i64, // group 0: z-index ascending; group 1: -activation_ordinal
+    insertion: u32, // stable tiebreak
+};
 
 pub fn init(allocator: std.mem.Allocator) !Self {
     return .{ .allocator = allocator };
@@ -77,6 +86,29 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
 
     const cid = cgs.CGSMainConnectionID();
 
+    // Global onscreen z-order map (CGWindowID → front-to-back rank). Off-Space
+    // windows aren't onscreen and so won't have an entry here — they fall
+    // back to per-app activation ordinal in the sort below.
+    var wid_zorder = std.AutoHashMap(u32, u32).init(allocator);
+    defer wid_zorder.deinit();
+    {
+        const opts: u32 = cg.kCGWindowListOptionOnScreenOnly | cg.kCGWindowListExcludeDesktopElements;
+        if (cg.CGWindowListCopyWindowInfo(opts, cg.kCGNullWindowID)) |arr| {
+            defer cf.c.CFRelease(arr);
+            const n = cg.CFArrayGetCount(@ptrCast(arr));
+            var i: cg.CFIndex = 0;
+            while (i < n) : (i += 1) {
+                const dptr = cg.CFArrayGetValueAtIndex(@ptrCast(arr), i) orelse continue;
+                const dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dptr));
+                const num = cf.cfDictGetNumber(dict, "kCGWindowNumber") orelse continue;
+                var v: i64 = 0;
+                if (cf.c.CFNumberGetValue(num, cf.c.kCFNumberSInt64Type, &v) == 0) continue;
+                const wid: u32 = @intCast(v);
+                if (!wid_zorder.contains(wid)) try wid_zorder.put(wid, @intCast(i));
+            }
+        }
+    }
+
     // Build Space-ID → 0-based-index map (Mission Control left-to-right
     // ordering). Lifted from the previous CG backend.
     var space_index = std.AutoHashMap(i64, usize).init(allocator);
@@ -106,8 +138,6 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
     // whole walk).
     const k_windows = cfStr("AXWindows") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(k_windows);
-    const k_main = cfStr("AXMainWindow") orelse return error.CFStringCreate;
-    defer cf.c.CFRelease(k_main);
     const k_title = cfStr("AXTitle") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(k_title);
     const k_subrole = cfStr("AXSubrole") orelse return error.CFStringCreate;
@@ -125,13 +155,23 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
     if (pid_count <= 0) return list;
     const pids = pids_ptr[0..@intCast(pid_count)];
 
+    var sort_infos = std.ArrayListUnmanaged(SortInfo){};
+    defer sort_infos.deinit(allocator);
+
+    var emitted_wids = std.AutoHashMap(u32, void).init(allocator);
+    defer emitted_wids.deinit();
+
     var ctx = EmitCtx{
         .list = &list,
+        .sort_infos = &sort_infos,
         .allocator = allocator,
         .cid = cid,
         .space_index = &space_index,
+        .wid_zorder = &wid_zorder,
+        .emitted_wids = &emitted_wids,
         .pid = 0,
         .app_name = "",
+        .app_ordinal = 0,
         .k_subrole = k_subrole,
         .k_size = k_size,
         .k_title = k_title,
@@ -150,12 +190,13 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         defer if (app_name_c) |p| bridge.vt_free(@ptrCast(@constCast(p)));
         ctx.pid = pid;
         ctx.app_name = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "Unknown";
+        ctx.app_ordinal = bridge.vt_app_activation_ordinal(pid);
 
-        // Try kAXWindowsAttribute first — gets all current-Space windows.
+        // Phase 1: kAXWindowsAttribute. Returns current-Space windows and
+        // sometimes off-Space ones, depending on app. Apps whose windows
+        // are *all* on other Spaces tend to return an empty array here.
         var wins_ref: cf.c.CFTypeRef = null;
-        const wins_err = ax.AXUIElementCopyAttributeValue(app_elem, k_windows, &wins_ref);
-        var emitted_any = false;
-        if (wins_err == ax.kAXErrorSuccess and wins_ref != null) {
+        if (ax.AXUIElementCopyAttributeValue(app_elem, k_windows, &wins_ref) == ax.kAXErrorSuccess and wins_ref != null) {
             defer cf.c.CFRelease(wins_ref);
             const wins_arr: cf.c.CFArrayRef = @ptrCast(@constCast(wins_ref));
             const wcount = cg.CFArrayGetCount(@ptrCast(wins_arr));
@@ -163,36 +204,90 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
             while (wi < wcount) : (wi += 1) {
                 const wptr = cg.CFArrayGetValueAtIndex(@ptrCast(wins_arr), wi) orelse continue;
                 const win_elem: ax.UIElementRef = @ptrCast(@constCast(wptr));
-                if (try self.tryEmit(&ctx, win_elem)) emitted_any = true;
+                _ = try self.tryEmit(&ctx, win_elem);
             }
         }
 
-        // Fallback: kAXMainWindowAttribute. macOS returns an empty
-        // kAXWindowsAttribute for apps whose windows live on other Spaces
-        // (Focus To-Do, Safari with off-Space windows, etc.). Phantoms
-        // (Calendar / Claude with no real windows) error here with
-        // kAXErrorNoValue, so this is also the structural anti-phantom
-        // test in the off-Space path.
-        if (!emitted_any) {
-            var main_ref: cf.c.CFTypeRef = null;
-            if (ax.AXUIElementCopyAttributeValue(app_elem, k_main, &main_ref) == ax.kAXErrorSuccess and main_ref != null) {
-                defer cf.c.CFRelease(main_ref);
-                const main_elem: ax.UIElementRef = @ptrCast(@constCast(main_ref));
-                _ = try self.tryEmit(&ctx, main_elem);
-            }
-        }
+        // Phase 2: brute-force AX scan via the private
+        // _AXUIElementCreateWithRemoteToken API. Discovers windows that
+        // kAXWindowsAttribute hides — primarily off-Space siblings of
+        // multi-window apps (Safari with a window in native fullscreen,
+        // Ghostty with another window on a different Space) and
+        // single-window apps whose only window is off-Space (Focus
+        // To-Do, KeePassXC).
+        try self.bruteForceAxScan(&ctx, pid);
     }
+
+    std.sort.pdqContext(0, list.items.len, SortCtx{
+        .items = list.items,
+        .keys = sort_infos.items,
+    });
 
     return list;
 }
 
+/// Brute-force AX scan: builds the 20-byte remote token (pid | 0 |
+/// magic "cooo" | ax-element-id) and iterates element-ids 0..1000,
+/// constructing AXUIElements via the private
+/// _AXUIElementCreateWithRemoteToken. Filters by `_AXUIElementGetWindow`
+/// (cheap windowness test), then hands surviving elements to `tryEmit`
+/// which applies the subrole/size/wid-dedupe filters and retains on
+/// accept. 100ms timeout per app caps cost on apps with thousands of
+/// UI elements.
+fn bruteForceAxScan(self: *Self, ctx: *EmitCtx, pid: i32) !void {
+    var token: [20]u8 = std.mem.zeroes([20]u8);
+    std.mem.writeInt(i32, token[0..4], pid, .little);
+    std.mem.writeInt(i32, token[8..12], 0x636f636f, .little);
+
+    const start_ns = std.time.nanoTimestamp();
+    var ax_id: u64 = 0;
+    while (ax_id < 1000) : (ax_id += 1) {
+        std.mem.writeInt(u64, token[12..20], ax_id, .little);
+        const data = cf.c.CFDataCreate(null, &token, 20) orelse continue;
+        defer cf.c.CFRelease(data);
+        const elem = ax._AXUIElementCreateWithRemoteToken(data) orelse continue;
+        defer cf.c.CFRelease(elem);
+
+        // Cheap "is this a window?" filter — non-window AX elements
+        // (buttons, groups, etc.) error here. Skips ~999/1000 iterations
+        // for typical apps without paying for an attribute copy.
+        var wid: u32 = 0;
+        if (ax._AXUIElementGetWindow(elem, &wid) != ax.kAXErrorSuccess) continue;
+        if (wid == 0) continue;
+
+        _ = try self.tryEmit(ctx, elem);
+
+        if ((std.time.nanoTimestamp() - start_ns) > 100 * std.time.ns_per_ms) break;
+    }
+}
+
+const SortCtx = struct {
+    items: []common.DesktopWindow,
+    keys: []SortInfo,
+    pub fn lessThan(c: @This(), a: usize, b: usize) bool {
+        const ka = c.keys[a];
+        const kb = c.keys[b];
+        if (ka.group != kb.group) return ka.group < kb.group;
+        if (ka.rank != kb.rank) return ka.rank < kb.rank;
+        return ka.insertion < kb.insertion;
+    }
+    pub fn swap(c: @This(), a: usize, b: usize) void {
+        std.mem.swap(common.DesktopWindow, &c.items[a], &c.items[b]);
+        std.mem.swap(SortInfo, &c.keys[a], &c.keys[b]);
+    }
+};
+
 const EmitCtx = struct {
     list: *std.array_list.Managed(common.DesktopWindow),
+    sort_infos: *std.ArrayListUnmanaged(SortInfo),
     allocator: std.mem.Allocator,
     cid: cgs.ConnectionID,
     space_index: *std.AutoHashMap(i64, usize),
+    wid_zorder: *std.AutoHashMap(u32, u32),
+    emitted_wids: *std.AutoHashMap(u32, void),
     pid: i32,
     app_name: []const u8,
+    app_ordinal: i64,
     k_subrole: cf.c.CFStringRef,
     k_size: cf.c.CFStringRef,
     k_title: cf.c.CFStringRef,
@@ -205,6 +300,16 @@ const EmitCtx = struct {
 /// Returns true on emit, false on filter rejection. Errors only on OOM /
 /// allocator failure.
 fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
+    // Cheap windowness + dedupe gate before the more expensive subrole
+    // copy. Brute-force phase 2 calls _AXUIElementGetWindow already, so
+    // this is redundant in that path, but it's still cheap and lets phase
+    // 1 (raw kAXWindowsAttribute children) reject duplicates AX returns
+    // (Mail.app at login is a known offender).
+    var wid: u32 = 0;
+    if (ax._AXUIElementGetWindow(win_elem, &wid) != ax.kAXErrorSuccess) return false;
+    if (wid == 0) return false;
+    if (ctx.emitted_wids.contains(wid)) return false;
+
     if (!matchesAnyString(win_elem, ctx.k_subrole, &.{ ctx.v_standard, ctx.v_dialog })) return false;
 
     var size_ref: cf.c.CFTypeRef = null;
@@ -215,8 +320,31 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     if (ax.AXValueGetValue(@ptrCast(@constCast(size_ref)), ax.kAXValueTypeCGSize, &size) == 0) return false;
     if (size.width < 100 or size.height < 50) return false;
 
-    var wid: u32 = 0;
-    if (ax._AXUIElementGetWindow(win_elem, &wid) != ax.kAXErrorSuccess) return false;
+    // Resolve Space membership. Done before the title/app_id allocations
+    // so the sc==0 stale-wid filter doesn't leak. sc==0 → no Space
+    // binding (closed terminal sessions, etc. — drop). sc==1 → single
+    // known Space; sc>1 → sticky/multi-Space (desktop_number = null).
+    const space_lookup: union(enum) { drop, idx: ?usize } = blk: {
+        var wid_val: c_int = @intCast(wid);
+        const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk .{ .idx = null };
+        defer cf.c.CFRelease(wid_cfnum);
+        var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
+        const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk .{ .idx = null };
+        defer cf.c.CFRelease(wids_arr);
+        const spaces_arr = cgs.CGSCopySpacesForWindows(ctx.cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk .{ .idx = null };
+        defer cf.c.CFRelease(spaces_arr);
+        const sc = cg.CFArrayGetCount(@ptrCast(spaces_arr));
+        if (sc == 0) break :blk .drop;
+        if (sc != 1) break :blk .{ .idx = null };
+        const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :blk .{ .idx = null };
+        const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
+        const sid = cf.cfNumberToI64(sn) orelse break :blk .{ .idx = null };
+        break :blk .{ .idx = ctx.space_index.get(sid) };
+    };
+    const desktop_number: ?usize = switch (space_lookup) {
+        .drop => return false,
+        .idx => |i| i,
+    };
 
     const title_z: [:0]u8 = blk: {
         var title_ref: cf.c.CFTypeRef = null;
@@ -238,26 +366,13 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     const app_id_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
     errdefer ctx.allocator.free(app_id_z);
 
-    const desktop_number: ?usize = blk: {
-        var wid_val: c_int = @intCast(wid);
-        const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk null;
-        defer cf.c.CFRelease(wid_cfnum);
-        var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
-        const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk null;
-        defer cf.c.CFRelease(wids_arr);
-        const spaces_arr = cgs.CGSCopySpacesForWindows(ctx.cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk null;
-        defer cf.c.CFRelease(spaces_arr);
-        const sc = cg.CFArrayGetCount(@ptrCast(spaces_arr));
-        if (sc != 1) break :blk null;
-        const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :blk null;
-        const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
-        const sid = cf.cfNumberToI64(sn) orelse break :blk null;
-        break :blk ctx.space_index.get(sid);
-    };
-
     _ = cf.c.CFRetain(win_elem);
     const idx = self.handles.items.len;
-    self.handles.append(self.allocator, .{ .pid = ctx.pid, .ax_window = win_elem }) catch |e| {
+    self.handles.append(self.allocator, .{
+        .pid = ctx.pid,
+        .wid = wid,
+        .ax_window = win_elem,
+    }) catch |e| {
         cf.c.CFRelease(win_elem);
         return e;
     };
@@ -271,6 +386,14 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
         .desktopNumber = desktop_number,
         .allocator = ctx.allocator,
     });
+
+    const insertion: u32 = @intCast(ctx.list.items.len - 1);
+    const sort_info: SortInfo = if (ctx.wid_zorder.get(wid)) |z|
+        .{ .group = 0, .rank = @intCast(z), .insertion = insertion }
+    else
+        .{ .group = 1, .rank = -ctx.app_ordinal, .insertion = insertion };
+    try ctx.sort_infos.append(ctx.allocator, sort_info);
+    try ctx.emitted_wids.put(wid, {});
     return true;
 }
 

@@ -93,6 +93,11 @@ int *vt_running_pids(int *out_count);
 // bridge hands back).
 void vt_free(void *p);
 
+// Returns a monotonically increasing counter associated with the given pid.
+// Higher = more recently activated. Returns 0 for pids never seen by the
+// activation observer (which is installed during vt_app_init).
+int64_t vt_app_activation_ordinal(int pid);
+
 #ifdef __cplusplus
 }
 #endif

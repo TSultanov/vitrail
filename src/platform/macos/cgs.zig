@@ -1,8 +1,7 @@
 // Private CoreGraphicsServices APIs for Space (virtual desktop) discovery.
 // These symbols are not in the public Apple SDK headers but ship inside the
-// already-linked CoreGraphics framework binary. The same surface is used by
-// Rectangle, AltTab, and Hammerspoon and has been stable across macOS
-// releases — they survive code signing.
+// already-linked CoreGraphics framework binary, and have been stable across
+// macOS releases — they survive code signing.
 
 const cf = @import("cf.zig");
 

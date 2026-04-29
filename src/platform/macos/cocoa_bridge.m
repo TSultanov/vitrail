@@ -119,6 +119,43 @@ struct vt_window {
 
 static BOOL g_should_stop = NO;
 
+// App-activation MRU table. Higher counter = more recently activated. Seeded
+// at install time from runningApplications order so cold-start ordering is
+// stable; the frontmost app gets the freshest counter so it sorts first
+// immediately. Subsequent activations bump the counter via the
+// NSWorkspaceDidActivateApplicationNotification observer below.
+static int64_t g_activation_counter = 0;
+static NSMutableDictionary<NSNumber*, NSNumber*> *g_pid_ordinals = nil;
+
+static void install_app_activation_observer(void) {
+    g_pid_ordinals = [NSMutableDictionary new];
+
+    NSArray<NSRunningApplication *> *apps =
+        [NSWorkspace sharedWorkspace].runningApplications;
+    for (NSRunningApplication *app in apps) {
+        if (app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
+        g_pid_ordinals[@(app.processIdentifier)] = @(g_activation_counter++);
+    }
+    NSRunningApplication *front =
+        [NSWorkspace sharedWorkspace].frontmostApplication;
+    if (front) {
+        g_pid_ordinals[@(front.processIdentifier)] = @(g_activation_counter++);
+    }
+
+    [[NSWorkspace sharedWorkspace].notificationCenter
+        addObserverForName:NSWorkspaceDidActivateApplicationNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+            NSRunningApplication *app =
+                note.userInfo[NSWorkspaceApplicationKey];
+            if (app) {
+                g_pid_ordinals[@(app.processIdentifier)] =
+                    @(g_activation_counter++);
+            }
+        }];
+}
+
 void vt_app_init(void) {
     [NSApplication sharedApplication];
     // Accessory: no Dock icon, no menu bar — matches LSUIElement in Info.plist
@@ -126,6 +163,12 @@ void vt_app_init(void) {
     // behaviour for raw-binary runs too.
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [NSApp finishLaunching];
+    install_app_activation_observer();
+}
+
+int64_t vt_app_activation_ordinal(int pid) {
+    NSNumber *n = g_pid_ordinals[@(pid)];
+    return n ? n.longLongValue : 0;
 }
 
 int vt_app_pump_one(int blocking) {

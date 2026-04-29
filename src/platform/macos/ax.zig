@@ -47,10 +47,19 @@ pub extern "c" fn AXValueGetValue(value: ValueRef, the_type: ValueType, value_pt
 pub extern "c" fn AXIsProcessTrusted() u8;
 pub extern "c" fn AXIsProcessTrustedWithOptions(options: cf.c.CFDictionaryRef) u8;
 
-// Private. Stable across releases — used by AltTab/Hammerspoon. Returns
-// the CGWindowID for an AXUIElement that wraps a window. Errors signal
-// "not a window" or "AX permission revoked".
+// Private. Stable across releases. Returns the CGWindowID for an
+// AXUIElement that wraps a window. Errors signal "not a window" or
+// "AX permission revoked".
 pub extern "c" fn _AXUIElementGetWindow(elem: UIElementRef, out_wid: *u32) Error;
+
+// Private. Constructs an AXUIElement from a 20-byte "remote token":
+// bytes 0..4 = pid (i32), bytes 4..8 = 0, bytes 8..12 = magic 0x636f636f
+// ("cooo"), bytes 12..20 = AX UI element ID (u64). The element-ID
+// counter starts at 0 per process and increments as new UI elements
+// are created. Iterating IDs 0..1000 per pid surfaces windows AX hides
+// from kAXWindowsAttribute (e.g. windows on other Spaces). Returned
+// element is retained (+1); caller must CFRelease.
+pub extern "c" fn _AXUIElementCreateWithRemoteToken(data: cf.c.CFDataRef) UIElementRef;
 
 /// Calls AXIsProcessTrustedWithOptions with the prompt option set, which
 /// surfaces the macOS Accessibility dialog the very first time and no-ops
