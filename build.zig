@@ -8,6 +8,8 @@ pub fn build(b: *std.Build) void {
             .{ .cpu_arch = .aarch64, .os_tag = .windows, .abi = .gnu },
             .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
             .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .gnu },
+            .{ .cpu_arch = .x86_64, .os_tag = .macos },
+            .{ .cpu_arch = .aarch64, .os_tag = .macos },
         },
     });
 
@@ -19,6 +21,7 @@ pub fn build(b: *std.Build) void {
     switch (target.result.os.tag) {
         .windows => buildWindows(b, target, optimize, build_options, mock_backend),
         .linux => buildLinux(b, target, optimize, build_options, mock_backend),
+        .macos => buildMacos(b, target, optimize, build_options, mock_backend),
         else => @panic("unsupported OS"),
     }
 }
@@ -173,3 +176,90 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 }
+
+fn buildMacos(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, build_options: *std.Build.Step.Options, mock_backend: bool) void {
+    const root = if (mock_backend) "src/main_macos_test.zig" else "src/main_macos.zig";
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path(root),
+        .target = target,
+        .optimize = optimize,
+        .single_threaded = true,
+    });
+    exe_mod.addOptions("build_options", build_options);
+
+    exe_mod.linkSystemLibrary("c", .{});
+    exe_mod.linkFramework("Cocoa", .{});
+    exe_mod.linkFramework("CoreFoundation", .{});
+    exe_mod.linkFramework("CoreGraphics", .{});
+    exe_mod.linkFramework("CoreText", .{});
+    exe_mod.linkFramework("ApplicationServices", .{});
+    exe_mod.linkFramework("Carbon", .{});
+    exe_mod.linkFramework("QuartzCore", .{});
+
+    exe_mod.addCSourceFile(.{
+        .file = b.path("src/platform/macos/cocoa_bridge.m"),
+        .flags = &.{ "-fobjc-arc", "-Wno-deprecated-declarations" },
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "vitrail",
+        .root_module = exe_mod,
+    });
+
+    b.installArtifact(exe);
+
+    // Assemble a minimal .app bundle so accessibility prompts attach to a
+    // stable bundle id and LSUIElement (no Dock icon) takes effect.
+    const bundle_step = b.step("bundle", "Assemble Vitrail.app bundle");
+    const wf = b.addWriteFiles();
+    const plist = wf.add("Vitrail.app/Contents/Info.plist", info_plist);
+    const pkginfo = wf.add("Vitrail.app/Contents/PkgInfo", "APPL????");
+    bundle_step.dependOn(&wf.step);
+
+    const install_plist = b.addInstallFile(plist, "Vitrail.app/Contents/Info.plist");
+    const install_pkginfo = b.addInstallFile(pkginfo, "Vitrail.app/Contents/PkgInfo");
+    const install_exe = b.addInstallFile(exe.getEmittedBin(), "Vitrail.app/Contents/MacOS/vitrail");
+    bundle_step.dependOn(&install_plist.step);
+    bundle_step.dependOn(&install_pkginfo.step);
+    bundle_step.dependOn(&install_exe.step);
+    b.getInstallStep().dependOn(bundle_step);
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
+}
+
+const info_plist =
+    \\<?xml version="1.0" encoding="UTF-8"?>
+    \\<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    \\<plist version="1.0">
+    \\<dict>
+    \\    <key>CFBundleDevelopmentRegion</key>
+    \\    <string>en</string>
+    \\    <key>CFBundleExecutable</key>
+    \\    <string>vitrail</string>
+    \\    <key>CFBundleIdentifier</key>
+    \\    <string>org.vitrail</string>
+    \\    <key>CFBundleInfoDictionaryVersion</key>
+    \\    <string>6.0</string>
+    \\    <key>CFBundleName</key>
+    \\    <string>Vitrail</string>
+    \\    <key>CFBundlePackageType</key>
+    \\    <string>APPL</string>
+    \\    <key>CFBundleShortVersionString</key>
+    \\    <string>0.0.0</string>
+    \\    <key>CFBundleVersion</key>
+    \\    <string>0</string>
+    \\    <key>LSMinimumSystemVersion</key>
+    \\    <string>11.0</string>
+    \\    <key>LSUIElement</key>
+    \\    <true/>
+    \\    <key>NSHighResolutionCapable</key>
+    \\    <true/>
+    \\    <key>NSAccessibilityUsageDescription</key>
+    \\    <string>Vitrail uses Accessibility to raise the window you pick.</string>
+    \\</dict>
+    \\</plist>
+    \\
+;

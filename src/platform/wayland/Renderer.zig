@@ -9,7 +9,6 @@
 const std = @import("std");
 const common = @import("../../common/DesktopWindow.zig");
 const ColorHash = @import("../../common/ColorHash.zig");
-const text = @import("text.zig");
 const Grid = @import("Grid.zig");
 
 pub const Theme = struct {
@@ -35,9 +34,9 @@ pub fn render(
     ph: u32,
     scale_q120: u32,
     grid: *const Grid,
-    tile_text: *text.Renderer,
-    search_text: *text.Renderer,
-    desktop_text: *text.Renderer,
+    tile_text: anytype,
+    search_text: anytype,
+    desktop_text: anytype,
     theme: Theme,
 ) void {
     // Convert a logical-pixel coordinate or length to physical pixels using
@@ -124,7 +123,7 @@ pub fn render(
     }
 }
 
-fn clipForWidth(s: []const u8, r: *text.Renderer, max_w: i32) []const u8 {
+fn clipForWidth(s: []const u8, r: anytype, max_w: i32) []const u8 {
     var view = std.unicode.Utf8View.init(s) catch return s[0..0];
     var it = view.iterator();
     var width: i32 = 0;

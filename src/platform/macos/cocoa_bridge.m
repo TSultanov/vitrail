@@ -1,0 +1,323 @@
+// Cocoa bridge — the only Objective-C in the port. Exposes a small C API the
+// Zig side calls. The intent is to keep this file as thin as possible: it
+// owns NSApp + NSWindow lifetime and forwards keyboard/mouse events into Zig
+// callbacks; everything else (rendering, layout, hotkey, window enumeration)
+// stays in Zig using pure-C Apple frameworks.
+
+#import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
+#include "cocoa_bridge.h"
+
+// ─── Borderless window subclass — must override canBecomeKeyWindow so that
+// keyDown: events are dispatched to the content view (the default NO blocks
+// all keyboard input on borderless windows).
+
+@interface VTWindow : NSWindow
+@end
+
+@implementation VTWindow
+- (BOOL)canBecomeKeyWindow { return YES; }
+- (BOOL)canBecomeMainWindow { return YES; }
+@end
+
+// ─── Custom content view: forwards events to the Zig callbacks ──────────────
+
+@interface VTContentView : NSView
+@property (nonatomic, assign) void *zig_ctx;
+@property (nonatomic, assign) vt_key_cb on_key;
+@property (nonatomic, assign) vt_mouse_cb on_mouse;
+@end
+
+@implementation VTContentView
+
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)canBecomeKeyView { return YES; }
+- (BOOL)isFlipped { return YES; } // top-left origin, matching our renderer
+
+- (void)keyDown:(NSEvent *)event {
+    if (!self.on_key) return;
+    NSString *chars = event.charactersIgnoringModifiers ?: @"";
+    NSString *typed = event.characters ?: @"";
+    const char *utf8 = [typed UTF8String];
+    int utf8_len = (int)[typed lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    self.on_key(self.zig_ctx,
+                (int)event.keyCode,
+                (uint32_t)event.modifierFlags,
+                utf8,
+                utf8_len);
+    (void)chars;
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    if (!self.on_mouse) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    self.on_mouse(self.zig_ctx, 0, p.x, p.y);
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    [self mouseMoved:event];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    if (!self.on_mouse) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    self.on_mouse(self.zig_ctx, 1, p.x, p.y);
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    if (!self.on_mouse) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    self.on_mouse(self.zig_ctx, 2, p.x, p.y);
+}
+
+@end
+
+// ─── Window wrapper with delegate for resize/close ──────────────────────────
+
+@interface VTWindowOwner : NSObject <NSWindowDelegate>
+@property (nonatomic, strong) NSWindow *window;
+@property (nonatomic, strong) VTContentView *view;
+@property (nonatomic, assign) void *zig_ctx;
+@property (nonatomic, assign) vt_resize_cb on_resize;
+@property (nonatomic, assign) vt_close_cb on_close;
+@end
+
+@implementation VTWindowOwner
+
+- (void)reportSize {
+    if (!self.on_resize) return;
+    NSSize logical = self.view.bounds.size;
+    NSSize physical = [self.view convertSizeToBacking:logical];
+    double scale = self.window.backingScaleFactor;
+    self.on_resize(self.zig_ctx,
+                   (uint32_t)physical.width,
+                   (uint32_t)physical.height,
+                   (uint32_t)logical.width,
+                   (uint32_t)logical.height,
+                   scale);
+}
+
+- (void)windowDidResize:(NSNotification *)note {
+    [self reportSize];
+}
+
+- (void)windowDidChangeBackingProperties:(NSNotification *)note {
+    [self reportSize];
+}
+
+- (void)windowDidResignKey:(NSNotification *)note {
+    if (self.on_close) self.on_close(self.zig_ctx);
+}
+
+@end
+
+struct vt_window {
+    void *owner; // VTWindowOwner *, retained
+};
+
+// ─── Lifecycle ──────────────────────────────────────────────────────────────
+
+static BOOL g_should_stop = NO;
+
+void vt_app_init(void) {
+    [NSApplication sharedApplication];
+    // Accessory: no Dock icon, no menu bar — matches LSUIElement in Info.plist
+    // for builds run from within the .app bundle, and gives the right
+    // behaviour for raw-binary runs too.
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    [NSApp finishLaunching];
+}
+
+int vt_app_pump_one(int blocking) {
+    if (g_should_stop) return 1;
+    NSDate *until = blocking ? [NSDate distantFuture] : [NSDate distantPast];
+    NSEvent *e = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                    untilDate:until
+                                       inMode:NSDefaultRunLoopMode
+                                      dequeue:YES];
+    if (e) [NSApp sendEvent:e];
+    return g_should_stop ? 1 : 0;
+}
+
+void vt_app_stop(void) {
+    g_should_stop = YES;
+    // Post a no-op event so a blocking pump returns promptly.
+    NSEvent *wakeup = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                         location:NSZeroPoint
+                                    modifierFlags:0
+                                        timestamp:0
+                                     windowNumber:0
+                                          context:nil
+                                          subtype:0
+                                            data1:0
+                                            data2:0];
+    [NSApp postEvent:wakeup atStart:YES];
+}
+
+// ─── Window ─────────────────────────────────────────────────────────────────
+
+vt_window *vt_window_create(void *ctx,
+                            vt_key_cb on_key,
+                            vt_mouse_cb on_mouse,
+                            vt_resize_cb on_resize,
+                            vt_close_cb on_close) {
+    NSScreen *screen = [NSScreen mainScreen];
+    NSRect frame = screen.frame;
+
+    NSWindow *window = [[VTWindow alloc]
+        initWithContentRect:frame
+                  styleMask:NSWindowStyleMaskBorderless
+                    backing:NSBackingStoreBuffered
+                      defer:NO
+                     screen:screen];
+    window.opaque = NO;
+    window.backgroundColor = [NSColor clearColor];
+    window.hasShadow = NO;
+    window.level = NSScreenSaverWindowLevel;
+    window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                NSWindowCollectionBehaviorStationary |
+                                NSWindowCollectionBehaviorFullScreenAuxiliary |
+                                NSWindowCollectionBehaviorIgnoresCycle;
+    [window setAcceptsMouseMovedEvents:YES];
+    [window setIgnoresMouseEvents:NO];
+    [window setReleasedWhenClosed:NO];
+
+    VTContentView *view = [[VTContentView alloc] initWithFrame:frame];
+    view.zig_ctx = ctx;
+    view.on_key = on_key;
+    view.on_mouse = on_mouse;
+    view.wantsLayer = YES;
+    view.layer.contentsGravity = kCAGravityResize;
+    view.layer.contentsScale = window.backingScaleFactor;
+    window.contentView = view;
+    [window makeFirstResponder:view];
+
+    VTWindowOwner *owner = [[VTWindowOwner alloc] init];
+    owner.window = window;
+    owner.view = view;
+    owner.zig_ctx = ctx;
+    owner.on_resize = on_resize;
+    owner.on_close = on_close;
+    window.delegate = owner;
+
+    vt_window *out = (vt_window *)calloc(1, sizeof(vt_window));
+    out->owner = (__bridge_retained void *)owner;
+    // Fire the resize callback now so the Zig side knows the viewport size
+    // even before the window is shown — the test driver allocates its
+    // snapshot buffer based on viewportSize() returned by the platform layer.
+    [owner reportSize];
+    return out;
+}
+
+void vt_window_show(vt_window *w) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    [owner.window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    [owner reportSize];
+}
+
+void vt_window_hide(vt_window *w) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    [owner.window orderOut:nil];
+}
+
+void vt_window_destroy(vt_window *w) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge_transfer VTWindowOwner *)w->owner;
+    owner.window.delegate = nil;
+    [owner.window close];
+    (void)owner;
+    free(w);
+}
+
+void vt_window_set_image(vt_window *w, const void *cg_image) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    owner.view.layer.contents = (__bridge id)cg_image;
+}
+
+void vt_window_logical_size(vt_window *w, uint32_t *out_w, uint32_t *out_h) {
+    if (!w) { *out_w = 0; *out_h = 0; return; }
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    NSSize s = owner.view.bounds.size;
+    *out_w = (uint32_t)s.width;
+    *out_h = (uint32_t)s.height;
+}
+
+double vt_window_backing_scale(vt_window *w) {
+    if (!w) return 1.0;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    return owner.window.backingScaleFactor;
+}
+
+// ─── Activation ─────────────────────────────────────────────────────────────
+
+int vt_activate_pid(int pid) {
+    NSRunningApplication *app =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+    if (!app) return 0;
+    BOOL ok = [app activateWithOptions:NSApplicationActivateAllWindows |
+                                       NSApplicationActivateIgnoringOtherApps];
+    return ok ? 1 : 0;
+}
+
+// ─── Icons & names ──────────────────────────────────────────────────────────
+
+int vt_icon_for_pid(int pid,
+                    int target_size,
+                    uint8_t **out_rgba,
+                    uint32_t *out_w,
+                    uint32_t *out_h) {
+    *out_rgba = NULL;
+    *out_w = 0;
+    *out_h = 0;
+    NSRunningApplication *app =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+    if (!app) return -1;
+    NSImage *img = app.icon;
+    if (!img) return -2;
+
+    NSSize sz = NSMakeSize((CGFloat)target_size, (CGFloat)target_size);
+    CGImageRef cg = [img CGImageForProposedRect:NULL context:nil hints:nil];
+    if (!cg) return -3;
+
+    size_t w = (size_t)target_size;
+    size_t h = (size_t)target_size;
+    size_t stride = w * 4;
+    uint8_t *buf = (uint8_t *)calloc(stride * h, 1);
+    if (!buf) return -4;
+
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef bmp = CGBitmapContextCreate(
+        buf, w, h, 8, stride, cs,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!bmp) { free(buf); return -5; }
+
+    CGContextSetBlendMode(bmp, kCGBlendModeCopy);
+    CGContextDrawImage(bmp, CGRectMake(0, 0, w, h), cg);
+    CGContextRelease(bmp);
+
+    *out_rgba = buf;
+    *out_w = (uint32_t)w;
+    *out_h = (uint32_t)h;
+    (void)sz;
+    return 0;
+}
+
+char *vt_app_name_for_pid(int pid) {
+    NSRunningApplication *app =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+    if (!app) return NULL;
+    NSString *name = app.localizedName;
+    if (!name) return NULL;
+    const char *utf8 = [name UTF8String];
+    if (!utf8) return NULL;
+    size_t len = strlen(utf8);
+    char *out = (char *)malloc(len + 1);
+    if (!out) return NULL;
+    memcpy(out, utf8, len + 1);
+    return out;
+}
