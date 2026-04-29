@@ -284,8 +284,18 @@ vt_window *vt_window_create(void *ctx,
 void vt_window_show(vt_window *w) {
     if (!w) return;
     VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
-    [owner.window makeKeyAndOrderFront:nil];
+    // Re-assert CanJoinAllSpaces every show. After orderOut, AppKit can
+    // bind the window to whichever Space it was last visible on; the
+    // next makeKeyAndOrderFront then drags the user back to that Space
+    // instead of revealing the window on the Space they're currently
+    // viewing. Re-applying the behavior right before showing forces the
+    // window to honor the "every Space" semantics.
+    owner.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                      NSWindowCollectionBehaviorStationary |
+                                      NSWindowCollectionBehaviorFullScreenAuxiliary |
+                                      NSWindowCollectionBehaviorIgnoresCycle;
     [NSApp activateIgnoringOtherApps:YES];
+    [owner.window makeKeyAndOrderFront:nil];
     [owner reportSize];
 }
 
