@@ -183,7 +183,10 @@ fn buildMacos(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .root_source_file = b.path(root),
         .target = target,
         .optimize = optimize,
-        .single_threaded = true,
+        // Multi-threaded so the AX-cache startup seed can scan apps in
+        // parallel. Threads are otherwise unused — vitrail's UI loop
+        // and Cocoa bridge run entirely on the main thread.
+        .single_threaded = false,
     });
     exe_mod.addOptions("build_options", build_options);
 
@@ -236,7 +239,7 @@ fn buildMacos(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .root_source_file = b.path("src/platform/macos/dump_windows.zig"),
         .target = target,
         .optimize = optimize,
-        .single_threaded = true,
+        .single_threaded = false,
     });
     dump_mod.linkSystemLibrary("c", .{});
     dump_mod.linkFramework("Cocoa", .{});

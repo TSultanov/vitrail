@@ -59,18 +59,90 @@ pub fn init(allocator: std.mem.Allocator) !void {
     g_n_destroyed = cf.c.CFStringCreateWithCString(null, "AXUIElementDestroyed", cf.c.kCFStringEncodingUTF8);
     g_n_focused_window_changed = cf.c.CFStringCreateWithCString(null, "AXFocusedWindowChanged", cf.c.kCFStringEncodingUTF8);
 
+    const seed_start_ns = std.time.nanoTimestamp();
+    var seeded_apps: usize = 0;
+    var seeded_windows: usize = 0;
+
     var pid_count: c_int = 0;
     if (bridge.vt_running_pids(&pid_count)) |pids_ptr| {
         defer bridge.vt_free(@ptrCast(pids_ptr));
         if (pid_count > 0) {
             const pids = pids_ptr[0..@intCast(pid_count)];
-            for (pids) |pid_c| {
-                seedPid(@intCast(pid_c)) catch continue;
+            // Per-pid brute-force scans are independent and dominated by
+            // mach-port round-trips to other processes, so they parallelise
+            // well: total wall time goes from sum-of-pids to roughly the
+            // slowest single pid. Workers only do AX-element discovery; the
+            // observer subscription + cache insert happens on the main
+            // thread once all workers join.
+            const results = g_allocator.alloc(?AppEntry, pids.len) catch null;
+            defer if (results) |r| g_allocator.free(r);
+
+            if (results) |res| {
+                @memset(res, null);
+                const n_workers: usize = @min(pids.len, 16);
+                const threads = g_allocator.alloc(std.Thread, n_workers) catch null;
+                defer if (threads) |t| g_allocator.free(t);
+
+                var ctx = ScanCtx{
+                    .pids = pids,
+                    .next_idx = std.atomic.Value(usize).init(0),
+                    .results = res,
+                };
+                var spawned: usize = 0;
+                if (threads) |t| {
+                    while (spawned < t.len) : (spawned += 1) {
+                        t[spawned] = std.Thread.spawn(.{}, scanWorker, .{&ctx}) catch break;
+                    }
+                    for (t[0..spawned]) |th| th.join();
+                }
+                // Fallback if thread spawn failed entirely: drain the queue
+                // synchronously on the main thread.
+                if (spawned == 0) scanWorker(&ctx);
+
+                for (pids, 0..) |pid_c, idx| {
+                    var entry = res[idx] orelse continue;
+                    const pid: i32 = @intCast(pid_c);
+                    installObserver(&entry, pid);
+                    const win_count = entry.windows.items.len;
+                    g_cache.put(pid, entry) catch {
+                        releaseEntry(&entry);
+                        continue;
+                    };
+                    seeded_apps += 1;
+                    seeded_windows += win_count;
+                }
             }
         }
     }
 
     bridge.vt_install_app_lifecycle_observers(onAppLaunched, onAppTerminated);
+
+    const elapsed_ns = std.time.nanoTimestamp() - seed_start_ns;
+    const elapsed_ms: u64 = @intCast(@divTrunc(elapsed_ns, std.time.ns_per_ms));
+    std.log.info("AX cache seeded: {d} app(s), {d} window(s), {d} ms — vitrail ready", .{ seeded_apps, seeded_windows, elapsed_ms });
+}
+
+const ScanCtx = struct {
+    pids: []const c_int,
+    next_idx: std.atomic.Value(usize),
+    results: []?AppEntry, // index-parallel to pids; null if scan skipped.
+};
+
+/// Worker: pulls pids off the shared atomic counter and scans each. Safe to
+/// call from any thread because: (a) AX element creation/release is process-
+/// global and not bound to a runloop, (b) each worker only writes to its
+/// own results[idx] slot, (c) g_allocator is the caller's allocator which
+/// must be thread-safe (Zig std allocators are by default).
+fn scanWorker(ctx: *ScanCtx) void {
+    while (true) {
+        const i = ctx.next_idx.fetchAdd(1, .monotonic);
+        if (i >= ctx.pids.len) return;
+        const pid: i32 = @intCast(ctx.pids[i]);
+        const ax_app = ax.AXUIElementCreateApplication(pid) orelse continue;
+        var entry: AppEntry = .{ .ax_app = ax_app, .observer = null };
+        bruteForceScanInto(&entry, pid);
+        ctx.results[i] = entry;
+    }
 }
 
 /// Returns the cached AX window refs for a pid, or an empty slice if the
@@ -114,7 +186,9 @@ pub fn deinit() void {
 }
 
 /// Brute-force-scan a pid, build its AppEntry, and install the observer.
-/// Skips pids already in the cache (no-op).
+/// Skips pids already in the cache (no-op). Used by the app-launch
+/// lifecycle path; the startup-time path goes through the parallel
+/// scanner instead.
 fn seedPid(pid: i32) !void {
     if (g_cache.contains(pid)) return;
 
@@ -122,23 +196,44 @@ fn seedPid(pid: i32) !void {
     var entry: AppEntry = .{ .ax_app = ax_app, .observer = null };
 
     bruteForceScanInto(&entry, pid);
-
-    var observer: ax.ObserverRef = null;
-    if (ax.AXObserverCreate(pid, observerCallback, &observer) == ax.kAXErrorSuccess and observer != null) {
-        entry.observer = observer;
-        const refcon: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(pid)));
-        _ = ax.AXObserverAddNotification(observer, ax_app, g_n_window_created, refcon);
-        _ = ax.AXObserverAddNotification(observer, ax_app, g_n_focused_window_changed, refcon);
-        for (entry.windows.items) |w| {
-            _ = ax.AXObserverAddNotification(observer, w, g_n_destroyed, refcon);
-        }
-        const src = ax.AXObserverGetRunLoopSource(observer);
-        if (src != null) {
-            cf.c.CFRunLoopAddSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
-        }
-    }
+    installObserver(&entry, pid);
 
     try g_cache.put(pid, entry);
+}
+
+/// Create the per-app AXObserver, subscribe it to window-create / focus /
+/// per-window destroy notifications, and add its run-loop source to the
+/// main runloop. Must run on the main thread (AXObserverAddNotification +
+/// CFRunLoopAddSource interact with the runloop).
+fn installObserver(entry: *AppEntry, pid: i32) void {
+    var observer: ax.ObserverRef = null;
+    if (ax.AXObserverCreate(pid, observerCallback, &observer) != ax.kAXErrorSuccess or observer == null) return;
+    entry.observer = observer;
+    const refcon: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(pid)));
+    _ = ax.AXObserverAddNotification(observer, entry.ax_app, g_n_window_created, refcon);
+    _ = ax.AXObserverAddNotification(observer, entry.ax_app, g_n_focused_window_changed, refcon);
+    for (entry.windows.items) |w| {
+        _ = ax.AXObserverAddNotification(observer, w, g_n_destroyed, refcon);
+    }
+    const src = ax.AXObserverGetRunLoopSource(observer);
+    if (src != null) {
+        cf.c.CFRunLoopAddSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
+    }
+}
+
+/// Free everything an AppEntry owns. Used when the cache insert fails
+/// after a successful scan (rare — only on OOM).
+fn releaseEntry(entry: *AppEntry) void {
+    if (entry.observer) |obs| {
+        const src = ax.AXObserverGetRunLoopSource(obs);
+        if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
+        cf.c.CFRelease(obs);
+    }
+    for (entry.windows.items) |w| {
+        if (w) |ww| cf.c.CFRelease(ww);
+    }
+    entry.windows.deinit(g_allocator);
+    if (entry.ax_app) |a| cf.c.CFRelease(a);
 }
 
 /// Iterates ax-element-id 0..SCAN_CAP using the private remote-token API,
