@@ -1,4 +1,5 @@
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 
 pub const impl = switch (builtin.target.os.tag) {
     .windows => @import("platform/windows/platform_impl.zig"),
@@ -7,5 +8,8 @@ pub const impl = switch (builtin.target.os.tag) {
 };
 
 pub const PlatformArgs = impl.PlatformArgs;
-pub const SystemInteraction = impl.SystemInteraction;
 pub const MainWindow = impl.MainWindow;
+pub const SystemInteraction = if (build_options.mock_backend)
+    @import("platform/MockBackend.zig")
+else
+    impl.SystemInteraction;

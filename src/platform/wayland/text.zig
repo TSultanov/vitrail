@@ -6,6 +6,8 @@ const c = @cImport({
     @cInclude("fontconfig/fontconfig.h");
 });
 
+pub const Weight = enum { regular, bold };
+
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
     library: c.FT_Library,
@@ -26,12 +28,12 @@ pub const Renderer = struct {
         advance_x: i32,
     };
 
-    pub fn create(allocator: std.mem.Allocator, pixel_size: u32) !Renderer {
+    pub fn create(allocator: std.mem.Allocator, pixel_size: u32, weight: Weight) !Renderer {
         var library: c.FT_Library = undefined;
         if (c.FT_Init_FreeType(&library) != 0) return error.FreeTypeInit;
         errdefer _ = c.FT_Done_FreeType(library);
 
-        const font_path = try resolveFont(allocator);
+        const font_path = try resolveFont(allocator, weight);
         defer allocator.free(font_path);
 
         var face: c.FT_Face = undefined;
@@ -162,10 +164,14 @@ fn blitGlyph(pixels: []u32, stride: u32, pw: u32, ph: u32, x: i32, y: i32, g: *c
     }
 }
 
-fn resolveFont(allocator: std.mem.Allocator) ![:0]u8 {
+fn resolveFont(allocator: std.mem.Allocator, weight: Weight) ![:0]u8 {
     if (c.FcInit() == 0) return error.FontconfigInit;
 
-    const pattern = c.FcNameParse("sans-serif") orelse return error.FontconfigPattern;
+    const name: [*:0]const u8 = switch (weight) {
+        .regular => "sans-serif",
+        .bold => "sans-serif:bold",
+    };
+    const pattern = c.FcNameParse(@ptrCast(name)) orelse return error.FontconfigPattern;
     defer c.FcPatternDestroy(pattern);
 
     _ = c.FcConfigSubstitute(null, pattern, c.FcMatchPattern);

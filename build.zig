@@ -11,21 +11,28 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const mock_backend = b.option(bool, "mock-backend", "Use MockBackend instead of the real SystemInteraction (for tests)") orelse false;
+
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "mock_backend", mock_backend);
+
     switch (target.result.os.tag) {
-        .windows => buildWindows(b, target, optimize),
-        .linux => buildLinux(b, target, optimize),
+        .windows => buildWindows(b, target, optimize, build_options, mock_backend),
+        .linux => buildLinux(b, target, optimize, build_options),
         else => @panic("unsupported OS"),
     }
 }
 
-fn buildWindows(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+fn buildWindows(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, build_options: *std.Build.Step.Options, mock_backend: bool) void {
+    const root = if (mock_backend) "src/main_windows_test.zig" else "src/main_windows.zig";
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main_windows.zig"),
+        .root_source_file = b.path(root),
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
         .strip = (optimize == .ReleaseSmall),
     });
+    exe_mod.addOptions("build_options", build_options);
 
     exe_mod.linkSystemLibrary("c", .{});
     exe_mod.linkSystemLibrary("gdi32", .{});
@@ -71,7 +78,7 @@ const wayland_protocols = [_]WaylandProtocol{
     .{ .xml = "protocols/plasma-virtual-desktop.xml", .name = "plasma-virtual-desktop-client-protocol" },
 };
 
-fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, build_options: *std.Build.Step.Options) void {
     // Generate Wayland protocol headers and private-code C files via wayland-scanner.
     var generated_headers = b.addWriteFiles();
     var proto_step = b.step("protocols", "Generate Wayland protocol bindings");
@@ -99,6 +106,7 @@ fn buildLinux(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .optimize = optimize,
         .single_threaded = true,
     });
+    exe_mod.addOptions("build_options", build_options);
 
     exe_mod.addLibraryPath(.{ .cwd_relative = "/usr/lib64" });
     exe_mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });

@@ -26,8 +26,11 @@ const Globals = struct {
     seat: ?*c.wl_seat = null,
 };
 
-const FONT_TILE: u32 = 13;
-const FONT_SEARCH: u32 = 18;
+// Sized to roughly match Win32 DEFAULT_GUI_FONT (Tahoma ~9pt → ~12px) and the
+// Segoe UI Bold 32pt-scaled badge used for the desktop number.
+const FONT_TILE: u32 = 12;
+const FONT_SEARCH: u32 = 12;
+const FONT_DESKTOP: u32 = 32;
 
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
@@ -42,6 +45,7 @@ keyboard: Keyboard,
 grid: Grid,
 tile_text: text.Renderer,
 search_text: text.Renderer,
+desktop_text: text.Renderer,
 
 closed: bool,
 running: bool,
@@ -65,6 +69,7 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
         .grid = Grid.init(allocator),
         .tile_text = undefined,
         .search_text = undefined,
+        .desktop_text = undefined,
         .closed = false,
         .running = true,
     };
@@ -88,15 +93,18 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
 
     self.grid.setViewport(@intCast(self.layer.width), @intCast(self.layer.height));
 
-    self.tile_text = try text.Renderer.create(allocator, FONT_TILE);
+    self.tile_text = try text.Renderer.create(allocator, FONT_TILE, .regular);
     errdefer self.tile_text.destroy();
-    self.search_text = try text.Renderer.create(allocator, FONT_SEARCH);
+    self.search_text = try text.Renderer.create(allocator, FONT_SEARCH, .regular);
     errdefer self.search_text.destroy();
+    self.desktop_text = try text.Renderer.create(allocator, FONT_DESKTOP, .bold);
+    errdefer self.desktop_text.destroy();
 
     return self;
 }
 
 pub fn deinit(self: *Self) void {
+    self.desktop_text.destroy();
     self.search_text.destroy();
     self.tile_text.destroy();
     self.grid.deinit();
@@ -148,6 +156,7 @@ fn repaint(self: *Self) !void {
         &self.grid,
         &self.tile_text,
         &self.search_text,
+        &self.desktop_text,
         .{},
     );
     self.layer.attachAndCommit(buf.buf);

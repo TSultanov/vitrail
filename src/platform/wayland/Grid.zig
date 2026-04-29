@@ -5,12 +5,16 @@ const spiral = @import("../../common/SpiralLayout.zig");
 
 const Self = @This();
 
-pub const TILE_W: i32 = 140;
-pub const TILE_H: i32 = 90;
-pub const TILE_MARGIN: i32 = 4;
-pub const SEARCH_H: i32 = 36;
-pub const SEARCH_W: i32 = 360;
-const GRID_BOTTOM_PAD: i32 = SEARCH_H + 16;
+pub const TILE_W: i32 = 100;
+pub const TILE_H: i32 = 100;
+// Windows uses margin = -1 (1px overlap). Effective step is TILE_W-1, painted
+// with a 1px black border so adjacent tiles share a 2px black gutter visually.
+pub const TILE_MARGIN: i32 = -1;
+pub const SEARCH_H: i32 = 20;
+pub const SEARCH_W: i32 = 100;
+// Windows places the search box ~100px above the bottom edge.
+pub const SEARCH_BOTTOM_OFFSET: i32 = 100;
+const GRID_BOTTOM_PAD: i32 = SEARCH_BOTTOM_OFFSET + SEARCH_H;
 
 pub const Tile = struct {
     dw: common.DesktopWindow,
