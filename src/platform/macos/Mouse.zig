@@ -1,17 +1,12 @@
 // Translates raw bridge mouse events (kind, x, y) to the platform-agnostic
-// Action union. Mirrors the Wayland Mouse.zig contract.
+// MouseAction union defined in common/InputAction.zig.
+
+const input = @import("../../common/InputAction.zig");
 
 const Self = @This();
 
-pub const Action = union(enum) {
-    move: struct { x: i32, y: i32 },
-    click: struct { x: i32, y: i32 },
-};
-
-pub const Callbacks = struct {
-    on_action: *const fn (ctx: *anyopaque, action: Action) void,
-    ctx: *anyopaque,
-};
+pub const Action = input.MouseAction;
+pub const Callbacks = input.MouseCallbacks;
 
 callbacks: Callbacks,
 

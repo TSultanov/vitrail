@@ -1,26 +1,13 @@
 // macOS keyboard event translation. Maps NSEvent virtual keycodes to the
-// platform-agnostic Action union used by the rest of the app. Mirrors the
-// Wayland Keyboard.zig contract.
+// platform-agnostic KeyAction union defined in common/InputAction.zig.
 
 const std = @import("std");
+const input = @import("../../common/InputAction.zig");
 
 const Self = @This();
 
-pub const Action = union(enum) {
-    quit,
-    activate,
-    next,
-    prev,
-    move: struct { dx: i32, dy: i32 },
-    backspace,
-    delete_word,
-    insert: []const u8, // UTF-8; valid only for the duration of the callback
-};
-
-pub const Callbacks = struct {
-    on_action: *const fn (ctx: *anyopaque, action: Action) void,
-    ctx: *anyopaque,
-};
+pub const Action = input.KeyAction;
+pub const Callbacks = input.KeyCallbacks;
 
 callbacks: Callbacks,
 

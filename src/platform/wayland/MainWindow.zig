@@ -8,9 +8,10 @@ const ShmPool = @import("ShmPool.zig");
 const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
 const Cursor = @import("Cursor.zig");
-const Grid = @import("Grid.zig");
+const Grid = @import("../../common/Grid.zig");
 const Renderer = @import("Renderer.zig");
 const text = @import("text.zig");
+const input = @import("../../common/InputAction.zig");
 
 const Self = @This();
 
@@ -301,42 +302,30 @@ fn onSeatCaps(data: ?*anyopaque, seat: ?*c.wl_seat, caps: u32) callconv(.c) void
 
 fn onSeatName(_: ?*anyopaque, _: ?*c.wl_seat, _: [*c]const u8) callconv(.c) void {}
 
-// ─── Keyboard action sink ─────────────────────────────────────────────────────
+// ─── Action sinks ─────────────────────────────────────────────────────────────
 
-fn onKeyboardAction(ctx: *anyopaque, action: Keyboard.Action) void {
+fn hooks(self: *Self) input.Hooks {
+    return .{ .ctx = self, .hide = onHookHide, .activate_selected = onHookActivate };
+}
+fn onHookHide(ctx: *anyopaque) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
-    switch (action) {
-        .quit => self.callbacks.hide(self) catch {},
-        .activate => self.activateSelected(),
-        .next => self.grid.selectNext(false),
-        .prev => self.grid.selectNext(true),
-        .move => |m| self.grid.selectDir(m.dx, m.dy),
-        .backspace => self.grid.popSearchCodepoint() catch {},
-        .delete_word => self.grid.popSearchWord() catch {},
-        .insert => |bytes| self.grid.appendSearch(bytes) catch {},
-    }
+    self.callbacks.hide(self) catch {};
+}
+fn onHookActivate(ctx: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.activateSelected();
+}
+
+fn onKeyboardAction(ctx: *anyopaque, action: input.KeyAction) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    input.dispatchKey(&self.grid, self.hooks(), action);
     self.repaint() catch {};
     _ = c.wl_display_flush(self.display);
 }
 
-// ─── Mouse action sink ────────────────────────────────────────────────────────
-
-fn onMouseAction(ctx: *anyopaque, action: Mouse.Action) void {
+fn onMouseAction(ctx: *anyopaque, action: input.MouseAction) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
-    switch (action) {
-        .move => |m| {
-            _ = self.grid.selectAt(m.x, m.y);
-        },
-        .click => |m| {
-            if (self.grid.tileAt(m.x, m.y) != null) {
-                _ = self.grid.selectAt(m.x, m.y);
-                self.activateSelected();
-            } else if (!self.grid.isInsideSearchBox(m.x, m.y)) {
-                self.callbacks.hide(self) catch {};
-            }
-            return;
-        },
-    }
+    input.dispatchMouse(&self.grid, self.hooks(), action);
     self.repaint() catch {};
     _ = c.wl_display_flush(self.display);
 }

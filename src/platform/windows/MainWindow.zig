@@ -31,7 +31,6 @@ hInstance: w.HINSTANCE,
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
 font: w.HGDIOBJ,
-previous_hidden: bool = false,
 
 tile_callbacks: Tile.Callbacks = .{
     .clicked = tileCallback,
@@ -201,8 +200,7 @@ pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, w
         try wh.mapFailure(w.GetWindowRect(desktop, &desktopRect));
         try window.setSize(desktopRect.left, desktopRect.top, desktopRect.right - desktopRect.left, desktopRect.bottom - desktopRect.top);
 
-        const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-        try self.layout.layout(false);
+        _ = event_handlers;
     }
 }
 
@@ -308,43 +306,12 @@ fn updateVisibility(self: *Self) !void {
         _ = w.CharLowerBuffW(search_lower_utf16, @intCast(search_lower_utf16.len - 1));
     }
 
-    // Convert the lowercased search query to UTF-8 for comparison with dw.title_lower
     var search_utf8_buf: [1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&search_utf8_buf);
     const search_actual = std.mem.sliceTo(search_lower_utf16, 0);
     const search_utf8: []const u8 = std.unicode.utf16LeToUtf8Alloc(fba.allocator(), search_actual) catch "";
 
-    var reset_focus = self.previous_hidden;
-    var hidden_num: usize = 0;
-
-    for (self.layout.tiles.items) |tile| {
-        const dw = tile.desktopWindow;
-        if (search_utf8.len <= 1) {
-            tile.visible = true;
-        } else {
-            if (std.mem.containsAtLeast(u8, dw.title_lower, 1, search_utf8) or
-                std.mem.containsAtLeast(u8, dw.app_id_lower, 1, search_utf8))
-            {
-                tile.visible = true;
-            } else {
-                if (self.layout.selected_idx) |s| {
-                    if (s < self.layout.tiles.items.len and self.layout.tiles.items[s] == tile) {
-                        reset_focus = true;
-                    }
-                }
-                hidden_num += 1;
-                tile.visible = false;
-            }
-        }
-    }
-
-    if (hidden_num == self.layout.tiles.items.len) {
-        self.previous_hidden = true;
-    } else {
-        self.previous_hidden = false;
-    }
-
-    try self.layout.layout(reset_focus);
+    try self.layout.setSearch(search_utf8);
     try self.updateRegion();
 }
 
@@ -356,8 +323,7 @@ fn updateBoxes(self: *Self) !void {
                 try self.layout.addTile(tile);
             }
             try self.search_box.clearText();
-            self.previous_hidden = false;
-            try self.layout.layout(true);
+            try self.layout.setDesktopWindows(desktop_windows.items);
             _ = self.search_box.window.show();
             try self.search_box.window.bringToTop();
             try self.layout.window.focus();

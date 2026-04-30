@@ -12,10 +12,11 @@ const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
 const text = @import("text.zig");
 
-// Reuse the renderer + grid from the wayland implementation as-is. Both are
-// pure Zig with no Wayland dependency; importing across platforms is fine.
-const Grid = @import("../wayland/Grid.zig");
+// Grid is pure logic in common/. Renderer is the Wayland software raster —
+// pure Zig with no Wayland dependency, reused across platforms.
+const Grid = @import("../../common/Grid.zig");
 const Renderer = @import("../wayland/Renderer.zig");
+const input = @import("../../common/InputAction.zig");
 
 const cg = @cImport({
     @cInclude("CoreGraphics/CoreGraphics.h");
@@ -290,36 +291,26 @@ fn onCloseCb(ctx: ?*anyopaque) callconv(.c) void {
 
 // ─── Action sinks ───────────────────────────────────────────────────────────
 
-fn onKeyboardAction(ctx: *anyopaque, action: Keyboard.Action) void {
+fn hooks(self: *Self) input.Hooks {
+    return .{ .ctx = self, .hide = onHookHide, .activate_selected = onHookActivate };
+}
+fn onHookHide(ctx: *anyopaque) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
-    switch (action) {
-        .quit => self.callbacks.hide(self) catch {},
-        .activate => self.activateSelected(),
-        .next => self.grid.selectNext(false),
-        .prev => self.grid.selectNext(true),
-        .move => |m| self.grid.selectDir(m.dx, m.dy),
-        .backspace => self.grid.popSearchCodepoint() catch {},
-        .delete_word => self.grid.popSearchWord() catch {},
-        .insert => |bytes| self.grid.appendSearch(bytes) catch {},
-    }
+    self.callbacks.hide(self) catch {};
+}
+fn onHookActivate(ctx: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.activateSelected();
+}
+
+fn onKeyboardAction(ctx: *anyopaque, action: input.KeyAction) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    input.dispatchKey(&self.grid, self.hooks(), action);
     self.repaint() catch {};
 }
 
-fn onMouseAction(ctx: *anyopaque, action: Mouse.Action) void {
+fn onMouseAction(ctx: *anyopaque, action: input.MouseAction) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
-    switch (action) {
-        .move => |m| {
-            _ = self.grid.selectAt(m.x, m.y);
-        },
-        .click => |m| {
-            if (self.grid.tileAt(m.x, m.y) != null) {
-                _ = self.grid.selectAt(m.x, m.y);
-                self.activateSelected();
-            } else if (!self.grid.isInsideSearchBox(m.x, m.y)) {
-                self.callbacks.hide(self) catch {};
-            }
-            return;
-        },
-    }
+    input.dispatchMouse(&self.grid, self.hooks(), action);
     self.repaint() catch {};
 }

@@ -2,38 +2,23 @@ const std = @import("std");
 const wh = @import("windows.zig");
 const w = wh.c;
 const sys = @import("SystemInteraction.zig");
-const spiral = @import("../../common/SpiralLayout.zig");
-const numToRow = spiral.numToRow;
-const numToCol = spiral.numToCol;
+const common = @import("../../common/DesktopWindow.zig");
+const Grid = @import("../../common/Grid.zig");
 pub const Window = @import("Window.zig");
 pub const Tile = @import("Tile.zig");
 
 const Self = @This();
-const PosIdxMap = std.AutoArrayHashMap(BoxColRow, usize);
-const IdxPosMap = std.AutoArrayHashMap(usize, BoxColRow);
 
 window: *Window,
-
-rows_max: i64 = std.math.minInt(i64),
-cols_max: i64 = std.math.minInt(i64),
-rows_min: i64 = std.math.maxInt(i64),
-cols_min: i64 = std.math.maxInt(i64),
 allocator: std.mem.Allocator,
 event_handlers: Window.EventHandlers,
 
-pos_idx_map: PosIdxMap,
-idx_pos_map: IdxPosMap,
+// Pure-logic placement + selection lives in common.Grid; this module owns
+// the per-tile HWND/font/icon resources and mirrors grid coordinates into
+// physical pixels via DPI scaling.
+grid: Grid,
 tiles: std.array_list.Managed(*Tile),
 selected_idx: ?usize = null,
-
-const chWidth: c_int = 100;
-const chHeight: c_int = 100;
-const margin: c_int = -1;
-
-const BoxColRow = struct {
-    col: i32,
-    row: i32,
-};
 
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     if (window.docked) {
@@ -42,7 +27,7 @@ fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void
 
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
 
-    try self.layout(false);
+    try self.relayout();
 }
 
 fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
@@ -114,8 +99,7 @@ fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WP
 
 fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    self.idx_pos_map.deinit();
-    self.pos_idx_map.deinit();
+    self.grid.deinit();
     for (self.tiles.items) |tile| tile.destroy();
     self.tiles.deinit();
     self.allocator.destroy(window);
@@ -137,6 +121,7 @@ fn onMouseMoveHandler(event_handlers: *Window.EventHandlers, _: *Window, _: u64,
         if (px >= tile.bounds.left and px < tile.bounds.right and py >= tile.bounds.top and py < tile.bounds.bottom) {
             if (self.selected_idx == null or self.selected_idx.? != idx) {
                 self.selected_idx = idx;
+                self.grid.selected = idx;
                 try self.window.redraw();
             }
             return;
@@ -161,8 +146,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, allocator: std.mem.Alloca
     self.* = .{
         .window = undefined,
         .allocator = allocator,
-        .idx_pos_map = IdxPosMap.init(allocator),
-        .pos_idx_map = PosIdxMap.init(allocator),
+        .grid = Grid.init(allocator),
         .tiles = std.array_list.Managed(*Tile).init(allocator),
         .event_handlers = .{
             .onResize = onResizeHandler,
@@ -188,168 +172,100 @@ pub fn addTile(self: *Self, tile: *Tile) !void {
 }
 
 pub fn clear(self: *Self) !void {
-    self.idx_pos_map.clearAndFree();
-    self.pos_idx_map.clearAndFree();
+    self.grid.dropDesktopWindows();
     for (self.tiles.items) |tile| tile.destroy();
     self.tiles.clearRetainingCapacity();
     self.selected_idx = null;
     try self.window.redraw();
 }
 
-pub fn layout(self: *Self, reset_focus: bool) !void {
-    if (self.tiles.items.len == 0) {
-        try self.window.redraw();
-        return;
-    }
-
-    self.idx_pos_map.clearAndFree();
-    self.pos_idx_map.clearAndFree();
-
-    self.rows_max = std.math.minInt(i64);
-    self.cols_max = std.math.minInt(i64);
-    self.rows_min = std.math.maxInt(i64);
-    self.cols_min = std.math.maxInt(i64);
-
-    const marginScaled: c_int = self.window.scaleDpi(margin);
-    const chWidthScaled = self.window.scaleDpi(chWidth);
-    const chHeightScaled: c_int = self.window.scaleDpi(chHeight);
-
-    const rect = try self.window.getClientRect();
-
-    const width = rect.right - rect.left;
-    const height = rect.bottom - rect.top;
-
-    const rows = @divFloor(height, chHeightScaled + marginScaled);
-    const cols = @divFloor(width, chWidthScaled + marginScaled);
-
-    const maxNumberOfCells = (cols - 1) * (rows - 1);
-    const rowMax = @divFloor(rows, 2);
-    const rowMin = -@divFloor(rows, 2) + 1;
-    const colMax = @divFloor(cols, 2);
-    const colMin = -@divFloor(cols, 2) + 1;
-
-    var idx: i64 = 0;
-    var offset: i64 = 0;
-
-    var lowest_visible_idx: i64 = -1;
-
-    while (idx < self.tiles.items.len and idx < maxNumberOfCells) : (idx += 1) {
-        const tile = self.tiles.items[@intCast(idx)];
-        if (!tile.visible) {
-            offset -= 1;
-            continue;
-        }
-
-        if (lowest_visible_idx == -1) lowest_visible_idx = idx;
-
-        var col = numToCol(@intCast(idx + offset));
-        var row = numToRow(@intCast(idx + offset));
-        while ((col < colMin or col > colMax or row < rowMin or row > rowMax) and (idx + offset < maxNumberOfCells)) {
-            offset += 1;
-            col = numToCol(@intCast(idx + offset));
-            row = numToRow(@intCast(idx + offset));
-        }
-
-        self.cols_max = @max(self.cols_max, col);
-        self.cols_min = @max(self.cols_min, col);
-        self.rows_max = @max(self.rows_max, row);
-        self.rows_min = @max(self.rows_min, row);
-
-        const x = @divFloor(width, 2) + col * (chWidthScaled + marginScaled) - @divFloor(chWidthScaled, 2);
-        const y = @divFloor(height, 2) + row * (chHeightScaled + marginScaled) - @divFloor(chHeightScaled, 2);
-
-        tile.bounds = .{ .left = x, .top = y, .right = x + chWidthScaled, .bottom = y + chHeightScaled };
-
-        try self.idx_pos_map.put(@intCast(idx), .{ .col = col, .row = row });
-        try self.pos_idx_map.put(.{ .col = col, .row = row }, @intCast(idx));
-    }
-
-    if (reset_focus) {
-        if (lowest_visible_idx >= 0) {
-            self.selected_idx = @intCast(lowest_visible_idx);
-        } else {
-            self.selected_idx = null;
-        }
-    } else if (self.selected_idx) |s| {
-        if (s >= self.tiles.items.len or !self.tiles.items[s].visible) {
-            if (lowest_visible_idx >= 0) {
-                self.selected_idx = @intCast(lowest_visible_idx);
-            } else {
-                self.selected_idx = null;
-            }
-        }
-    }
-
+/// Hand the grid a fresh window list. Caller still owns the slice.
+pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
+    try self.updateGridViewport();
+    try self.grid.setDesktopWindows(dws);
+    self.mirrorFromGrid();
     try self.window.redraw();
 }
 
-fn nextVisible(self: *Self, from: usize) ?usize {
-    var i: usize = from + 1;
-    while (i < self.tiles.items.len) : (i += 1) {
-        if (self.tiles.items[i].visible and self.idx_pos_map.contains(i)) return i;
-    }
-    i = 0;
-    while (i <= from) : (i += 1) {
-        if (self.tiles.items[i].visible and self.idx_pos_map.contains(i)) return i;
-    }
-    return null;
+/// Update the grid's search filter (UTF-8 lowercased). Keeps tile selection
+/// stable when the previously-selected tile remains visible.
+pub fn setSearch(self: *Self, utf8: []const u8) !void {
+    try self.updateGridViewport();
+    try self.grid.setSearch(utf8);
+    self.mirrorFromGrid();
+    try self.window.redraw();
 }
 
-fn prevVisible(self: *Self, from: usize) ?usize {
-    if (from > 0) {
-        var i: usize = from;
-        while (i > 0) {
-            i -= 1;
-            if (self.tiles.items[i].visible and self.idx_pos_map.contains(i)) return i;
+fn relayout(self: *Self) !void {
+    try self.updateGridViewport();
+    try self.grid.rebuild();
+    self.mirrorFromGrid();
+    try self.window.redraw();
+}
+
+fn updateGridViewport(self: *Self) !void {
+    const client = try self.window.getClientRect();
+    const dpi = self.window.dpi;
+    const phys_w = client.right - client.left;
+    const phys_h = client.bottom - client.top;
+    const lw = w.MulDiv(phys_w, 96, @intCast(dpi));
+    const lh = w.MulDiv(phys_h, 96, @intCast(dpi));
+    self.grid.setViewport(lw, lh);
+}
+
+fn mirrorFromGrid(self: *Self) void {
+    const dpi = self.window.dpi;
+    for (self.tiles.items, 0..) |tile, i| {
+        if (i >= self.grid.tiles.items.len) {
+            tile.visible = false;
+            continue;
+        }
+        const gt = self.grid.tiles.items[i];
+        tile.visible = gt.visible;
+        if (gt.visible) {
+            const x = w.MulDiv(gt.x, @intCast(dpi), 96);
+            const y = w.MulDiv(gt.y, @intCast(dpi), 96);
+            const ww = w.MulDiv(Grid.TILE_W, @intCast(dpi), 96);
+            const hh = w.MulDiv(Grid.TILE_H, @intCast(dpi), 96);
+            tile.bounds = .{ .left = x, .top = y, .right = x + ww, .bottom = y + hh };
         }
     }
-    var j: usize = self.tiles.items.len;
-    while (j > from) {
-        j -= 1;
-        if (self.tiles.items[j].visible and self.idx_pos_map.contains(j)) return j;
-    }
-    return null;
+    self.selected_idx = self.grid.selected;
 }
 
-fn setSelected(self: *Self, idx: usize) !void {
-    if (self.selected_idx == null or self.selected_idx.? != idx) {
-        self.selected_idx = idx;
-        try self.window.redraw();
-    }
+fn applySelection(self: *Self) !void {
+    self.selected_idx = self.grid.selected;
+    try self.window.redraw();
 }
 
 pub fn next(self: *Self) !void {
-    const cur = self.selected_idx orelse return;
-    if (self.nextVisible(cur)) |i| try self.setSelected(i);
+    self.grid.selectNext(false);
+    try self.applySelection();
 }
 
 pub fn prev(self: *Self) !void {
-    const cur = self.selected_idx orelse return;
-    if (self.prevVisible(cur)) |i| try self.setSelected(i);
+    self.grid.selectNext(true);
+    try self.applySelection();
 }
 
 pub fn right(self: *Self) !void {
-    const cur = self.selected_idx orelse return;
-    const pos = self.idx_pos_map.get(cur) orelse return;
-    if (self.pos_idx_map.get(.{ .col = pos.col + 1, .row = pos.row })) |i| try self.setSelected(i);
+    self.grid.selectDir(1, 0);
+    try self.applySelection();
 }
 
 pub fn left(self: *Self) !void {
-    const cur = self.selected_idx orelse return;
-    const pos = self.idx_pos_map.get(cur) orelse return;
-    if (self.pos_idx_map.get(.{ .col = pos.col - 1, .row = pos.row })) |i| try self.setSelected(i);
+    self.grid.selectDir(-1, 0);
+    try self.applySelection();
 }
 
 pub fn down(self: *Self) !void {
-    const cur = self.selected_idx orelse return;
-    const pos = self.idx_pos_map.get(cur) orelse return;
-    if (self.pos_idx_map.get(.{ .col = pos.col, .row = pos.row + 1 })) |i| try self.setSelected(i);
+    self.grid.selectDir(0, 1);
+    try self.applySelection();
 }
 
 pub fn up(self: *Self) !void {
-    const cur = self.selected_idx orelse return;
-    const pos = self.idx_pos_map.get(cur) orelse return;
-    if (self.pos_idx_map.get(.{ .col = pos.col, .row = pos.row - 1 })) |i| try self.setSelected(i);
+    self.grid.selectDir(0, -1);
+    try self.applySelection();
 }
 
 pub fn activate(self: *Self) !void {
@@ -359,4 +275,3 @@ pub fn activate(self: *Self) !void {
     if (!tile.visible) return;
     try tile.callbacks.clicked(tile);
 }
-

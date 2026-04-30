@@ -1,7 +1,7 @@
-// Pure logic: tile placement (spiral), search filter, selection. No Wayland.
+// Pure logic: tile placement (spiral), search filter, selection. No platform deps.
 const std = @import("std");
-const common = @import("../../common/DesktopWindow.zig");
-const spiral = @import("../../common/SpiralLayout.zig");
+const common = @import("DesktopWindow.zig");
+const spiral = @import("SpiralLayout.zig");
 
 const Self = @This();
 
@@ -76,6 +76,16 @@ pub fn appendSearch(self: *Self, bytes: []const u8) !void {
     if (self.search_len + bytes.len > self.search.len) return;
     @memcpy(self.search[self.search_len..][0..bytes.len], bytes);
     self.search_len += bytes.len;
+    try self.rebuild();
+}
+
+/// Replace the entire search buffer. Used by platforms (Windows) where the
+/// search text lives in a native control (a Win32 EDIT) and the grid mirrors
+/// it on text-change notifications instead of owning the input directly.
+pub fn setSearch(self: *Self, bytes: []const u8) !void {
+    if (bytes.len > self.search.len) return;
+    @memcpy(self.search[0..bytes.len], bytes);
+    self.search_len = bytes.len;
     try self.rebuild();
 }
 

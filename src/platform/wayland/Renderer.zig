@@ -9,7 +9,7 @@
 const std = @import("std");
 const common = @import("../../common/DesktopWindow.zig");
 const ColorHash = @import("../../common/ColorHash.zig");
-const Grid = @import("Grid.zig");
+const Grid = @import("../../common/Grid.zig");
 
 pub const Theme = struct {
     transparent: u32 = 0x00000000,

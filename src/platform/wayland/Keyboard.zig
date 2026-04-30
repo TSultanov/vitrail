@@ -1,24 +1,12 @@
 const std = @import("std");
 const wc = @import("wayland_c.zig");
 const c = wc.c;
+const input = @import("../../common/InputAction.zig");
 
 const Self = @This();
 
-pub const Action = union(enum) {
-    quit,
-    activate,
-    next,
-    prev,
-    move: struct { dx: i32, dy: i32 },
-    backspace,
-    delete_word,
-    insert: []const u8, // UTF-8 bytes; valid only for the duration of the callback
-};
-
-pub const Callbacks = struct {
-    on_action: *const fn (ctx: *anyopaque, action: Action) void,
-    ctx: *anyopaque,
-};
+pub const Action = input.KeyAction;
+pub const Callbacks = input.KeyCallbacks;
 
 xkb_ctx: ?*c.xkb_context,
 xkb_state: ?*c.xkb_state,

@@ -1,21 +1,15 @@
 // wl_pointer wrapper. Tracks the latest cursor position from enter/motion
-// events and emits a Mouse.Action on motion + on left-button-down.
+// events and emits a MouseAction on motion + on left-button-down.
 const std = @import("std");
 const wc = @import("wayland_c.zig");
 const c = wc.c;
 const Cursor = @import("Cursor.zig");
+const input = @import("../../common/InputAction.zig");
 
 const Self = @This();
 
-pub const Action = union(enum) {
-    move: struct { x: i32, y: i32 },
-    click: struct { x: i32, y: i32 },
-};
-
-pub const Callbacks = struct {
-    on_action: *const fn (ctx: *anyopaque, action: Action) void,
-    ctx: *anyopaque,
-};
+pub const Action = input.MouseAction;
+pub const Callbacks = input.MouseCallbacks;
 
 pointer: ?*c.wl_pointer = null,
 pointer_listener: c.wl_pointer_listener,
