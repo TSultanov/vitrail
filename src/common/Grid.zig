@@ -10,7 +10,7 @@ pub const TILE_H: i32 = 100;
 // Tiles are placed edge-to-edge (no overlap, no gap). Each tile owns its
 // left + top 1px border; right + bottom borders are painted only on the
 // outer tiles (those without a visible neighbor in that direction). The
-// rendering pass takes care of this — see wayland/Renderer.zig. Using a
+// rendering pass takes care of this — see common/Renderer.zig. Using a
 // non-negative margin keeps internal and external borders the same 1px
 // thickness at any scale, including macOS scaled-Retina modes where the
 // compositor downsamples a 1px-overlap design unevenly.

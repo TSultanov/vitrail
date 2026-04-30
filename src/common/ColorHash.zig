@@ -25,7 +25,7 @@ pub fn createColor(text: []const u8, focused: bool) u32 {
     const bi: u32 = @intFromFloat(b * 255);
     const gi: u32 = @intFromFloat(g * 255);
 
-    return ri | (gi << 8) | (bi << 16);
+    return (ri << 16) | (gi << 8) | bi;
 }
 
 fn getCrc16(a: []const u8) u16 {

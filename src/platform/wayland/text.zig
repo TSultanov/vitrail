@@ -1,4 +1,13 @@
+// FreeType + Fontconfig glyph backend for the shared rasterizer in
+// common/text.zig. Fontconfig resolves the system font path; FreeType
+// rasterizes each codepoint to an 8-bit alpha bitmap. The cache + blit
+// live in common/text.zig.
+
 const std = @import("std");
+const common_text = @import("../../common/text.zig");
+
+pub const Weight = common_text.Weight;
+pub const Clip = common_text.Clip;
 
 const c = @cImport({
     @cInclude("ft2build.h");
@@ -6,34 +15,12 @@ const c = @cImport({
     @cInclude("fontconfig/fontconfig.h");
 });
 
-pub const Weight = enum { regular, bold };
-
-/// Half-open pixel rect the rasterizer clips against. The caller passes its
-/// framebuffer extents (or a tighter region — the search box uses its
-/// interior to keep glyphs from overdrawing the border / surrounding alpha).
-pub const Clip = struct { x0: i32, y0: i32, x1: i32, y1: i32 };
-
-pub const Renderer = struct {
-    allocator: std.mem.Allocator,
+const Backend = struct {
     library: c.FT_Library,
     face: c.FT_Face,
-    pixel_size: u32,
-    line_height: i32,
     ascent: i32,
-    cache: std.AutoHashMap(u32, Glyph),
 
-    const Glyph = struct {
-        // Grayscale alpha bitmap, owned.
-        pixels: []u8,
-        width: u32,
-        rows: u32,
-        // Pen offsets in pixels (FreeType bitmap_left/top).
-        bearing_x: i32,
-        bearing_y: i32,
-        advance_x: i32,
-    };
-
-    pub fn create(allocator: std.mem.Allocator, pixel_size: u32, weight: Weight) !Renderer {
+    pub fn init(allocator: std.mem.Allocator, pixel_size: u32, weight: Weight) !Backend {
         var library: c.FT_Library = undefined;
         if (c.FT_Init_FreeType(&library) != 0) return error.FreeTypeInit;
         errdefer _ = c.FT_Done_FreeType(library);
@@ -47,37 +34,27 @@ pub const Renderer = struct {
 
         if (c.FT_Set_Pixel_Sizes(face, 0, pixel_size) != 0) return error.SetSize;
 
-        // metrics->ascender / descender are in 26.6 fixed point.
+        // metrics.ascender is in 26.6 fixed point.
         const ascent: i32 = @intCast(@divTrunc(face.*.size.*.metrics.ascender, 64));
-        const descent: i32 = @intCast(@divTrunc(face.*.size.*.metrics.descender, 64));
 
         return .{
-            .allocator = allocator,
             .library = library,
             .face = face,
-            .pixel_size = pixel_size,
             .ascent = ascent,
-            .line_height = ascent - descent,
-            .cache = std.AutoHashMap(u32, Glyph).init(allocator),
         };
     }
 
-    pub fn destroy(self: *Renderer) void {
-        var it = self.cache.valueIterator();
-        while (it.next()) |g| self.allocator.free(g.pixels);
-        self.cache.deinit();
+    pub fn deinit(self: *Backend) void {
         _ = c.FT_Done_Face(self.face);
         _ = c.FT_Done_FreeType(self.library);
     }
 
-    fn loadGlyph(self: *Renderer, codepoint: u32) !*Glyph {
-        if (self.cache.getPtr(codepoint)) |g| return g;
-
+    pub fn loadGlyph(self: *Backend, allocator: std.mem.Allocator, codepoint: u32) !common_text.Glyph {
         if (c.FT_Load_Char(self.face, codepoint, c.FT_LOAD_RENDER) != 0) return error.LoadChar;
         const slot = self.face.*.glyph;
         const bm = slot.*.bitmap;
 
-        const pixels = try self.allocator.alloc(u8, bm.width * bm.rows);
+        const pixels = try allocator.alloc(u8, bm.width * bm.rows);
         // FreeType rows may have negative pitch (top-down). Copy row by row to normalize.
         const pitch_abs: usize = @intCast(@abs(bm.pitch));
         if (bm.pitch >= 0) {
@@ -93,7 +70,7 @@ pub const Renderer = struct {
             }
         }
 
-        const glyph = Glyph{
+        return .{
             .pixels = pixels,
             .width = bm.width,
             .rows = bm.rows,
@@ -101,76 +78,10 @@ pub const Renderer = struct {
             .bearing_y = slot.*.bitmap_top,
             .advance_x = @intCast(@divTrunc(slot.*.advance.x, 64)),
         };
-        try self.cache.put(codepoint, glyph);
-        return self.cache.getPtr(codepoint).?;
-    }
-
-    /// Render UTF-8 `text` into `pixels` (ARGB8888, `stride` u32s per row).
-    /// (x, y) is the baseline-left position. Pixels outside `clip` are
-    /// skipped — pass framebuffer extents for an unclipped draw, or a
-    /// tighter rect when the destination must not be overdrawn (e.g. the
-    /// search box interior). `color` is 0xAARRGGBB (alpha is masked).
-    /// Returns the pen x position after the last glyph.
-    pub fn draw(self: *Renderer, pixels: []u32, stride: u32, x: i32, y: i32, text: []const u8, color: u32, clip: Clip) !i32 {
-        var pen_x: i32 = x;
-        var view = std.unicode.Utf8View.init(text) catch return pen_x;
-        var it = view.iterator();
-        while (it.nextCodepoint()) |cp| {
-            const g = self.loadGlyph(cp) catch continue;
-            blitGlyph(pixels, stride, pen_x + g.bearing_x, y - g.bearing_y, g, color, clip);
-            pen_x += g.advance_x;
-        }
-        return pen_x;
-    }
-
-    /// Width of `text` in pixels, without rendering.
-    pub fn measure(self: *Renderer, text: []const u8) !i32 {
-        var w: i32 = 0;
-        var view = std.unicode.Utf8View.init(text) catch return 0;
-        var it = view.iterator();
-        while (it.nextCodepoint()) |cp| {
-            const g = self.loadGlyph(cp) catch continue;
-            w += g.advance_x;
-        }
-        return w;
     }
 };
 
-fn blitGlyph(pixels: []u32, stride: u32, x: i32, y: i32, g: *const Renderer.Glyph, color: u32, clip: Clip) void {
-    const r: u32 = (color >> 16) & 0xFF;
-    const gg: u32 = (color >> 8) & 0xFF;
-    const b: u32 = color & 0xFF;
-
-    var row: u32 = 0;
-    while (row < g.rows) : (row += 1) {
-        const py = y + @as(i32, @intCast(row));
-        if (py < clip.y0 or py >= clip.y1) continue;
-        var col: u32 = 0;
-        while (col < g.width) : (col += 1) {
-            const px = x + @as(i32, @intCast(col));
-            if (px < clip.x0 or px >= clip.x1) continue;
-            const alpha: u32 = g.pixels[row * g.width + col];
-            if (alpha == 0) continue;
-
-            const idx: usize = @as(usize, @intCast(py)) * stride + @as(usize, @intCast(px));
-            const dst = pixels[idx];
-
-            const dr = (dst >> 16) & 0xFF;
-            const dg = (dst >> 8) & 0xFF;
-            const db = dst & 0xFF;
-            const da = (dst >> 24) & 0xFF;
-
-            // Source-over blend with premultiplied glyph alpha.
-            const inv: u32 = 255 - alpha;
-            const out_r = (r * alpha + dr * inv) / 255;
-            const out_g = (gg * alpha + dg * inv) / 255;
-            const out_b = (b * alpha + db * inv) / 255;
-            const out_a = @min(255, da + alpha);
-
-            pixels[idx] = (@as(u32, @intCast(out_a)) << 24) | (@as(u32, @intCast(out_r)) << 16) | (@as(u32, @intCast(out_g)) << 8) | @as(u32, @intCast(out_b));
-        }
-    }
-}
+pub const Renderer = common_text.Renderer(Backend);
 
 fn resolveFont(allocator: std.mem.Allocator, weight: Weight) ![:0]u8 {
     if (c.FcInit() == 0) return error.FontconfigInit;

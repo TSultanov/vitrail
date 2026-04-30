@@ -7,9 +7,9 @@
 // - Desktop number badge: top-right, bold, color flipped from title.
 // - Search box: white fill, 1px gray border, black text — Win32 EDIT default look.
 const std = @import("std");
-const common = @import("../../common/DesktopWindow.zig");
-const ColorHash = @import("../../common/ColorHash.zig");
-const Grid = @import("../../common/Grid.zig");
+const common = @import("DesktopWindow.zig");
+const ColorHash = @import("ColorHash.zig");
+const Grid = @import("Grid.zig");
 
 pub const Theme = struct {
     transparent: u32 = 0x00000000,
@@ -20,9 +20,8 @@ pub const Theme = struct {
 };
 
 pub const TILE_TEXT_PAD: i32 = 5;
-// Icon margins mirror the Windows Tile.drawIcon layout (Tile.zig:147-150):
-// the icon fills as large as possible inside an inset rect, then is
-// centered within that rect.
+// Icon margins: the icon fills as large as possible inside an inset rect
+// (top/sides/bottom margins below) and is centered within that rect.
 pub const TILE_ICON_MARGIN_TOP: i32 = 20;
 pub const TILE_ICON_MARGIN_SIDE: i32 = 14;
 pub const TILE_ICON_MARGIN_BOT: i32 = 32;

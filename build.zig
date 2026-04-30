@@ -44,8 +44,6 @@ fn buildWindows(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     exe_mod.linkSystemLibrary("kernel32", .{});
     exe_mod.linkSystemLibrary("ComCtl32", .{});
     exe_mod.linkSystemLibrary("Ole32", .{});
-    exe_mod.linkSystemLibrary("Shlwapi", .{});
-    exe_mod.linkSystemLibrary("Dwmapi", .{});
 
     const exe = b.addExecutable(.{
         .name = "vitrail",

@@ -9,7 +9,7 @@ const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
 const Cursor = @import("Cursor.zig");
 const Grid = @import("../../common/Grid.zig");
-const Renderer = @import("Renderer.zig");
+const Renderer = @import("../../common/Renderer.zig");
 const text = @import("text.zig");
 const input = @import("../../common/InputAction.zig");
 

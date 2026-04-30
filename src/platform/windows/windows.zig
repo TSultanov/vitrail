@@ -21,11 +21,7 @@ pub const c = @cImport({
     @cUndef("NO_STRICT");
     @cInclude("commctrl.h");
     @cInclude("psapi.h");
-    @cInclude("shlwapi.h");
-    @cInclude("shlobj.h");
-    @cInclude("propsys.h");
-    @cInclude("uxtheme.h");
-    @cInclude("dwmapi.h");
+    @cInclude("shlobj.h"); // brings in SHDefExtractIconW + IShellItem; export lives in Shell32 / Ole32
 });
 
 pub const WinApiError = error{ GenericError, Failure };

@@ -3,15 +3,11 @@ const wh = @import("windows.zig");
 const w = wh.c;
 const sys = @import("SystemInteraction.zig");
 const common = @import("../../common/DesktopWindow.zig");
+const Grid = @import("../../common/Grid.zig");
 pub const Window = @import("Window.zig");
 pub const Layout = @import("Layout.zig");
-pub const Tile = @import("Tile.zig");
-pub const TextBox = @import("TextBox.zig");
 
 const Self = @This();
-
-const search_box_width = 100;
-const search_box_height = 20;
 
 pub const PlatformArgs = struct {
     hInstance: w.HINSTANCE,
@@ -24,27 +20,35 @@ pub const Callbacks = struct {
 
 window: *Window,
 layout: *Layout,
-search_box: *TextBox,
 event_handlers: Window.EventHandlers,
 desktop_windows: ?std.array_list.Managed(common.DesktopWindow),
 hInstance: w.HINSTANCE,
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
-font: w.HGDIOBJ,
 
-tile_callbacks: Tile.Callbacks = .{
-    .clicked = tileCallback,
+// Bridge from Layout up to this MainWindow. Layout calls .activate when a
+// tile is clicked / Enter-pressed and .visibility_changed when the search
+// filter or window list changes the visible tile set; we recover *Self via
+// @fieldParentPtr.
+layout_callbacks: Layout.Callbacks = .{
+    .activate = onLayoutActivate,
+    .visibility_changed = onLayoutVisibilityChanged,
 },
+
+fn onLayoutActivate(cbs: *Layout.Callbacks, dw: common.DesktopWindow) !void {
+    const self: *Self = @fieldParentPtr("layout_callbacks", cbs);
+    try self.callbacks.activateWindow(self, dw);
+}
+
+fn onLayoutVisibilityChanged(cbs: *Layout.Callbacks) !void {
+    const self: *Self = @fieldParentPtr("layout_callbacks", cbs);
+    try self.updateRegion();
+}
 
 fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-
-    _ = w.DeleteObject(self.font);
-
     self.allocator.destroy(self.window);
     self.allocator.destroy(self.layout);
-    self.allocator.destroy(self.search_box);
-
     _ = w.PostQuitMessage(0);
 }
 
@@ -63,64 +67,17 @@ fn onActivateHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: 
     }
 }
 
-fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    // Ctrl+Backspace produces WM_CHAR with wParam=0x7F (DEL). The standard
-    // Win32 edit control would otherwise insert it as a literal control
-    // character; intercept and erase the trailing word instead.
-    if (wParam == 0x7F) {
-        try self.deleteLastSearchWord();
-        return;
-    }
-    _ = w.SendMessageW(self.search_box.window.hwnd, w.WM_CHAR, wParam, lParam);
-}
-
-fn deleteLastSearchWord(self: *Self) !void {
-    const text = try self.search_box.window.getText(self.allocator);
-    defer self.allocator.free(text);
-
-    // GetWindowTextW's allocSentinel sized to length+1; sliceTo strips the NUL.
-    var len: usize = std.mem.sliceTo(text, 0).len;
-    while (len > 0) {
-        const cu = text[len - 1];
-        if (cu != ' ' and cu != '\t') break;
-        len -= 1;
-    }
-    while (len > 0) {
-        const cu = text[len - 1];
-        if (cu == ' ' or cu == '\t') break;
-        len -= 1;
-    }
-
-    const new_text = try self.allocator.allocSentinel(u16, len, 0);
-    defer self.allocator.free(new_text);
-    @memcpy(new_text[0..len], text[0..len]);
-    try self.search_box.window.setText(new_text);
-}
-
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    if (window.docked) {
-        try window.dock();
-    }
-
-    for (window.children.items) |child| {
-        if (child.hwnd == self.search_box.window.hwnd) {
-            const rect = try self.window.getRect();
-            const xm = @divFloor(rect.right - rect.left, 2);
-            const x = xm - @divFloor(child.scaleDpi(search_box_width), 2);
-
-            const y = rect.bottom - child.scaleDpi(100);
-
-            try child.setSize(x, y, child.scaleDpi(search_box_width), child.scaleDpi(search_box_height));
-        } else {
-            try child.resize();
-        }
-    }
-
+    if (window.docked) try window.dock();
+    for (window.children.items) |child| try child.resize();
     try self.updateRegion();
 }
 
+/// Rebuild the popup's transparency region from the grid's current visible
+/// tiles + search box. Each tile rect is extended by 1px on right and bottom
+/// so the renderer's seam borders (drawn at logical x+step_x / y+step_y) stay
+/// inside the region; interior overlaps are harmless under RGN_OR.
 fn updateRegion(self: *Self) !void {
     var window_rect: w.RECT = undefined;
     try wh.mapFailure(w.GetWindowRect(self.window.hwnd, &window_rect));
@@ -128,32 +85,33 @@ fn updateRegion(self: *Self) !void {
     var layout_rect: w.RECT = undefined;
     try wh.mapFailure(w.GetWindowRect(self.layout.window.hwnd, &layout_rect));
 
-    const layout_offset_x = layout_rect.left - window_rect.left;
-    const layout_offset_y = layout_rect.top - window_rect.top;
+    const layout_offset_x: c_int = layout_rect.left - window_rect.left;
+    const layout_offset_y: c_int = layout_rect.top - window_rect.top;
+
+    const dpi: c_int = @intCast(self.layout.window.dpi);
+    const step_x: c_int = Grid.TILE_W + Grid.TILE_MARGIN;
+    const step_y: c_int = Grid.TILE_H + Grid.TILE_MARGIN;
 
     const rgn = w.CreateRectRgn(0, 0, 0, 0);
 
-    for (self.layout.tiles.items) |tile| {
-        if (!tile.visible) continue;
-        const tile_rgn = w.CreateRectRgn(
-            tile.bounds.left + layout_offset_x,
-            tile.bounds.top + layout_offset_y,
-            tile.bounds.right + layout_offset_x,
-            tile.bounds.bottom + layout_offset_y,
-        );
+    for (self.layout.grid.tiles.items) |t| {
+        if (!t.visible) continue;
+        const tx: c_int = layout_offset_x + w.MulDiv(t.x, dpi, 96);
+        const ty: c_int = layout_offset_y + w.MulDiv(t.y, dpi, 96);
+        const tx_end: c_int = layout_offset_x + w.MulDiv(t.x + step_x, dpi, 96);
+        const ty_end: c_int = layout_offset_y + w.MulDiv(t.y + step_y, dpi, 96);
+        const tile_rgn = w.CreateRectRgn(tx, ty, tx_end + 1, ty_end + 1);
         defer _ = w.DeleteObject(tile_rgn);
         _ = w.CombineRgn(rgn, rgn, tile_rgn, w.RGN_OR);
     }
 
-    if (self.search_box.window.isVisible()) {
-        var rect: w.RECT = undefined;
-        try wh.mapFailure(w.GetWindowRect(self.search_box.window.hwnd, &rect));
-        const sb_rgn = w.CreateRectRgn(
-            rect.left - window_rect.left,
-            rect.top - window_rect.top,
-            rect.right - window_rect.left,
-            rect.bottom - window_rect.top,
-        );
+    if (self.desktop_windows != null) {
+        const sr = self.layout.grid.searchBoxRect();
+        const sx: c_int = layout_offset_x + w.MulDiv(sr.x, dpi, 96);
+        const sy: c_int = layout_offset_y + w.MulDiv(sr.y, dpi, 96);
+        const sx_end: c_int = layout_offset_x + w.MulDiv(sr.x + sr.w, dpi, 96);
+        const sy_end: c_int = layout_offset_y + w.MulDiv(sr.y + sr.h, dpi, 96);
+        const sb_rgn = w.CreateRectRgn(sx, sy, sx_end, sy_end);
         defer _ = w.DeleteObject(sb_rgn);
         _ = w.CombineRgn(rgn, rgn, sb_rgn, w.RGN_OR);
     }
@@ -167,17 +125,6 @@ fn onPaintHandler(_: *Window.EventHandlers, window: *Window) !void {
     _ = w.EndPaint(window.hwnd, &ps);
 }
 
-fn onCommandHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
-    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
-    const command = wParam >> 16;
-    const controlHandle: w.HWND = @ptrFromInt(@as(usize, @intCast(lParam)));
-    if (self.search_box.window.hwnd == controlHandle) {
-        if (command == w.EN_CHANGE) {
-            try self.updateVisibility();
-        }
-    }
-}
-
 pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window, _: w.WPARAM, _: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
 
@@ -188,19 +135,15 @@ pub fn onDpiChangeHandler(event_handlers: *Window.EventHandlers, window: *Window
     try wh.mapFailure(w.GetWindowRect(desktop, &rect));
     try window.setSizeScaled(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
 
-    for (self.layout.tiles.items) |tile| {
-        try tile.resetFonts(self.layout.window.dpi);
-    }
+    try self.layout.onDpiChanged();
 }
 
-pub fn onEnableHandler(event_handlers: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
+pub fn onEnableHandler(_: *Window.EventHandlers, window: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
     if (wParam == 1) {
         const desktop = w.GetDesktopWindow();
         var desktopRect: w.RECT = undefined;
         try wh.mapFailure(w.GetWindowRect(desktop, &desktopRect));
         try window.setSize(desktopRect.left, desktopRect.top, desktopRect.right - desktopRect.left, desktopRect.bottom - desktopRect.top);
-
-        _ = event_handlers;
     }
 }
 
@@ -224,14 +167,11 @@ pub fn create(args: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allo
     self.* = .{
         .window = undefined,
         .layout = undefined,
-        .search_box = undefined,
         .event_handlers = .{
             .onAfterDestroy = onAfterDestroyHandler,
             .onKeyDown = onKeyDownHandler,
             .onPaint = onPaintHandler,
             .onResize = onResizeHandler,
-            .onChar = onCharHandler,
-            .onCommand = onCommandHandler,
             .onDpiChange = onDpiChangeHandler,
             .onEnable = onEnableHandler,
             .onActivate = onActivateHandler,
@@ -240,18 +180,12 @@ pub fn create(args: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allo
         .hInstance = hInstance,
         .allocator = allocator,
         .callbacks = callbacks,
-        .font = undefined,
     };
 
     const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
     self.window = window;
 
-    self.layout = try Layout.create(hInstance, window, allocator);
-
-    self.search_box = try TextBox.create(hInstance, window, allocator);
-    _ = self.search_box.window.hide();
-
-    try self.setFonts();
+    self.layout = try Layout.create(hInstance, window, &self.layout_callbacks, allocator);
 
     try window.setSize(desktopRect.left, desktopRect.top, desktopRect.right - desktopRect.left, desktopRect.bottom - desktopRect.top);
 
@@ -279,59 +213,15 @@ pub fn requestQuit(_: *Self) void {
 pub fn setDesktopWindows(self: *Self, desktopWindows: std.array_list.Managed(common.DesktopWindow)) !void {
     try self.hideBoxes();
     self.desktop_windows = desktopWindows;
-    try self.updateBoxes();
-}
-
-fn tileCallback(tile: *Tile) !void {
-    const self: *Self = @fieldParentPtr("tile_callbacks", tile.callbacks);
-
-    try self.callbacks.activateWindow(self, tile.desktopWindow);
+    if (desktopWindows.items.len > 0) {
+        try self.layout.setDesktopWindows(desktopWindows.items);
+        try self.layout.window.focus();
+        try self.updateRegion();
+    }
 }
 
 pub fn hideBoxes(self: *Self) !void {
     try self.layout.clear();
-    _ = self.search_box.window.hide();
     self.desktop_windows = null;
     try self.updateRegion();
-}
-
-fn updateVisibility(self: *Self) !void {
-    const search_utf16 = try self.search_box.window.getText(self.allocator);
-    defer self.allocator.free(search_utf16);
-
-    const search_lower_utf16 = try self.allocator.allocSentinel(u16, search_utf16.len, 0);
-    defer self.allocator.free(search_lower_utf16);
-    @memcpy(search_lower_utf16[0..search_utf16.len], search_utf16);
-    if (search_lower_utf16.len > 0) {
-        _ = w.CharLowerBuffW(search_lower_utf16, @intCast(search_lower_utf16.len - 1));
-    }
-
-    var search_utf8_buf: [1024]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&search_utf8_buf);
-    const search_actual = std.mem.sliceTo(search_lower_utf16, 0);
-    const search_utf8: []const u8 = std.unicode.utf16LeToUtf8Alloc(fba.allocator(), search_actual) catch "";
-
-    try self.layout.setSearch(search_utf8);
-    try self.updateRegion();
-}
-
-fn updateBoxes(self: *Self) !void {
-    if (self.desktop_windows) |desktop_windows| {
-        if (desktop_windows.items.len > 0) {
-            for (desktop_windows.items) |dw| {
-                const tile = try Tile.create(dw, &self.tile_callbacks, self.layout.window.dpi, self.allocator);
-                try self.layout.addTile(tile);
-            }
-            try self.search_box.clearText();
-            try self.layout.setDesktopWindows(desktop_windows.items);
-            _ = self.search_box.window.show();
-            try self.search_box.window.bringToTop();
-            try self.layout.window.focus();
-            try self.updateRegion();
-        }
-    }
-}
-
-fn setFonts(self: *Self) !void {
-    self.font = w.GetStockObject(w.DEFAULT_GUI_FONT);
 }

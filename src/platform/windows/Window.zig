@@ -30,16 +30,6 @@ pub fn hide(self: Self) bool {
     return w.ShowWindow(self.hwnd, w.SW_HIDE) != 0;
 }
 
-pub fn update(self: Self) void {
-    try wh.mapFailure(w.UpdateWindow(self.hwnd));
-}
-
-pub fn getRgn(self: Self) w.HRGN {
-    const rgn: w.HRGN = undefined;
-    _ = w.GetWindowRgn(self.hwnd, rgn);
-    return rgn;
-}
-
 pub fn redraw(self: Self) !void {
     try wh.mapFailure(w.RedrawWindow(self.hwnd, null, null, w.RDW_INVALIDATE | w.RDW_UPDATENOW));
 }
@@ -64,30 +54,8 @@ pub fn getClientRect(self: Self) !w.RECT {
     return rect;
 }
 
-pub fn addChild(self: Self, child: Self) !void {
-    try self.children.append(child);
-    try child.setParent(self);
-}
-
-pub fn setParent(self: *Self, parent: Self) !void {
-    self.parent = parent;
-    try wh.mapFailure(w.SetParent(self.hwnd, parent.hwnd));
-}
-
 pub fn focus(self: Self) !void {
     _ = w.SetFocus(self.hwnd);
-}
-
-pub fn destroy(self: Self) void {
-    for (self.children.items) |child| {
-        child.destroy();
-    }
-
-    _ = w.DestroyWindow(self.hwnd);
-}
-
-pub fn deinit(self: Self) void {
-    self.children.deinit();
 }
 
 pub fn activate(self: *Self) void {
@@ -118,18 +86,14 @@ pub const EventHandlers = struct {
     onCreate: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDestroy: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onAfterDestroy: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
-    onPaint: *const fn (self: *EventHandlers, window: *Self) anyerror!void = onPaintHandler,
-    onCommand: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
-    onNotify: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onPaint: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDpiChange: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = onDpiChangeHandler,
     onMouseMove: *const fn (self: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) anyerror!void = onMouseMoveDefaultHandler,
-    onMouseLeave: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onActivate: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onSetFocus: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKillFocus: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKeyDown: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onChar: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
-    onGetDlgCode: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onEnable: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
@@ -166,16 +130,6 @@ pub fn resize(self: *Self) !void {
     try self.event_handlers.onResize(self.event_handlers, self);
 }
 
-fn onPaintHandler(_: *EventHandlers, window: *Self) !void {
-    var ps: w.PAINTSTRUCT = undefined;
-    const hdc = w.BeginPaint(window.hwnd, &ps);
-    defer _ = w.EndPaint(window.hwnd, &ps);
-    defer _ = w.ReleaseDC(window.hwnd, hdc);
-    const hbrushBg = w.CreateSolidBrush(0x00aaaaaa);
-    defer wh.mapFailure(w.DeleteObject(hbrushBg)) catch std.debug.panic("Failed to call DeleteObject() on {*}\n", .{hbrushBg});
-    try wh.mapFailure(w.FillRect(hdc, &ps.rcPaint, hbrushBg));
-}
-
 fn WindowProc(hwnd: w.HWND, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.winapi) w.LRESULT {
     const wLong = w.GetWindowLongPtrW(hwnd, w.GWLP_USERDATA);
     if (wLong == 0) {
@@ -201,11 +155,6 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             const x: i16 = @truncate(lParam);
             const y: i16 = @truncate(lParam >> 16);
             try self.event_handlers.onMouseMove(self.event_handlers, self, wParam, x, y);
-            self.startMouseTracking();
-            return 0;
-        },
-        w.WM_MOUSELEAVE => {
-            try self.event_handlers.onMouseLeave(self.event_handlers, self);
             return 0;
         },
         w.WM_CREATE => {
@@ -222,14 +171,6 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_PAINT => {
             try self.event_handlers.onPaint(self.event_handlers, self);
-            return 0;
-        },
-        w.WM_COMMAND => {
-            try self.event_handlers.onCommand(self.event_handlers, self, wParam, lParam);
-            return 0;
-        },
-        w.WM_NOTIFY => {
-            try self.event_handlers.onNotify(self.event_handlers, self, wParam, lParam);
             return 0;
         },
         w.WM_DPICHANGED => {
@@ -254,10 +195,6 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_CHAR => {
             try self.event_handlers.onChar(self.event_handlers, self, wParam, lParam);
-            return 0;
-        },
-        w.WM_GETDLGCODE => {
-            try self.event_handlers.onGetDlgCode(self.event_handlers, self, wParam, lParam);
             return 0;
         },
         w.WM_ENABLE => {
@@ -315,63 +252,10 @@ pub fn create(window_parameters: WindowParameters, event_handlers: *EventHandler
     return window;
 }
 
-pub fn startMouseTracking(self: Self) void {
-    var config: w.TRACKMOUSEEVENT = .{
-        .cbSize = @sizeOf(w.TRACKMOUSEEVENT),
-        .dwFlags = w.TME_LEAVE,
-        .hwndTrack = self.hwnd,
-        .dwHoverTime = w.HOVER_DEFAULT,
-    };
-
-    _ = w.TrackMouseEvent(&config);
-}
-
 pub fn scaleDpi(self: Self, x: i32) i32 {
     return w.MulDiv(x, @as(i32, @intCast(self.dpi)), defaultDpi);
 }
 
-pub fn unscaleDpi(self: Self, x: i32) i32 {
-    return w.MulDiv(x, defaultDpi, @as(i32, @intCast(self.dpi)));
-}
-
-pub fn getChildRgn(self: Self) !w.HRGN {
-    var hRgn = w.CreateRectRgn(0, 0, 0, 0);
-    for (self.children.items) |child| {
-        std.log.info("Gettign rgn of {*}\n", .{child.hwnd});
-        const childRgn = child.getRgn();
-        defer _ = w.DeleteObject(childRgn);
-        const newRgn: w.HRGN = undefined;
-        _ = w.CombineRgn(newRgn, hRgn, childRgn, w.RGN_OR);
-        _ = w.DeleteObject(hRgn);
-        hRgn = newRgn;
-    }
-    return hRgn;
-}
-
-pub fn bringToTop(self: Self) !void {
-    try wh.mapErr(w.BringWindowToTop(self.hwnd));
-}
-
-pub fn setFont(self: Self, font: w.HGDIOBJ) !void {
-    _ = w.SendMessageW(self.hwnd, w.WM_SETFONT, font, 0);
-}
-
-pub fn getText(self: Self, allocator: std.mem.Allocator) ![:0]u16 {
-    const length = w.GetWindowTextLengthW(self.hwnd) + 1;
-    const title: [:0]u16 = try allocator.allocSentinel(u16, @intCast(length), 0);
-    @memset(title, 0);
-    _ = w.GetWindowTextW(self.hwnd, title, length);
-    return title;
-}
-
-pub fn setText(self: Self, text: ?[:0]const u16) !void {
-    try wh.mapErr(w.SetWindowTextW(self.hwnd, if (text) |t| t else null));
-}
-
 pub fn isVisible(self: Self) bool {
     return w.IsWindowVisible(self.hwnd) != 0;
-}
-
-pub fn isFocused(self: Self) bool {
-    return self.hwnd == w.GetFocus();
 }

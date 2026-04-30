@@ -12,10 +12,10 @@ const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
 const text = @import("text.zig");
 
-// Grid is pure logic in common/. Renderer is the Wayland software raster —
-// pure Zig with no Wayland dependency, reused across platforms.
+// Grid + Renderer are pure logic / pure Zig software raster in common/,
+// reused across platforms.
 const Grid = @import("../../common/Grid.zig");
-const Renderer = @import("../wayland/Renderer.zig");
+const Renderer = @import("../../common/Renderer.zig");
 const input = @import("../../common/InputAction.zig");
 
 const cg = @cImport({

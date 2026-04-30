@@ -1,6 +1,6 @@
 // Windows in-process test driver. Posts WM_KEYDOWN / WM_CHAR /
 // WM_MOUSEMOVE / WM_LBUTTONDOWN+UP into the main window message queue,
-// drains the queue between steps, and reads state from MainPresenter.
+// drains the queue between steps, and reads state directly from the grid.
 // Build only when `-Dmock-backend=true`.
 
 const std = @import("std");
@@ -9,15 +9,13 @@ const w = wh.c;
 const ts = @import("../../test_scenarios.zig");
 const MainPresenter = @import("../../MainPresenter.zig");
 const Layout = @import("Layout.zig");
+const Grid = @import("../../common/Grid.zig");
 
 pub const Driver = struct {
     presenter: *MainPresenter,
     out_dir: []const u8,
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
-    // Tracks whether scenario expects window visible. We set this on reset()
-    // and observe `IsWindowVisible(presenter.view.window.hwnd)` plus
-    // `presenter.desktop_windows != null` for the actual state.
     initial_load_done: bool = false,
 
     pub fn create(allocator: std.mem.Allocator, presenter: *MainPresenter, out_dir: []const u8) !*Driver {
@@ -80,33 +78,33 @@ pub const Driver = struct {
 
     fn postKey(ctx: *anyopaque, k: ts.Key) anyerror!void {
         const self = cast(ctx);
-        const layout_hwnd = self.presenter.view.layout.window.hwnd;
+        const layout = self.presenter.view.layout;
         const m = keyToVk(k);
         // Layout's onKeyDown reads VK_SHIFT via GetAsyncKeyState; the test
-        // can't easily synthesize that. For shift+tab, route directly to
-        // Layout.prev() to avoid the async-key check, otherwise post.
+        // can't easily synthesize that. For shift+tab, mutate the grid
+        // directly to avoid the async-key check, otherwise post the message.
         if (m.shift and m.vk == w.VK_TAB) {
-            self.presenter.view.layout.prev() catch {};
+            layout.grid.selectNext(true);
+            layout.window.redraw() catch {};
         } else {
-            _ = w.PostMessageW(layout_hwnd, w.WM_KEYDOWN, m.vk, 0);
+            _ = w.PostMessageW(layout.window.hwnd, w.WM_KEYDOWN, m.vk, 0);
         }
         drain();
     }
 
     fn postChar(ctx: *anyopaque, cp: u21) anyerror!void {
         const self = cast(ctx);
-        const search_hwnd = self.presenter.view.search_box.window.hwnd;
         // Treat the codepoint as UTF-16 BMP (sufficient for ASCII tests).
         if (cp > 0xFFFF) return;
-        _ = w.PostMessageW(search_hwnd, w.WM_CHAR, @intCast(cp), 0);
+        _ = w.PostMessageW(self.presenter.view.layout.window.hwnd, w.WM_CHAR, @intCast(cp), 0);
         drain();
     }
 
     fn postMouseMove(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
         const self = cast(ctx);
-        const layout_hwnd = self.presenter.view.layout.window.hwnd;
-        const lparam = makeLparam(x, y);
-        _ = w.PostMessageW(layout_hwnd, w.WM_MOUSEMOVE, 0, lparam);
+        const layout = self.presenter.view.layout;
+        const phys = logicalToPhysical(layout, x, y);
+        _ = w.PostMessageW(layout.window.hwnd, w.WM_MOUSEMOVE, 0, makeLparam(phys.x, phys.y));
         drain();
     }
 
@@ -114,48 +112,34 @@ pub const Driver = struct {
         const self = cast(ctx);
         const layout = self.presenter.view.layout;
 
-        // If (x,y) is inside any visible tile, send to layout (which becomes
-        // a click → activate via onMouseMove + onClick handlers).
-        var hit_tile = false;
-        for (layout.tiles.items) |t| {
-            if (!t.visible) continue;
-            if (x >= t.bounds.left and x < t.bounds.right and y >= t.bounds.top and y < t.bounds.bottom) {
-                hit_tile = true;
-                break;
-            }
-        }
+        const inside_tile = layout.grid.tileAt(x, y) != null;
 
-        if (hit_tile) {
-            const layout_hwnd = layout.window.hwnd;
-            const lparam = makeLparam(x, y);
-            _ = w.PostMessageW(layout_hwnd, w.WM_MOUSEMOVE, 0, lparam);
-            _ = w.PostMessageW(layout_hwnd, w.WM_LBUTTONDOWN, 1, lparam);
-            _ = w.PostMessageW(layout_hwnd, w.WM_LBUTTONUP, 0, lparam);
+        if (inside_tile) {
+            const phys = logicalToPhysical(layout, x, y);
+            const lparam = makeLparam(phys.x, phys.y);
+            _ = w.PostMessageW(layout.window.hwnd, w.WM_MOUSEMOVE, 0, lparam);
+            _ = w.PostMessageW(layout.window.hwnd, w.WM_LBUTTONDOWN, 1, lparam);
+            _ = w.PostMessageW(layout.window.hwnd, w.WM_LBUTTONUP, 0, lparam);
         } else {
             // Outside-grid click: synthesize WA_INACTIVE on the main window.
             // SetWindowRgn excludes those pixels from our window, so a real
-            // mouse event would route to the desktop and we'd see WA_INACTIVE
-            // shortly after. We post that directly.
-            const main_hwnd = self.presenter.view.window.hwnd;
-            _ = w.PostMessageW(main_hwnd, w.WM_ACTIVATE, 0, 0); // WA_INACTIVE = 0
+            // mouse event would route to the desktop and trigger WA_INACTIVE
+            // shortly after.
+            _ = w.PostMessageW(self.presenter.view.window.hwnd, w.WM_ACTIVATE, 0, 0);
         }
         drain();
     }
 
     fn selectedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
-        const layout = self.presenter.view.layout;
-        const idx = layout.selected_idx orelse return null;
-        if (idx >= layout.tiles.items.len) return null;
-        const tile = layout.tiles.items[idx];
-        if (!tile.visible) return null;
-        return self.dupe(tile.desktopWindow.app_id);
+        const dw = self.presenter.view.layout.grid.selectedWindow() orelse return null;
+        return self.dupe(dw.app_id);
     }
 
     fn visibleCount(ctx: *anyopaque) usize {
         const self = cast(ctx);
         var n: usize = 0;
-        for (self.presenter.view.layout.tiles.items) |t| if (t.visible) {
+        for (self.presenter.view.layout.grid.tiles.items) |t| if (t.visible) {
             n += 1;
         };
         return n;
@@ -163,10 +147,7 @@ pub const Driver = struct {
 
     fn searchText(ctx: *anyopaque) []const u8 {
         const self = cast(ctx);
-        const utf16 = self.presenter.view.search_box.window.getText(self.allocator) catch return "";
-        defer self.allocator.free(utf16);
-        const utf8 = std.unicode.utf16LeToUtf8Alloc(self.arena.allocator(), utf16) catch return "";
-        return utf8;
+        return self.dupe(self.presenter.view.layout.grid.searchSlice());
     }
 
     fn lastActivatedAppId(ctx: *anyopaque) ?[]const u8 {
@@ -183,16 +164,8 @@ pub const Driver = struct {
 
     fn tileCenter(ctx: *anyopaque, app_id: []const u8) ?ts.Point {
         const self = cast(ctx);
-        for (self.presenter.view.layout.tiles.items) |t| {
-            if (!t.visible) continue;
-            if (std.mem.eql(u8, t.desktopWindow.app_id, app_id)) {
-                return .{
-                    .x = t.bounds.left + @divFloor(t.bounds.right - t.bounds.left, 2),
-                    .y = t.bounds.top + @divFloor(t.bounds.bottom - t.bounds.top, 2),
-                };
-            }
-        }
-        return null;
+        const c = self.presenter.view.layout.grid.tileCenter(app_id) orelse return null;
+        return .{ .x = c.x, .y = c.y };
     }
 
     fn snapshot(ctx: *anyopaque, name: []const u8) anyerror!void {
@@ -217,16 +190,22 @@ pub const Driver = struct {
         if (self.presenter.desktop_windows == null) {
             try self.presenter.show();
         } else {
-            // Already visible: clear search by sending Ctrl-A + Delete to
-            // the search box. Simpler: reset selection + clear underlying
-            // search by setting empty text on the EDIT control.
-            const empty: [1]u16 = .{0};
-            _ = w.SendMessageW(self.presenter.view.search_box.window.hwnd, w.WM_SETTEXT, 0, @bitCast(@as(usize, @intFromPtr(&empty))));
+            // Already visible: reset the grid's search buffer, rebuild
+            // visibility, redraw, and refresh the window region.
+            self.presenter.view.layout.grid.search_len = 0;
+            try self.presenter.view.layout.grid.rebuild();
+            try self.presenter.view.layout.window.redraw();
+            self.presenter.view.layout_callbacks.visibility_changed(&self.presenter.view.layout_callbacks) catch {};
             drain();
         }
         self.presenter.si.resetActivations();
     }
 };
+
+fn logicalToPhysical(layout: *Layout, x: i32, y: i32) struct { x: i32, y: i32 } {
+    const dpi: c_int = @intCast(layout.window.dpi);
+    return .{ .x = w.MulDiv(x, dpi, 96), .y = w.MulDiv(y, dpi, 96) };
+}
 
 fn drain() void {
     var msg: w.MSG = undefined;
