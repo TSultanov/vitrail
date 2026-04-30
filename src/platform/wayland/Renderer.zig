@@ -58,6 +58,12 @@ pub fn render(
     const step_x: i32 = Grid.TILE_W + Grid.TILE_MARGIN;
     const step_y: i32 = Grid.TILE_H + Grid.TILE_MARGIN;
 
+    // Per-platform `Clip` types come from the duck-typed text renderer, so
+    // we can't bind one to a const here — anonymous struct literals coerce
+    // at the call site but not through a const variable. Inline below.
+    const fb_x1: i32 = @intCast(pw);
+    const fb_y1: i32 = @intCast(ph);
+
     // Pass 1: tile fills + content (icons, title, desktop badge). Drawn first
     // so that adjacent tiles painted in spiral order can freely overlap into
     // each other's edge columns — the borders go on top in pass 2.
@@ -97,7 +103,7 @@ pub fn render(
         const clipped = clipForWidth(tile.dw.title, tile_text, max_w);
         const title_w = tile_text.measure(clipped) catch 0;
         const title_x = tx + @divFloor(tile_w - title_w, 2);
-        _ = tile_text.draw(pixels, pw, pw, ph, title_x, title_baseline, clipped, title_color) catch 0;
+        _ = tile_text.draw(pixels, pw, title_x, title_baseline, clipped, title_color, .{ .x0 = 0, .y0 = 0, .x1 = fb_x1, .y1 = fb_y1 }) catch 0;
 
         // Desktop number: top-right corner.
         var buf: [16]u8 = undefined;
@@ -108,7 +114,7 @@ pub fn render(
         const dn_w = desktop_text.measure(desktop_str) catch 0;
         const dn_x = tx + tile_w - tile_pad - dn_w;
         const dn_baseline = ty + desktop_text.ascent + S.s(2);
-        _ = desktop_text.draw(pixels, pw, pw, ph, dn_x, dn_baseline, desktop_str, desktop_color) catch 0;
+        _ = desktop_text.draw(pixels, pw, dn_x, dn_baseline, desktop_str, desktop_color, .{ .x0 = 0, .y0 = 0, .x1 = fb_x1, .y1 = fb_y1 }) catch 0;
     }
 
     // Pass 2: 1px borders anchored at logical column/row boundaries. Each
@@ -147,8 +153,23 @@ pub fn render(
     drawRect(pixels, pw, sx, sy, search_w, search_h, theme.search_border);
     const search = grid.searchSlice();
     if (search.len > 0) {
+        // Mirror Win32 ES_AUTOHSCROLL: when the rendered text is wider than
+        // the box's interior, anchor the *end* of the string to the right
+        // edge so newly-typed characters stay visible. The clip rect cuts
+        // any leftmost glyph pixels (or rightmost antialiased fringe) that
+        // would otherwise land on the gray border or transparent background.
+        const interior_x0 = sx + search_pad;
+        const interior_x1 = sx + search_w - search_pad;
+        const interior_w = interior_x1 - interior_x0;
         const baseline = sy + search_h - @divFloor(search_h - search_text.ascent, 2);
-        _ = search_text.draw(pixels, pw, pw, ph, sx + search_pad, baseline, search, theme.search_text) catch 0;
+        const text_w = search_text.measure(search) catch 0;
+        const draw_x = if (text_w > interior_w) interior_x1 - text_w else interior_x0;
+        _ = search_text.draw(pixels, pw, draw_x, baseline, search, theme.search_text, .{
+            .x0 = interior_x0,
+            .y0 = sy,
+            .x1 = interior_x1,
+            .y1 = sy + search_h,
+        }) catch 0;
     }
 }
 

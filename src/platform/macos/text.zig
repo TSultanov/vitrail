@@ -13,6 +13,11 @@ const c = @cImport({
 
 pub const Weight = enum { regular, bold };
 
+/// Half-open pixel rect the rasterizer clips against. The caller passes its
+/// framebuffer extents (or a tighter region — the search box uses its
+/// interior to keep glyphs from overdrawing the border / surrounding alpha).
+pub const Clip = struct { x0: i32, y0: i32, x1: i32, y1: i32 };
+
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
     font: c.CTFontRef,
@@ -149,19 +154,18 @@ pub const Renderer = struct {
         self: *Renderer,
         pixels: []u32,
         stride: u32,
-        pw: u32,
-        ph: u32,
         x: i32,
         y: i32,
         text: []const u8,
         color: u32,
+        clip: Clip,
     ) !i32 {
         var pen_x: i32 = x;
         var view = std.unicode.Utf8View.init(text) catch return pen_x;
         var it = view.iterator();
         while (it.nextCodepoint()) |cp| {
             const g = self.loadGlyph(cp) catch continue;
-            blitGlyph(pixels, stride, pw, ph, pen_x + g.bearing_x, y - g.bearing_y, g, color);
+            blitGlyph(pixels, stride, pen_x + g.bearing_x, y - g.bearing_y, g, color, clip);
             pen_x += g.advance_x;
         }
         return pen_x;
@@ -179,7 +183,7 @@ pub const Renderer = struct {
     }
 };
 
-fn blitGlyph(pixels: []u32, stride: u32, pw: u32, ph: u32, x: i32, y: i32, g: *const Renderer.Glyph, color: u32) void {
+fn blitGlyph(pixels: []u32, stride: u32, x: i32, y: i32, g: *const Renderer.Glyph, color: u32, clip: Clip) void {
     const r: u32 = (color >> 16) & 0xFF;
     const gg: u32 = (color >> 8) & 0xFF;
     const b: u32 = color & 0xFF;
@@ -187,11 +191,11 @@ fn blitGlyph(pixels: []u32, stride: u32, pw: u32, ph: u32, x: i32, y: i32, g: *c
     var row: u32 = 0;
     while (row < g.rows) : (row += 1) {
         const py = y + @as(i32, @intCast(row));
-        if (py < 0 or py >= @as(i32, @intCast(ph))) continue;
+        if (py < clip.y0 or py >= clip.y1) continue;
         var col: u32 = 0;
         while (col < g.width) : (col += 1) {
             const px = x + @as(i32, @intCast(col));
-            if (px < 0 or px >= @as(i32, @intCast(pw))) continue;
+            if (px < clip.x0 or px >= clip.x1) continue;
             const alpha: u32 = g.pixels[row * g.width + col];
             if (alpha == 0) continue;
 
