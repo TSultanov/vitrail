@@ -246,8 +246,15 @@ vt_window *vt_window_create(void *ctx,
     window.backgroundColor = [NSColor clearColor];
     window.hasShadow = NO;
     window.level = NSScreenSaverWindowLevel;
-    window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                NSWindowCollectionBehaviorStationary |
+    // MoveToActiveSpace, NOT CanJoinAllSpaces. CanJoinAllSpaces is supposed
+    // to keep the window present on every Space, but for accessory-policy
+    // apps AppKit silently binds the window to its home Space after
+    // orderOut: — diagnostic dumps showed window.spaces=(home) and
+    // onActiveSpace=0 on every other Space, which is why the overlay
+    // sometimes failed to appear. MoveToActiveSpace is the clean opposite:
+    // the window migrates to whichever Space is active when we order it
+    // front, which matches the on-hotkey usage pattern exactly.
+    window.collectionBehavior = NSWindowCollectionBehaviorMoveToActiveSpace |
                                 NSWindowCollectionBehaviorFullScreenAuxiliary |
                                 NSWindowCollectionBehaviorIgnoresCycle;
     [window setAcceptsMouseMovedEvents:YES];
@@ -284,14 +291,10 @@ vt_window *vt_window_create(void *ctx,
 void vt_window_show(vt_window *w) {
     if (!w) return;
     VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
-    // Re-assert CanJoinAllSpaces every show. After orderOut, AppKit can
-    // bind the window to whichever Space it was last visible on; the
-    // next makeKeyAndOrderFront then drags the user back to that Space
-    // instead of revealing the window on the Space they're currently
-    // viewing. Re-applying the behavior right before showing forces the
-    // window to honor the "every Space" semantics.
-    owner.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                      NSWindowCollectionBehaviorStationary |
+    // Re-assert MoveToActiveSpace every show. AppKit can otherwise lose the
+    // intent across orderOut/orderFront cycles, leaving the window stuck on
+    // its home Space.
+    owner.window.collectionBehavior = NSWindowCollectionBehaviorMoveToActiveSpace |
                                       NSWindowCollectionBehaviorFullScreenAuxiliary |
                                       NSWindowCollectionBehaviorIgnoresCycle;
     [NSApp activateIgnoringOtherApps:YES];
