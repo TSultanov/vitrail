@@ -40,6 +40,9 @@ pub const Settings = struct {
     keyboard: KeyBinding = .{},
     mouse: MouseBinding = .{},
     mouse_enabled: bool = true,
+    /// When the grid is summoned by a mouse button, center it under the pointer
+    /// (and show it on the pointer's display). The keyboard hotkey is unaffected.
+    center_on_cursor: bool = true,
 };
 
 const APP_DIR = "Vitrail";
@@ -181,6 +184,7 @@ test "round-trips through json" {
         .keyboard = .{ .keycode = 49, .mods = .{ .alt = true } },
         .mouse = .{ .kind = .x1, .code = 4 },
         .mouse_enabled = true,
+        .center_on_cursor = false,
     };
     const json = try std.json.Stringify.valueAlloc(a, original, .{ .whitespace = .indent_2 });
     defer a.free(json);
@@ -192,6 +196,7 @@ test "round-trips through json" {
     try std.testing.expectEqual(original.keyboard.mods.alt, parsed.value.keyboard.mods.alt);
     try std.testing.expectEqual(MouseButtonKind.x1, parsed.value.mouse.kind);
     try std.testing.expectEqual(@as(u32, 4), parsed.value.mouse.code);
+    try std.testing.expectEqual(false, parsed.value.center_on_cursor);
 }
 
 test "unset keycode is patched from fallback" {

@@ -198,7 +198,76 @@ pub fn create(args: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allo
 }
 
 pub fn show(self: *Self) !void {
+    // Keyboard / non-centered path: (re)home the overlay on the primary monitor
+    // and drop any cursor centering.
+    const desktop = w.GetDesktopWindow();
+    var rect: w.RECT = undefined;
+    try wh.mapFailure(w.GetWindowRect(desktop, &rect));
+    try self.window.setSize(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    self.window.setDpi(w.GetDpiForWindow(self.window.hwnd));
+    self.layout.grid.clearCenter();
     _ = self.window.show();
+}
+
+/// Show on the monitor under the pointer with the grid centered at the cursor.
+pub fn showAtCursor(self: *Self) !void {
+    // Best-effort: relocate the overlay to the monitor under the pointer.
+    self.moveToCursorMonitor();
+    _ = self.window.show();
+
+    // Center at the cursor using the overlay's *actual* client mapping. This is
+    // robust whether or not the move happened, and avoids the by-value POINT
+    // monitor APIs (MonitorFromPoint) that misbehave on aarch64-windows. The
+    // overlay is a borderless popup at the monitor origin, so ScreenToClient
+    // gives the cursor in the grid's logical viewport space. Crucially we never
+    // fall back to the centered show() (which would clear the center).
+    var pt: w.POINT = undefined;
+    if (w.GetCursorPos(&pt) != 0 and w.ScreenToClient(self.layout.window.hwnd, &pt) != 0) {
+        const dpi: c_int = @intCast(self.layout.window.dpi);
+        const eff: c_int = if (dpi == 0) 96 else dpi;
+        self.layout.grid.setCenter(w.MulDiv(pt.x, 96, eff), w.MulDiv(pt.y, 96, eff));
+    } else {
+        self.layout.grid.clearCenter();
+    }
+}
+
+const MonitorSearch = struct {
+    pt: w.POINT,
+    found: bool = false,
+    rect: w.RECT = undefined,
+};
+
+fn monitorEnumProc(_: w.HMONITOR, _: w.HDC, lprc: *w.RECT, lparam: w.LPARAM) callconv(.winapi) w.BOOL {
+    const ctx: *MonitorSearch = @ptrFromInt(@as(usize, @bitCast(lparam)));
+    const r = lprc.*;
+    if (ctx.pt.x >= r.left and ctx.pt.x < r.right and ctx.pt.y >= r.top and ctx.pt.y < r.bottom) {
+        ctx.rect = r;
+        ctx.found = true;
+        return 0; // stop enumeration
+    }
+    return 1; // continue
+}
+
+/// Move the overlay to the monitor under the cursor when that differs from where
+/// it currently sits. Best-effort: any failure leaves the overlay in place (the
+/// caller still centers correctly via ScreenToClient). Uses EnumDisplayMonitors
+/// — its callback receives each monitor's RECT by pointer — to avoid the
+/// by-value POINT ABI of MonitorFromPoint on aarch64-windows.
+fn moveToCursorMonitor(self: *Self) void {
+    var pt: w.POINT = undefined;
+    if (w.GetCursorPos(&pt) == 0) return;
+    var ctx = MonitorSearch{ .pt = pt };
+    _ = w.EnumDisplayMonitors(null, null, @ptrCast(&monitorEnumProc), @bitCast(@intFromPtr(&ctx)));
+    if (!ctx.found) return;
+    const m = ctx.rect;
+
+    var cur: w.RECT = undefined;
+    if (w.GetWindowRect(self.window.hwnd, &cur) != 0 and
+        cur.left == m.left and cur.top == m.top and
+        cur.right == m.right and cur.bottom == m.bottom) return; // already there
+
+    self.window.setSize(m.left, m.top, m.right - m.left, m.bottom - m.top) catch return;
+    self.window.setDpi(w.GetDpiForWindow(self.window.hwnd));
 }
 
 /// On Windows, teardown is driven by WM_DESTROY (`onAfterDestroyHandler`),

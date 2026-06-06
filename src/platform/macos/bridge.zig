@@ -60,6 +60,8 @@ pub extern "c" fn vt_settings_create(
 pub extern "c" fn vt_window_show(w: *VtWindow) void;
 pub extern "c" fn vt_window_hide(w: *VtWindow) void;
 pub extern "c" fn vt_window_destroy(w: *VtWindow) void;
+pub extern "c" fn vt_window_move_to_main_screen(w: *VtWindow) void;
+pub extern "c" fn vt_window_move_to_cursor_screen(w: *VtWindow, out_x: *f64, out_y: *f64) c_int;
 pub extern "c" fn vt_window_set_image(w: *VtWindow, cg_image: ?*const anyopaque) void;
 pub extern "c" fn vt_window_logical_size(w: *VtWindow, out_w: *u32, out_h: *u32) void;
 pub extern "c" fn vt_window_backing_scale(w: *VtWindow) f64;

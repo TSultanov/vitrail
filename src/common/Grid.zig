@@ -38,6 +38,12 @@ search_len: usize = 0,
 selected: ?usize = null,
 viewport_w: i32 = 0,
 viewport_h: i32 = 0,
+// Optional cursor-anchored center (logical). When set, the grid is translated
+// so its center lands here; null = viewport-centered (default). offset_x/offset_y
+// are the derived translation, recomputed each rebuild and read by the renderer.
+center: ?struct { x: i32, y: i32 } = null,
+offset_x: i32 = 0,
+offset_y: i32 = 0,
 
 pub fn init(allocator: std.mem.Allocator) Self {
     return .{ .allocator = allocator };
@@ -51,6 +57,17 @@ pub fn deinit(self: *Self) void {
 pub fn setViewport(self: *Self, w: i32, h: i32) void {
     self.viewport_w = w;
     self.viewport_h = h;
+}
+
+/// Anchor the grid's center at (x, y) in logical viewport coordinates. The next
+/// rebuild clamps it so the central tile stays on-screen.
+pub fn setCenter(self: *Self, x: i32, y: i32) void {
+    self.center = .{ .x = x, .y = y };
+}
+
+/// Revert to viewport-centered layout.
+pub fn clearCenter(self: *Self) void {
+    self.center = null;
 }
 
 pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
@@ -126,6 +143,19 @@ pub fn rebuild(self: *Self) !void {
     const grid_h = h_i - GRID_BOTTOM_PAD;
     const tile_step_x = TILE_W + TILE_MARGIN;
     const tile_step_y = TILE_H + TILE_MARGIN;
+
+    // Translation that moves the grid's center to the requested cursor point,
+    // clamped so the central tile stays fully on-screen. Zero when uncentered.
+    const default_cx = @divFloor(w_i, 2);
+    const default_cy = @divFloor(grid_h, 2);
+    self.offset_x = 0;
+    self.offset_y = 0;
+    if (self.center) |c| {
+        const cx_c = std.math.clamp(c.x, @divFloor(TILE_W, 2), w_i - @divFloor(TILE_W, 2));
+        const cy_c = std.math.clamp(c.y, @divFloor(TILE_H, 2), h_i - @divFloor(TILE_H, 2));
+        self.offset_x = cx_c - default_cx;
+        self.offset_y = cy_c - default_cy;
+    }
     const cols: i32 = @max(@as(i32, 1), @divFloor(w_i, tile_step_x));
     const rows: i32 = @max(@as(i32, 1), @divFloor(grid_h, tile_step_y));
     const col_max: i32 = @divFloor(cols, 2);
@@ -150,8 +180,8 @@ pub fn rebuild(self: *Self) !void {
             continue;
         }
 
-        const cx = @divFloor(w_i, 2) + col * tile_step_x - @divFloor(TILE_W, 2);
-        const cy = @divFloor(grid_h, 2) + row * tile_step_y - @divFloor(TILE_H, 2);
+        const cx = default_cx + col * tile_step_x - @divFloor(TILE_W, 2) + self.offset_x;
+        const cy = default_cy + row * tile_step_y - @divFloor(TILE_H, 2) + self.offset_y;
         try self.tiles.append(self.allocator, .{ .dw = dw, .x = cx, .y = cy, .visible = true });
         visible_idx += 1;
     }
@@ -220,8 +250,12 @@ pub fn selectedWindow(self: *const Self) ?common.DesktopWindow {
 pub const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
 
 pub fn searchBoxRect(self: *const Self) Rect {
-    const sx = @divFloor(self.viewport_w - SEARCH_W, 2);
-    const sy = self.viewport_h - SEARCH_BOTTOM_OFFSET;
+    // Shift with the grid, but clamp to the viewport so the box stays visible
+    // when the cursor (and thus the grid) is near a screen edge.
+    var sx = @divFloor(self.viewport_w - SEARCH_W, 2) + self.offset_x;
+    var sy = self.viewport_h - SEARCH_BOTTOM_OFFSET + self.offset_y;
+    sx = std.math.clamp(sx, 0, @max(0, self.viewport_w - SEARCH_W));
+    sy = std.math.clamp(sy, 0, @max(0, self.viewport_h - SEARCH_H));
     return .{ .x = sx, .y = sy, .w = SEARCH_W, .h = SEARCH_H };
 }
 
@@ -255,4 +289,37 @@ pub fn tileCenter(self: *const Self, app_id: []const u8) ?struct { x: i32, y: i3
         }
     }
     return null;
+}
+
+test "setCenter translates grid and search box; clearCenter reverts" {
+    var g = Self.init(std.testing.allocator);
+    defer g.deinit();
+    g.setViewport(1000, 800);
+    try g.setDesktopWindows(&[_]common.DesktopWindow{}); // empty: runs rebuild, no tiles
+
+    // Default: viewport-centered, no offset.
+    try std.testing.expectEqual(@as(i32, 0), g.offset_x);
+    try std.testing.expectEqual(@as(i32, 0), g.offset_y);
+
+    // Center near top-left. default center = (500, (800-120)/2 = 340).
+    g.setCenter(300, 250);
+    try g.rebuild();
+    try std.testing.expectEqual(@as(i32, -200), g.offset_x);
+    try std.testing.expectEqual(@as(i32, -90), g.offset_y);
+    const sr = g.searchBoxRect(); // base (450, 700) + offset
+    try std.testing.expectEqual(@as(i32, 250), sr.x);
+    try std.testing.expectEqual(@as(i32, 610), sr.y);
+
+    // Extreme corner clamps the center tile on-screen and the search box too.
+    g.setCenter(-5000, 5000);
+    try g.rebuild();
+    try std.testing.expectEqual(@as(i32, @divFloor(TILE_W, 2) - 500), g.offset_x);
+    const sr2 = g.searchBoxRect();
+    try std.testing.expect(sr2.x >= 0 and sr2.x <= 1000 - SEARCH_W);
+    try std.testing.expect(sr2.y >= 0 and sr2.y <= 800 - SEARCH_H);
+
+    g.clearCenter();
+    try g.rebuild();
+    try std.testing.expectEqual(@as(i32, 0), g.offset_x);
+    try std.testing.expectEqual(@as(i32, 0), g.offset_y);
 }

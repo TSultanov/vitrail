@@ -142,12 +142,15 @@ pub fn render(
             fillRect(pixels, pw, tx, ty, span_w, 1, theme.tile_border);
     }
 
-    // Search box — white fill, gray border, black text.
+    // Search box — white fill, gray border, black text. Position comes from
+    // grid.searchBoxRect() (the single source of truth, which carries the
+    // cursor-centering offset + on-screen clamp), scaled to physical pixels.
     const search_w = S.s(Grid.SEARCH_W);
     const search_h = S.s(Grid.SEARCH_H);
     const search_pad = S.s(SEARCH_PAD);
-    const sx: i32 = @divFloor(@as(i32, @intCast(pw)) - search_w, 2);
-    const sy: i32 = @as(i32, @intCast(ph)) - S.s(Grid.SEARCH_BOTTOM_OFFSET);
+    const sr = grid.searchBoxRect();
+    const sx: i32 = S.s(sr.x);
+    const sy: i32 = S.s(sr.y);
     fillRect(pixels, pw, sx, sy, search_w, search_h, theme.search_bg);
     drawRect(pixels, pw, sx, sy, search_w, search_h, theme.search_border);
     const search = grid.searchSlice();

@@ -124,8 +124,25 @@ pub fn deinit(self: *Self) void {
 // ─── Platform contract ──────────────────────────────────────────────────────
 
 pub fn show(self: *Self) !void {
+    bridge.vt_window_move_to_main_screen(self.window);
+    self.grid.clearCenter();
     bridge.vt_window_show(self.window);
     if (self.size_dirty) try self.rebuildForScale();
+    try self.repaint();
+}
+
+/// Show on the pointer's display with the grid centered under the cursor.
+pub fn showAtCursor(self: *Self) !void {
+    var x: f64 = 0;
+    var y: f64 = 0;
+    const ok = bridge.vt_window_move_to_cursor_screen(self.window, &x, &y) != 0;
+    bridge.vt_window_show(self.window);
+    if (self.size_dirty) try self.rebuildForScale();
+    if (ok) {
+        self.grid.setCenter(@intFromFloat(x), @intFromFloat(y));
+    } else {
+        self.grid.clearCenter();
+    }
     try self.repaint();
 }
 

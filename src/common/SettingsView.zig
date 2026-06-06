@@ -14,7 +14,7 @@ const Self = @This();
 
 /// Logical design size; the host sizes the window's client area to this.
 pub const DESIGN_W: i32 = 440;
-pub const DESIGN_H: i32 = 230;
+pub const DESIGN_H: i32 = 280;
 
 const MARGIN: i32 = 20;
 const ROW_H: i32 = 28;
@@ -24,6 +24,7 @@ const VALUE_X: i32 = 150;
 const ROW1_Y: i32 = 60;
 const ROW2_Y: i32 = 104;
 const TOGGLE_Y: i32 = 148;
+const TOGGLE2_Y: i32 = 184;
 const CHECK_SZ: i32 = 16;
 
 const COL_BG: u32 = 0xFFF2F2F2;
@@ -34,7 +35,7 @@ const COL_BORDER: u32 = 0xFF9A9A9A;
 const COL_HILITE: u32 = 0xFF2E6FDB;
 const COL_HILITE_TEXT: u32 = 0xFFFFFFFF;
 
-pub const Region = enum { none, record_keyboard, record_mouse, toggle_mouse, close };
+pub const Region = enum { none, record_keyboard, record_mouse, toggle_mouse, toggle_center, close };
 pub const RecordTarget = enum { none, keyboard, mouse };
 
 pub const Rect = struct {
@@ -51,6 +52,7 @@ pub const Rects = struct {
     record_keyboard: Rect,
     record_mouse: Rect,
     toggle_mouse: Rect,
+    toggle_center: Rect,
     close: Rect,
 };
 
@@ -98,17 +100,20 @@ pub fn layout(self: *const Self) Rects {
         .record_keyboard = .{ .x = btn_x, .y = ROW1_Y, .w = BTN_W, .h = BTN_H },
         .record_mouse = .{ .x = btn_x, .y = ROW2_Y, .w = BTN_W, .h = BTN_H },
         .toggle_mouse = .{ .x = MARGIN, .y = TOGGLE_Y, .w = CHECK_SZ, .h = CHECK_SZ },
+        .toggle_center = .{ .x = MARGIN, .y = TOGGLE2_Y, .w = CHECK_SZ, .h = CHECK_SZ },
         .close = .{ .x = self.viewport_w - MARGIN - 90, .y = self.viewport_h - MARGIN - 28, .w = 90, .h = 28 },
     };
 }
 
 pub fn regionAt(self: *const Self, x: i32, y: i32) Region {
     const r = self.layout();
-    // Let the toggle's whole label row be clickable, not just the box.
-    const toggle_row: Rect = .{ .x = MARGIN, .y = TOGGLE_Y, .w = self.viewport_w - 2 * MARGIN, .h = CHECK_SZ };
+    // Let each toggle's whole label row be clickable, not just the box.
+    const mouse_row: Rect = .{ .x = MARGIN, .y = TOGGLE_Y, .w = self.viewport_w - 2 * MARGIN, .h = CHECK_SZ };
+    const center_row: Rect = .{ .x = MARGIN, .y = TOGGLE2_Y, .w = self.viewport_w - 2 * MARGIN, .h = CHECK_SZ };
     if (r.record_keyboard.contains(x, y)) return .record_keyboard;
     if (r.record_mouse.contains(x, y)) return .record_mouse;
-    if (toggle_row.contains(x, y)) return .toggle_mouse;
+    if (mouse_row.contains(x, y)) return .toggle_mouse;
+    if (center_row.contains(x, y)) return .toggle_center;
     if (r.close.contains(x, y)) return .close;
     return .none;
 }
@@ -121,6 +126,10 @@ pub fn click(self: *Self, x: i32, y: i32) Region {
         .record_mouse => self.record_target = .mouse,
         .toggle_mouse => {
             self.settings.mouse_enabled = !self.settings.mouse_enabled;
+            self.changed = true;
+        },
+        .toggle_center => {
+            self.settings.center_on_cursor = !self.settings.center_on_cursor;
             self.changed = true;
         },
         .close => self.close_requested = true,
@@ -203,21 +212,26 @@ pub fn render(self: *const Self, pixels: []u32, pw: u32, ph: u32, scale_q120: u3
     }
     drawButton(pixels, pw, S, text, self.btnRect(ROW2_Y), "Record", self.record_target == .mouse, cw, ch);
 
-    // Toggle: enable mouse trigger.
-    const box_x = S.s(MARGIN);
-    const box_y = S.s(TOGGLE_Y);
-    const box = S.s(CHECK_SZ);
-    Renderer.fillRect(pixels, pw, box_x, box_y, box, box, COL_BTN_BG);
-    Renderer.drawRect(pixels, pw, box_x, box_y, box, box, COL_BORDER);
-    if (self.settings.mouse_enabled) {
-        const inset = S.s(4);
-        Renderer.fillRect(pixels, pw, box_x + inset, box_y + inset, box - 2 * inset, box - 2 * inset, COL_HILITE);
-    }
-    drawLabel(pixels, pw, S, text, MARGIN + CHECK_SZ + 8, TOGGLE_Y - 4, "Enable mouse-button trigger", COL_TEXT, cw, ch);
+    // Toggles.
+    drawCheckbox(pixels, pw, S, text, TOGGLE_Y, self.settings.mouse_enabled, "Enable mouse-button trigger", cw, ch);
+    drawCheckbox(pixels, pw, S, text, TOGGLE2_Y, self.settings.center_on_cursor, "Center grid at cursor (mouse)", cw, ch);
 
     // Close button (bottom-right).
     const r = self.layout();
     drawButton(pixels, pw, S, text, r.close, "Close", false, cw, ch);
+}
+
+fn drawCheckbox(pixels: []u32, pw: u32, S: anytype, text: anytype, y: i32, checked: bool, label: []const u8, cw: i32, ch: i32) void {
+    const box_x = S.s(MARGIN);
+    const box_y = S.s(y);
+    const box = S.s(CHECK_SZ);
+    Renderer.fillRect(pixels, pw, box_x, box_y, box, box, COL_BTN_BG);
+    Renderer.drawRect(pixels, pw, box_x, box_y, box, box, COL_BORDER);
+    if (checked) {
+        const inset = S.s(4);
+        Renderer.fillRect(pixels, pw, box_x + inset, box_y + inset, box - 2 * inset, box - 2 * inset, COL_HILITE);
+    }
+    drawLabel(pixels, pw, S, text, MARGIN + CHECK_SZ + 8, y - 4, label, COL_TEXT, cw, ch);
 }
 
 fn btnRect(self: *const Self, row_y: i32) Rect {
@@ -289,13 +303,22 @@ test "captureMouseButton refuses left and none" {
     try std.testing.expect(!v.isRecording());
 }
 
-test "toggle flips mouse_enabled; close requests close" {
-    var settings: Config.Settings = .{ .mouse_enabled = true };
+test "toggles flip flags; close requests close" {
+    var settings: Config.Settings = .{ .mouse_enabled = true, .center_on_cursor = true };
     var v = Self.init(&settings);
     v.setViewport(DESIGN_W, DESIGN_H);
+
+    try std.testing.expectEqual(Region.toggle_mouse, v.regionAt(MARGIN + 1, TOGGLE_Y + 1));
     _ = v.click(MARGIN + 1, TOGGLE_Y + 1);
     try std.testing.expect(!settings.mouse_enabled);
     try std.testing.expect(v.changed);
+
+    v.changed = false;
+    try std.testing.expectEqual(Region.toggle_center, v.regionAt(MARGIN + 1, TOGGLE2_Y + 1));
+    _ = v.click(MARGIN + 1, TOGGLE2_Y + 1);
+    try std.testing.expect(!settings.center_on_cursor);
+    try std.testing.expect(v.changed);
+
     const r = v.layout();
     _ = v.click(r.close.x + 1, r.close.y + 1);
     try std.testing.expect(v.close_requested);

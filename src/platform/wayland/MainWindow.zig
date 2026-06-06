@@ -20,6 +20,7 @@ pub const PlatformArgs = struct {};
 pub const Callbacks = struct {
     activateWindow: *const fn (*Self, common.DesktopWindow) anyerror!void,
     hide: *const fn (*Self) anyerror!void,
+    openSettings: *const fn (*Self) anyerror!void,
 };
 
 const Globals = struct {
@@ -162,8 +163,15 @@ pub fn deinit(self: *Self) void {
 // ─── Platform contract ────────────────────────────────────────────────────────
 
 pub fn show(self: *Self) !void {
+    self.grid.clearCenter();
     try self.repaint();
     _ = c.wl_display_flush(self.display);
+}
+
+/// Wayland is launch-on-demand with no resident pointer query here, so cursor-
+/// centering falls back to the centered path. Present for the shared presenter.
+pub fn showAtCursor(self: *Self) !void {
+    return self.show();
 }
 
 pub fn activate(_: *Self) void {}
@@ -305,7 +313,7 @@ fn onSeatName(_: ?*anyopaque, _: ?*c.wl_seat, _: [*c]const u8) callconv(.c) void
 // ─── Action sinks ─────────────────────────────────────────────────────────────
 
 fn hooks(self: *Self) input.Hooks {
-    return .{ .ctx = self, .hide = onHookHide, .activate_selected = onHookActivate };
+    return .{ .ctx = self, .hide = onHookHide, .activate_selected = onHookActivate, .open_settings = onHookOpenSettings };
 }
 fn onHookHide(ctx: *anyopaque) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
@@ -314,6 +322,11 @@ fn onHookHide(ctx: *anyopaque) void {
 fn onHookActivate(ctx: *anyopaque) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
     self.activateSelected();
+}
+fn onHookOpenSettings(ctx: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    // No settings UI on Wayland; forward to the (no-op) presenter handler.
+    self.callbacks.openSettings(self) catch {};
 }
 
 fn onKeyboardAction(ctx: *anyopaque, action: input.KeyAction) void {

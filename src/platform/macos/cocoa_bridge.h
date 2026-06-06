@@ -51,6 +51,14 @@ void vt_window_show(vt_window *w);
 void vt_window_hide(vt_window *w);
 void vt_window_destroy(vt_window *w);
 
+// Reposition the overlay to the main display (keyboard-activation path).
+void vt_window_move_to_main_screen(vt_window *w);
+
+// Reposition the overlay to the display under the mouse pointer and return the
+// pointer in the content view's logical coordinates (top-left origin, points).
+// Returns 1 on success, 0 if no screen/owner.
+int vt_window_move_to_cursor_screen(vt_window *w, double *out_x, double *out_y);
+
 // ─── Settings window ─────────────────────────────────────────────────────────
 
 // Press-to-bind capture: fired for right- and other-mouse button-downs inside

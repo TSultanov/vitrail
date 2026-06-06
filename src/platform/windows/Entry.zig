@@ -118,8 +118,15 @@ pub export fn wWinMain(hInstance: w.HINSTANCE, hPrevInstance: w.HINSTANCE, pCmdL
 
     var msg: w.MSG = undefined;
     while (w.GetMessageW(&msg, null, 0, 0) != 0) {
-        if (msg.message == w.WM_HOTKEY or msg.message == WM_VITRAIL_SHOW) {
+        if (msg.message == w.WM_HOTKEY) {
             main_presenter.show() catch unreachable;
+        } else if (msg.message == WM_VITRAIL_SHOW) {
+            // Mouse-button trigger: center under the pointer when enabled.
+            if (g_app.settings.center_on_cursor) {
+                main_presenter.showAtCursor() catch unreachable;
+            } else {
+                main_presenter.show() catch unreachable;
+            }
         } else {
             _ = w.TranslateMessage(&msg);
             _ = w.DispatchMessageW(&msg);

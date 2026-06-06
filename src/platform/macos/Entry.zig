@@ -13,11 +13,23 @@ const App = struct {
     allocator: std.mem.Allocator,
     settings_window: ?*SettingsWindow = null,
 
-    /// Shared by the keyboard hotkey and the mouse-button trigger — both just
-    /// summon the grid.
+    /// Keyboard hotkey: summon the grid screen-centered (on the main display).
     fn onTrigger(ctx: *anyopaque) void {
         const self: *App = @ptrCast(@alignCast(ctx));
         self.presenter.show() catch |err| {
+            std.log.warn("show failed: {s}", .{@errorName(err)});
+        };
+    }
+
+    /// Mouse-button trigger: center under the pointer when the option is on,
+    /// otherwise behave like the keyboard path.
+    fn onMouseTrigger(ctx: *anyopaque) void {
+        const self: *App = @ptrCast(@alignCast(ctx));
+        const result = if (self.settings.center_on_cursor)
+            self.presenter.showAtCursor()
+        else
+            self.presenter.show();
+        result catch |err| {
             std.log.warn("show failed: {s}", .{@errorName(err)});
         };
     }
@@ -77,7 +89,7 @@ pub fn main() !void {
 
     // Global mouse-button trigger. Reads the live settings, so a button bound
     // later in the settings UI takes effect without reinstalling.
-    app.mouse_hook.init(App.onTrigger, &app, &app.settings.mouse, &app.settings.mouse_enabled);
+    app.mouse_hook.init(App.onMouseTrigger, &app, &app.settings.mouse, &app.settings.mouse_enabled);
     defer app.mouse_hook.deinit();
     defer if (app.settings_window) |sw| sw.destroy();
 

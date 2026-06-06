@@ -96,6 +96,14 @@ pub fn show(self: *Self) !void {
     try self.createWidgets();
 }
 
+/// Like `show`, but positions the overlay on the pointer's display and centers
+/// the grid under the cursor. Used by the mouse-button trigger when the
+/// `center_on_cursor` option is enabled.
+pub fn showAtCursor(self: *Self) !void {
+    try self.view.showAtCursor();
+    try self.createWidgets();
+}
+
 pub fn deinit(self: *Self) void {
     if (self.desktop_windows) |dws| {
         for (dws.items) |dw| dw.destroy();

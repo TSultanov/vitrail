@@ -373,6 +373,36 @@ void vt_window_hide(vt_window *w) {
     [owner.window orderOut:nil];
 }
 
+void vt_window_move_to_main_screen(vt_window *w) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    NSScreen *screen = [NSScreen mainScreen];
+    if (!screen) return;
+    [owner.window setFrame:screen.frame display:YES];
+    [owner reportSize];
+}
+
+int vt_window_move_to_cursor_screen(vt_window *w, double *out_x, double *out_y) {
+    if (!w) return 0;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    NSPoint mouse = [NSEvent mouseLocation]; // global, bottom-left origin (points)
+    NSScreen *target = nil;
+    for (NSScreen *s in [NSScreen screens]) {
+        if (NSPointInRect(mouse, s.frame)) { target = s; break; }
+    }
+    if (!target) target = [NSScreen mainScreen];
+    if (!target) return 0;
+    [owner.window setFrame:target.frame display:YES];
+    [owner reportSize];
+    // The window now fills the target screen, and the content view is flipped
+    // (top-left origin), so view coords = pointer relative to the screen's
+    // top-left, in points — matching the grid's logical viewport.
+    NSRect f = target.frame;
+    if (out_x) *out_x = mouse.x - f.origin.x;
+    if (out_y) *out_y = (f.origin.y + f.size.height) - mouse.y;
+    return 1;
+}
+
 void vt_window_destroy(vt_window *w) {
     if (!w) return;
     VTWindowOwner *owner = (__bridge_transfer VTWindowOwner *)w->owner;
