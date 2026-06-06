@@ -30,6 +30,12 @@ pub const ResizeCb = *const fn (
 
 pub const CloseCb = *const fn (ctx: ?*anyopaque) callconv(.c) void;
 
+pub const CaptureCb = *const fn (
+    ctx: ?*anyopaque,
+    is_right: c_int,
+    button_number: c_long,
+) callconv(.c) void;
+
 pub extern "c" fn vt_app_init() void;
 pub extern "c" fn vt_app_pump_one(blocking: c_int) c_int;
 pub extern "c" fn vt_app_stop() void;
@@ -40,6 +46,16 @@ pub extern "c" fn vt_window_create(
     on_mouse: MouseCb,
     on_resize: ResizeCb,
     on_close: CloseCb,
+) ?*VtWindow;
+pub extern "c" fn vt_settings_create(
+    ctx: ?*anyopaque,
+    width: c_int,
+    height: c_int,
+    on_key: KeyCb,
+    on_mouse: MouseCb,
+    on_resize: ResizeCb,
+    on_close: CloseCb,
+    on_capture: CaptureCb,
 ) ?*VtWindow;
 pub extern "c" fn vt_window_show(w: *VtWindow) void;
 pub extern "c" fn vt_window_hide(w: *VtWindow) void;

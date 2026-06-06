@@ -14,6 +14,7 @@ pub const KeyAction = union(enum) {
     move: struct { dx: i32, dy: i32 },
     backspace,
     delete_word,
+    open_settings,
     insert: []const u8, // UTF-8; valid only for the duration of the callback
 };
 
@@ -37,6 +38,7 @@ pub const MouseCallbacks = struct {
 pub const Hooks = struct {
     hide: *const fn (ctx: *anyopaque) void,
     activate_selected: *const fn (ctx: *anyopaque) void,
+    open_settings: *const fn (ctx: *anyopaque) void,
     ctx: *anyopaque,
 };
 
@@ -51,6 +53,7 @@ pub fn dispatchKey(grid: *Grid, hooks: Hooks, action: KeyAction) void {
         .move => |m| grid.selectDir(m.dx, m.dy),
         .backspace => grid.popSearchCodepoint() catch {},
         .delete_word => grid.popSearchWord() catch {},
+        .open_settings => hooks.open_settings(hooks.ctx),
         .insert => |bytes| grid.appendSearch(bytes) catch {},
     }
 }

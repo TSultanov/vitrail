@@ -86,9 +86,13 @@ pub const EventHandlers = struct {
     onCreate: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDestroy: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onAfterDestroy: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
+    onClose: *const fn (self: *EventHandlers, window: *Self) anyerror!void = onCloseDefaultHandler,
     onPaint: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onDpiChange: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = onDpiChangeHandler,
     onMouseMove: *const fn (self: *EventHandlers, window: *Self, keys: u64, x: i16, y: i16) anyerror!void = onMouseMoveDefaultHandler,
+    // Right/middle/extra button down. `msg` is the WM_*BUTTONDOWN id; for
+    // WM_XBUTTONDOWN `mouse_data` is the wParam whose high word holds XBUTTON1/2.
+    onMouseButton: *const fn (self: *EventHandlers, window: *Self, msg: u32, mouse_data: u32, x: i16, y: i16) anyerror!void = onMouseButtonDefaultHandler,
     onActivate: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onSetFocus: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKillFocus: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
@@ -98,6 +102,12 @@ pub const EventHandlers = struct {
 };
 
 pub fn onMouseMoveDefaultHandler(_: *EventHandlers, _: *Self, _: u64, _: i16, _: i16) !void {}
+pub fn onMouseButtonDefaultHandler(_: *EventHandlers, _: *Self, _: u32, _: u32, _: i16, _: i16) !void {}
+/// Default WM_CLOSE behavior: destroy the window (matches DefWindowProc). The
+/// settings window overrides this to hide-and-keep instead.
+pub fn onCloseDefaultHandler(_: *EventHandlers, window: *Self) !void {
+    _ = w.DestroyWindow(window.hwnd);
+}
 
 pub fn onDpiChangeHandler(_: *EventHandlers, window: *Self, _: w.WPARAM, lParam: w.LPARAM) !void {
     const dpi = w.GetDpiForWindow(window.hwnd);
@@ -149,6 +159,17 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         },
         w.WM_LBUTTONDOWN => {
             try self.event_handlers.onClick(self.event_handlers, self);
+            return 0;
+        },
+        w.WM_RBUTTONDOWN, w.WM_MBUTTONDOWN, w.WM_XBUTTONDOWN => {
+            const x: i16 = @truncate(lParam);
+            const y: i16 = @truncate(lParam >> 16);
+            try self.event_handlers.onMouseButton(self.event_handlers, self, @intCast(uMsg), @truncate(wParam), x, y);
+            // XBUTTON messages expect TRUE; others 0.
+            return if (uMsg == w.WM_XBUTTONDOWN) 1 else 0;
+        },
+        w.WM_CLOSE => {
+            try self.event_handlers.onClose(self.event_handlers, self);
             return 0;
         },
         w.WM_MOUSEMOVE => {

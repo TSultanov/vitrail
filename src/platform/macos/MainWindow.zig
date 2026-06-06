@@ -29,6 +29,7 @@ pub const PlatformArgs = struct {};
 pub const Callbacks = struct {
     activateWindow: *const fn (*Self, common.DesktopWindow) anyerror!void,
     hide: *const fn (*Self) anyerror!void,
+    openSettings: *const fn (*Self) anyerror!void,
 };
 
 const LOGICAL_FONT_TILE: u32 = 12;
@@ -292,7 +293,7 @@ fn onCloseCb(ctx: ?*anyopaque) callconv(.c) void {
 // ─── Action sinks ───────────────────────────────────────────────────────────
 
 fn hooks(self: *Self) input.Hooks {
-    return .{ .ctx = self, .hide = onHookHide, .activate_selected = onHookActivate };
+    return .{ .ctx = self, .hide = onHookHide, .activate_selected = onHookActivate, .open_settings = onHookOpenSettings };
 }
 fn onHookHide(ctx: *anyopaque) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
@@ -301,6 +302,10 @@ fn onHookHide(ctx: *anyopaque) void {
 fn onHookActivate(ctx: *anyopaque) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
     self.activateSelected();
+}
+fn onHookOpenSettings(ctx: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.callbacks.openSettings(self) catch {};
 }
 
 fn onKeyboardAction(ctx: *anyopaque, action: input.KeyAction) void {

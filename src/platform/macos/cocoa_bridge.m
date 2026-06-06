@@ -26,6 +26,7 @@
 @property (nonatomic, assign) void *zig_ctx;
 @property (nonatomic, assign) vt_key_cb on_key;
 @property (nonatomic, assign) vt_mouse_cb on_mouse;
+@property (nonatomic, assign) vt_capture_cb on_capture; // settings press-to-bind
 @end
 
 @implementation VTContentView
@@ -70,6 +71,16 @@
     self.on_mouse(self.zig_ctx, 2, p.x, p.y);
 }
 
+// Right/other button presses are only wired in the settings window (overlay
+// leaves on_capture NULL) — they feed press-to-bind capture, not the grid.
+- (void)rightMouseDown:(NSEvent *)event {
+    if (self.on_capture) self.on_capture(self.zig_ctx, 1, (long)event.buttonNumber);
+}
+
+- (void)otherMouseDown:(NSEvent *)event {
+    if (self.on_capture) self.on_capture(self.zig_ctx, 0, (long)event.buttonNumber);
+}
+
 @end
 
 // ─── Window wrapper with delegate for resize/close ──────────────────────────
@@ -80,6 +91,10 @@
 @property (nonatomic, assign) void *zig_ctx;
 @property (nonatomic, assign) vt_resize_cb on_resize;
 @property (nonatomic, assign) vt_close_cb on_close;
+// Overlay dismisses itself when it loses key focus; the settings window does
+// not (it closes only on an explicit close). Selects which delegate path fires
+// on_close.
+@property (nonatomic, assign) BOOL close_on_resign;
 @end
 
 @implementation VTWindowOwner
@@ -106,7 +121,11 @@
 }
 
 - (void)windowDidResignKey:(NSNotification *)note {
-    if (self.on_close) self.on_close(self.zig_ctx);
+    if (self.close_on_resign && self.on_close) self.on_close(self.zig_ctx);
+}
+
+- (void)windowWillClose:(NSNotification *)note {
+    if (!self.close_on_resign && self.on_close) self.on_close(self.zig_ctx);
 }
 
 @end
@@ -277,6 +296,7 @@ vt_window *vt_window_create(void *ctx,
     owner.zig_ctx = ctx;
     owner.on_resize = on_resize;
     owner.on_close = on_close;
+    owner.close_on_resign = YES; // overlay dismisses on focus loss
     window.delegate = owner;
 
     vt_window *out = (vt_window *)calloc(1, sizeof(vt_window));
@@ -284,6 +304,51 @@ vt_window *vt_window_create(void *ctx,
     // Fire the resize callback now so the Zig side knows the viewport size
     // even before the window is shown — the test driver allocates its
     // snapshot buffer based on viewportSize() returned by the platform layer.
+    [owner reportSize];
+    return out;
+}
+
+vt_window *vt_settings_create(void *ctx,
+                              int width,
+                              int height,
+                              vt_key_cb on_key,
+                              vt_mouse_cb on_mouse,
+                              vt_resize_cb on_resize,
+                              vt_close_cb on_close,
+                              vt_capture_cb on_capture) {
+    NSRect frame = NSMakeRect(0, 0, width, height);
+    NSWindow *window = [[VTWindow alloc]
+        initWithContentRect:frame
+                  styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    window.title = @"Vitrail Settings";
+    window.releasedWhenClosed = NO; // we re-show the same window on re-open
+    [window center];
+    [window setAcceptsMouseMovedEvents:YES];
+
+    VTContentView *view = [[VTContentView alloc] initWithFrame:frame];
+    view.zig_ctx = ctx;
+    view.on_key = on_key;
+    view.on_mouse = on_mouse;
+    view.on_capture = on_capture;
+    view.wantsLayer = YES;
+    view.layer.contentsGravity = kCAGravityResize;
+    view.layer.contentsScale = window.backingScaleFactor;
+    window.contentView = view;
+    [window makeFirstResponder:view];
+
+    VTWindowOwner *owner = [[VTWindowOwner alloc] init];
+    owner.window = window;
+    owner.view = view;
+    owner.zig_ctx = ctx;
+    owner.on_resize = on_resize;
+    owner.on_close = on_close;
+    owner.close_on_resign = NO; // settings window stays open on focus loss
+    window.delegate = owner;
+
+    vt_window *out = (vt_window *)calloc(1, sizeof(vt_window));
+    out->owner = (__bridge_retained void *)owner;
     [owner reportSize];
     return out;
 }

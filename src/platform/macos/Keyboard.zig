@@ -21,10 +21,24 @@ const kVK_LeftArrow: c_int = 0x7B;
 const kVK_RightArrow: c_int = 0x7C;
 const kVK_DownArrow: c_int = 0x7D;
 const kVK_UpArrow: c_int = 0x7E;
+const kVK_ANSI_Comma: c_int = 0x2B;
 
 // NSEvent modifier flag masks (NSEventModifierFlag* in <AppKit/NSEvent.h>).
 const NS_MOD_SHIFT: u32 = 1 << 17;
+const NS_MOD_CONTROL: u32 = 1 << 18;
+const NS_MOD_OPTION: u32 = 1 << 19;
 const NS_MOD_COMMAND: u32 = 1 << 20;
+
+/// Translate raw NSEvent modifier flags into the platform-neutral Config.Mods,
+/// used by the settings window's press-to-bind capture.
+pub fn modsFromFlags(modifiers: u32) @import("../../common/Config.zig").Mods {
+    return .{
+        .shift = (modifiers & NS_MOD_SHIFT) != 0,
+        .control = (modifiers & NS_MOD_CONTROL) != 0,
+        .alt = (modifiers & NS_MOD_OPTION) != 0,
+        .super = (modifiers & NS_MOD_COMMAND) != 0,
+    };
+}
 
 pub fn init(callbacks: Callbacks) Self {
     return .{ .callbacks = callbacks };
@@ -33,6 +47,13 @@ pub fn init(callbacks: Callbacks) Self {
 pub fn handle(self: *Self, virtual_keycode: c_int, modifiers: u32, utf8: []const u8) void {
     const emit = self.callbacks.on_action;
     const ctx = self.callbacks.ctx;
+
+    // Cmd+, — the conventional "Preferences" chord. Checked before the switch
+    // so it never reaches the search-text insert path below.
+    if (virtual_keycode == kVK_ANSI_Comma and (modifiers & NS_MOD_COMMAND) != 0) {
+        emit(ctx, .open_settings);
+        return;
+    }
 
     switch (virtual_keycode) {
         kVK_Escape => emit(ctx, .quit),

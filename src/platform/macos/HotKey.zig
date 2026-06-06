@@ -3,6 +3,7 @@
 // thread (event loop) and forwards the press into a Zig callback.
 
 const std = @import("std");
+const Config = @import("../../common/Config.zig");
 
 const c = @cImport({
     @cInclude("Carbon/Carbon.h");
@@ -37,6 +38,34 @@ pub const default_binding: Binding = .{
     .modifiers = .{ .option = true },
 };
 
+/// Convert the platform-neutral config binding into a Carbon binding. alt maps
+/// to Option, super to Command — the macOS modifier naming.
+pub fn fromConfig(kb: Config.KeyBinding) Binding {
+    return .{
+        .keycode = kb.keycode,
+        .modifiers = .{
+            .shift = kb.mods.shift,
+            .control = kb.mods.control,
+            .option = kb.mods.alt,
+            .command = kb.mods.super,
+        },
+    };
+}
+
+/// Inverse of `fromConfig` — used to seed the config fallback from
+/// `default_binding`.
+pub fn toConfig(b: Binding) Config.KeyBinding {
+    return .{
+        .keycode = b.keycode,
+        .mods = .{
+            .shift = b.modifiers.shift,
+            .control = b.modifiers.control,
+            .alt = b.modifiers.option,
+            .super = b.modifiers.command,
+        },
+    };
+}
+
 pub const Callback = *const fn (ctx: *anyopaque) void;
 
 const Self = @This();
@@ -67,6 +96,17 @@ pub fn init(self: *Self, binding: Binding, on_press: Callback, ctx: *anyopaque) 
     if (status != 0) return error.InstallEventHandlerFailed;
     errdefer _ = c.RemoveEventHandler(self.handler_ref);
 
+    try self.rebind(binding);
+}
+
+/// Replace the registered key combo at runtime. Unregisters the previous combo
+/// (the installed event handler stays put) and registers the new one. Used when
+/// the user edits the hotkey in the settings UI.
+pub fn rebind(self: *Self, binding: Binding) !void {
+    if (self.ref != null) {
+        _ = c.UnregisterEventHotKey(self.ref);
+        self.ref = null;
+    }
     const id = c.EventHotKeyID{ .signature = signature("vtkl"), .id = 1 };
     const reg = c.RegisterEventHotKey(
         binding.keycode,

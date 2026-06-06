@@ -51,6 +51,28 @@ void vt_window_show(vt_window *w);
 void vt_window_hide(vt_window *w);
 void vt_window_destroy(vt_window *w);
 
+// ─── Settings window ─────────────────────────────────────────────────────────
+
+// Press-to-bind capture: fired for right- and other-mouse button-downs inside
+// the settings window. is_right==1 for the right button; button_number is the
+// NSEvent buttonNumber otherwise.
+typedef void (*vt_capture_cb)(void *ctx, int is_right, long button_number);
+
+// Creates a normal *titled* window (not the borderless overlay) sized to
+// width x height points, centered on screen. Unlike the overlay it does not
+// dismiss on resign-key — on_close fires only when the window is actually
+// closed. Reuses vt_window_show/hide/destroy/set_image and the resize/key/mouse
+// callbacks; on_capture additionally delivers right/other button presses for
+// press-to-bind.
+vt_window *vt_settings_create(void *ctx,
+                              int width,
+                              int height,
+                              vt_key_cb on_key,
+                              vt_mouse_cb on_mouse,
+                              vt_resize_cb on_resize,
+                              vt_close_cb on_close,
+                              vt_capture_cb on_capture);
+
 // Sets the displayed image. cg_image must be a CGImageRef; the bridge retains
 // it for the duration of the assignment.
 void vt_window_set_image(vt_window *w, const void *cg_image);

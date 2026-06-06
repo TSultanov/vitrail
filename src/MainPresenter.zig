@@ -16,8 +16,16 @@ test_mode: bool = false,
 window_callbacks: MainWindow.Callbacks = .{
     .activateWindow = activateWindow,
     .hide = hide,
+    .openSettings = openSettings,
 },
 si: SystemInteraction,
+
+// Set by the platform entry point: invoked (after the overlay is hidden) when
+// the user asks to open settings from the overlay. The entry point owns the
+// settings window + the hotkey/mouse-hook re-binding, which are platform-
+// specific, so the presenter just forwards the request.
+on_open_settings: ?*const fn (ctx: *anyopaque) void = null,
+on_open_settings_ctx: *anyopaque = undefined,
 
 pub fn init(args: platform.PlatformArgs, allocator: std.mem.Allocator, test_mode: bool) !*Self {
     var self = try allocator.create(Self);
@@ -46,6 +54,19 @@ fn activateWindow(main_window: *MainWindow, dw: common.DesktopWindow) !void {
     const self: *Self = @fieldParentPtr("window_callbacks", main_window.callbacks);
     self.si.activateWindow(dw);
     try hide(self.view);
+}
+
+/// Register the platform handler that actually presents the settings window.
+pub fn setOpenSettings(self: *Self, cb: *const fn (ctx: *anyopaque) void, ctx: *anyopaque) void {
+    self.on_open_settings = cb;
+    self.on_open_settings_ctx = ctx;
+}
+
+fn openSettings(main_window: *MainWindow) !void {
+    const self: *Self = @fieldParentPtr("window_callbacks", main_window.callbacks);
+    // Dismiss the overlay first, then hand off to the platform entry point.
+    try hide(self.view);
+    if (self.on_open_settings) |cb| cb(self.on_open_settings_ctx);
 }
 
 fn hide(main_window: *MainWindow) !void {

@@ -16,6 +16,7 @@ pub const PlatformArgs = struct {
 pub const Callbacks = struct {
     activateWindow: *const fn (main_window: *Self, dw: common.DesktopWindow) anyerror!void,
     hide: *const fn (main_window: *Self) anyerror!void,
+    openSettings: *const fn (main_window: *Self) anyerror!void,
 };
 
 window: *Window,
@@ -56,6 +57,10 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     if (wParam == w.VK_ESCAPE) {
         try self.callbacks.hide(self);
+    } else if (wParam == w.VK_OEM_COMMA and w.GetKeyState(w.VK_CONTROL) < 0) {
+        // Ctrl+, — the "Preferences" chord, forwarded here from the Layout
+        // child for keys it doesn't consume.
+        try self.callbacks.openSettings(self);
     }
 }
 
