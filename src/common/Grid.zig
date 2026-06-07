@@ -152,18 +152,30 @@ pub fn rebuild(self: *Self) !void {
     self.offset_y = 0;
     if (self.center) |c| {
         const cx_c = std.math.clamp(c.x, @divFloor(TILE_W, 2), w_i - @divFloor(TILE_W, 2));
-        const cy_c = std.math.clamp(c.y, @divFloor(TILE_H, 2), h_i - @divFloor(TILE_H, 2));
+        // Cap the vertical center so the central tile clears the bottom-pinned
+        // search box row. Without this, a click in the bottom-most row drops the
+        // central tile onto the search box; it gets skipped and the whole grid
+        // bumps up a row, wasting the space just above the search box. Capping
+        // here makes a near-bottom click hug the search box instead.
+        const cy_top = @divFloor(TILE_H, 2);
+        const cy_bot = @max(cy_top, h_i - SEARCH_H - @divFloor(TILE_H, 2));
+        const cy_c = std.math.clamp(c.y, cy_top, cy_bot);
         self.offset_x = cx_c - default_cx;
         self.offset_y = cy_c - default_cy;
     }
+    // Probe spiral cells outward from the center and place each tile at the next
+    // cell whose actual rect is fully on-screen and clear of the search box,
+    // skipping cells that don't fit (which is what prevents clipping/overlap once
+    // the cursor offset shifts the grid toward an edge). Every on-screen cell
+    // relative to a clamped center lies within spiral ring max(cols, rows), so
+    // this bounds the probe for the (rare) "more windows than fit" case.
     const cols: i32 = @max(@as(i32, 1), @divFloor(w_i, tile_step_x));
     const rows: i32 = @max(@as(i32, 1), @divFloor(grid_h, tile_step_y));
-    const col_max: i32 = @divFloor(cols, 2);
-    const col_min: i32 = -col_max + 1;
-    const row_max: i32 = @divFloor(rows, 2);
-    const row_min: i32 = -row_max + 1;
+    const span: i32 = @max(cols, rows) + 1;
+    const max_probe: usize = @intCast((2 * span + 1) * (2 * span + 1));
+    const search_rect = self.searchBoxRect();
 
-    var visible_idx: usize = 0;
+    var probe: usize = 0;
     for (dws) |dw| {
         const matches = filter.len == 0 or
             std.mem.indexOf(u8, dw.title_lower, filter) != null or
@@ -173,17 +185,22 @@ pub fn rebuild(self: *Self) !void {
             continue;
         }
 
-        const col = spiral.numToCol(visible_idx);
-        const row = spiral.numToRow(visible_idx);
-        if (col < col_min or col > col_max or row < row_min or row > row_max) {
-            try self.tiles.append(self.allocator, .{ .dw = dw, .x = 0, .y = 0, .visible = false });
-            continue;
+        var placed = false;
+        while (probe < max_probe) {
+            const col = spiral.numToCol(probe);
+            const row = spiral.numToRow(probe);
+            probe += 1;
+            const cx = default_cx + col * tile_step_x - @divFloor(TILE_W, 2) + self.offset_x;
+            const cy = default_cy + row * tile_step_y - @divFloor(TILE_H, 2) + self.offset_y;
+            if (positionFits(w_i, h_i, search_rect, cx, cy)) {
+                try self.tiles.append(self.allocator, .{ .dw = dw, .x = cx, .y = cy, .visible = true });
+                placed = true;
+                break;
+            }
         }
-
-        const cx = default_cx + col * tile_step_x - @divFloor(TILE_W, 2) + self.offset_x;
-        const cy = default_cy + row * tile_step_y - @divFloor(TILE_H, 2) + self.offset_y;
-        try self.tiles.append(self.allocator, .{ .dw = dw, .x = cx, .y = cy, .visible = true });
-        visible_idx += 1;
+        if (!placed) {
+            try self.tiles.append(self.allocator, .{ .dw = dw, .x = 0, .y = 0, .visible = false });
+        }
     }
 
     if (self.selected) |sel| {
@@ -191,6 +208,15 @@ pub fn rebuild(self: *Self) !void {
     } else {
         self.selected = firstVisible(self.tiles.items);
     }
+}
+
+/// A tile rect at (cx, cy) is placeable if it is fully within the viewport and
+/// clear of the search box's row — the whole horizontal band at the search box's
+/// height is off-limits (not just the box itself), so no tile sits level with the
+/// search text.
+fn positionFits(viewport_w: i32, viewport_h: i32, sr: Rect, cx: i32, cy: i32) bool {
+    if (cx < 0 or cy < 0 or cx + TILE_W > viewport_w or cy + TILE_H > viewport_h) return false;
+    return !(cy < sr.y + sr.h and cy + TILE_H > sr.y);
 }
 
 fn firstVisible(tiles: []const Tile) ?usize {
@@ -322,4 +348,63 @@ test "setCenter translates grid and search box; clearCenter reverts" {
     try g.rebuild();
     try std.testing.expectEqual(@as(i32, 0), g.offset_x);
     try std.testing.expectEqual(@as(i32, 0), g.offset_y);
+}
+
+fn testDw(name: [:0]const u8) common.DesktopWindow {
+    return .{
+        .platform_handle = 0,
+        .title = @constCast(name),
+        .title_lower = @constCast(name),
+        .app_id = @constCast(name),
+        .app_id_lower = @constCast(name),
+        .icon = null,
+        .desktopNumber = null,
+        .allocator = undefined, // Grid borrows; never frees these.
+    };
+}
+
+test "tiles pack on-screen and clear of the search box when centered near a corner" {
+    var g = Self.init(std.testing.allocator);
+    defer g.deinit();
+    g.setViewport(1000, 800);
+
+    var dws: [20]common.DesktopWindow = undefined;
+    for (&dws) |*d| d.* = testDw("app");
+    g.setCenter(20, 20); // near the top-left corner
+    try g.setDesktopWindows(&dws);
+
+    const sr = g.searchBoxRect();
+    var visible: usize = 0;
+    for (g.tiles.items) |t| {
+        if (!t.visible) continue;
+        visible += 1;
+        // Fully on-screen.
+        try std.testing.expect(t.x >= 0 and t.y >= 0);
+        try std.testing.expect(t.x + TILE_W <= 1000 and t.y + TILE_H <= 800);
+        // Clear of the search box's row (full-width band at its height).
+        const overlap = t.y < sr.y + sr.h and t.y + TILE_H > sr.y;
+        try std.testing.expect(!overlap);
+    }
+    // 1000x800 has ample room for 20 tiles even packed from a corner.
+    try std.testing.expectEqual(@as(usize, 20), visible);
+}
+
+test "click near the bottom edge hugs the search box (no wasted row)" {
+    var g = Self.init(std.testing.allocator);
+    defer g.deinit();
+    g.setViewport(1000, 800);
+
+    var dws: [10]common.DesktopWindow = undefined;
+    for (&dws) |*d| d.* = testDw("app");
+    g.setCenter(500, 790); // bottom edge, horizontally centered
+    try g.setDesktopWindows(&dws);
+
+    const sr = g.searchBoxRect();
+    var max_bottom: i32 = 0;
+    for (g.tiles.items) |t| {
+        if (!t.visible) continue;
+        max_bottom = @max(max_bottom, t.y + TILE_H);
+    }
+    // The lowest tile sits right on the search box's top — no wasted row above it.
+    try std.testing.expectEqual(sr.y, max_bottom);
 }
