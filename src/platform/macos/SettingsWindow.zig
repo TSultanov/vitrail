@@ -28,6 +28,9 @@ window: *bridge.VtWindow,
 view: SettingsView,
 settings: *Config.Settings,
 on_apply: *const fn (ctx: *anyopaque) void,
+// Called with the current recording state after every input event so the entry
+// point can suppress/restore the global triggers during press-to-bind.
+on_suppress: *const fn (ctx: *anyopaque, suppress: bool) void,
 apply_ctx: *anyopaque,
 
 body_text: text.Renderer,
@@ -43,6 +46,7 @@ pub fn create(
     allocator: std.mem.Allocator,
     settings: *Config.Settings,
     on_apply: *const fn (ctx: *anyopaque) void,
+    on_suppress: *const fn (ctx: *anyopaque, suppress: bool) void,
     apply_ctx: *anyopaque,
 ) !*Self {
     var self = try allocator.create(Self);
@@ -54,6 +58,7 @@ pub fn create(
         .view = SettingsView.init(settings),
         .settings = settings,
         .on_apply = on_apply,
+        .on_suppress = on_suppress,
         .apply_ctx = apply_ctx,
         .body_text = try text.Renderer.create(allocator, LOGICAL_BODY, .regular),
         .title_text = try text.Renderer.create(allocator, LOGICAL_TITLE, .bold),
@@ -89,12 +94,14 @@ pub fn show(self: *Self) void {
     self.view.record_target = .none;
     self.view.close_requested = false;
     self.refreshKeyboardLabel();
+    self.syncSuppress(); // not recording on open → triggers active
     bridge.vt_window_show(self.window);
     self.repaint() catch {};
 }
 
 fn hide(self: *Self) void {
     self.view.record_target = .none;
+    self.syncSuppress(); // recording cancelled → restore triggers
     bridge.vt_window_hide(self.window);
 }
 
@@ -103,6 +110,13 @@ fn applyIfChanged(self: *Self) void {
     self.on_apply(self.apply_ctx);
     self.refreshKeyboardLabel();
     self.view.changed = false;
+}
+
+/// Tell the entry point whether the settings UI is currently recording, so it
+/// can suppress/restore the global keyboard hotkey + mouse hook. Idempotent on
+/// the receiving side.
+fn syncSuppress(self: *Self) void {
+    self.on_suppress(self.apply_ctx, self.view.isRecording());
 }
 
 fn refreshKeyboardLabel(self: *Self) void {
@@ -131,6 +145,7 @@ fn onKeyCb(ctx: ?*anyopaque, virtual_keycode: c_int, modifiers: u32, _: [*c]cons
         self.hide();
         return;
     }
+    self.syncSuppress();
     self.repaint() catch {};
 }
 
@@ -143,6 +158,7 @@ fn onMouseCb(ctx: ?*anyopaque, kind: c_int, x: f64, y: f64) callconv(.c) void {
         return;
     }
     self.applyIfChanged();
+    self.syncSuppress();
     self.repaint() catch {};
 }
 
@@ -151,6 +167,7 @@ fn onCaptureCb(ctx: ?*anyopaque, is_right: c_int, button_number: c_long) callcon
     if (!self.view.isRecording()) return;
     const binding = MouseHook.classifyButtonNumber(is_right != 0, @intCast(button_number));
     if (self.view.captureMouseButton(binding)) self.applyIfChanged();
+    self.syncSuppress();
     self.repaint() catch {};
 }
 
@@ -171,6 +188,7 @@ fn onCloseCb(ctx: ?*anyopaque) callconv(.c) void {
     // The window has been ordered out by AppKit; just reset transient state so
     // a later re-open starts clean. The object is kept for reuse.
     self.view.record_target = .none;
+    self.syncSuppress(); // restore triggers if closed mid-recording
 }
 
 // ─── Repaint ────────────────────────────────────────────────────────────────

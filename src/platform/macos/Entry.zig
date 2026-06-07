@@ -12,6 +12,9 @@ const App = struct {
     settings: Config.Settings,
     allocator: std.mem.Allocator,
     settings_window: ?*SettingsWindow = null,
+    // True while the settings UI is recording a binding: the global triggers are
+    // suppressed so the pressed combo/button is captured there, not fired.
+    suppressed: bool = false,
 
     /// Keyboard hotkey: summon the grid screen-centered (on the main display).
     fn onTrigger(ctx: *anyopaque) void {
@@ -41,7 +44,7 @@ const App = struct {
             sw.show();
             return;
         }
-        const sw = SettingsWindow.create(self.allocator, &self.settings, App.onApply, self) catch |err| {
+        const sw = SettingsWindow.create(self.allocator, &self.settings, App.onApply, App.onSuppress, self) catch |err| {
             std.log.warn("settings window failed: {s}", .{@errorName(err)});
             return;
         };
@@ -51,14 +54,32 @@ const App = struct {
 
     /// A binding changed in the settings UI: re-register the hotkey and persist.
     /// The mouse hook reads `settings.mouse` live, so it needs no update here.
+    /// While suppressed (mid-recording) the hotkey stays unregistered; setSuppress
+    /// re-registers it from the final binding when recording ends.
     fn onApply(ctx: *anyopaque) void {
         const self: *App = @ptrCast(@alignCast(ctx));
-        self.hotkey.rebind(HotKey.fromConfig(self.settings.keyboard)) catch |err| {
-            std.log.warn("hotkey rebind failed: {s}", .{@errorName(err)});
-        };
+        if (!self.suppressed) {
+            self.hotkey.rebind(HotKey.fromConfig(self.settings.keyboard)) catch |err| {
+                std.log.warn("hotkey rebind failed: {s}", .{@errorName(err)});
+            };
+        }
         Config.save(self.settings, self.allocator) catch |err| {
             std.log.warn("config save failed: {s}", .{@errorName(err)});
         };
+    }
+
+    /// Suppress (or restore) the global triggers while the settings UI records.
+    fn onSuppress(ctx: *anyopaque, suppress: bool) void {
+        const self: *App = @ptrCast(@alignCast(ctx));
+        if (self.suppressed == suppress) return;
+        self.suppressed = suppress; // mouse hook reads this live
+        if (suppress) {
+            self.hotkey.unregister();
+        } else {
+            self.hotkey.rebind(HotKey.fromConfig(self.settings.keyboard)) catch |err| {
+                std.log.warn("hotkey rebind failed: {s}", .{@errorName(err)});
+            };
+        }
     }
 };
 
@@ -89,7 +110,7 @@ pub fn main() !void {
 
     // Global mouse-button trigger. Reads the live settings, so a button bound
     // later in the settings UI takes effect without reinstalling.
-    app.mouse_hook.init(App.onMouseTrigger, &app, &app.settings.mouse, &app.settings.mouse_enabled);
+    app.mouse_hook.init(App.onMouseTrigger, &app, &app.settings.mouse, &app.settings.mouse_enabled, &app.suppressed);
     defer app.mouse_hook.deinit();
     defer if (app.settings_window) |sw| sw.destroy();
 

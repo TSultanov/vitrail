@@ -21,6 +21,9 @@ const AppState = struct {
     hInstance: w.HINSTANCE,
     mouse_hook: w.HHOOK = null,
     settings_window: ?*SettingsWindow = null,
+    // True while the settings UI is recording a binding: the global triggers are
+    // suppressed so the pressed combo/button is captured there, not fired.
+    suppressed: bool = false,
 };
 var g_app: AppState = undefined;
 
@@ -31,7 +34,7 @@ fn onOpenSettings(_: *anyopaque) void {
         sw.show();
         return;
     }
-    const sw = SettingsWindow.create(g_app.hInstance, std.heap.page_allocator, &g_app.settings, onApply, &g_app) catch |err| {
+    const sw = SettingsWindow.create(g_app.hInstance, std.heap.page_allocator, &g_app.settings, onApply, onSuppress, &g_app) catch |err| {
         std.log.warn("settings window failed: {s}", .{@errorName(err)});
         return;
     };
@@ -40,19 +43,36 @@ fn onOpenSettings(_: *anyopaque) void {
 }
 
 /// A binding changed in the settings UI: re-register the hotkey and persist.
-/// The mouse hook reads `settings.mouse` live, so it needs no update here.
+/// The mouse hook reads `settings.mouse` live, so it needs no update here. While
+/// suppressed (mid-recording) the hotkey stays unregistered; onSuppress
+/// re-registers it from the final binding when recording ends.
 fn onApply(_: *anyopaque) void {
-    _ = w.UnregisterHotKey(null, HOTKEY_ID);
-    registerHotkey(g_app.settings.keyboard);
+    if (!g_app.suppressed) {
+        _ = w.UnregisterHotKey(null, HOTKEY_ID);
+        registerHotkey(g_app.settings.keyboard);
+    }
     Config.save(g_app.settings, std.heap.page_allocator) catch |err| {
         std.log.warn("config save failed: {s}", .{@errorName(err)});
     };
 }
 
+/// Suppress (or restore) the global triggers while the settings UI records. The
+/// low-level mouse hook reads `g_app.suppressed` live; the keyboard hotkey must
+/// actually be unregistered so the keydown reaches the settings window.
+fn onSuppress(_: *anyopaque, suppress: bool) void {
+    if (g_app.suppressed == suppress) return;
+    g_app.suppressed = suppress;
+    if (suppress) {
+        _ = w.UnregisterHotKey(null, HOTKEY_ID);
+    } else {
+        registerHotkey(g_app.settings.keyboard);
+    }
+}
+
 /// System-wide mouse hook: posts a show request when the configured button is
 /// pressed and swallows that click. All other buttons pass straight through.
 fn lowLevelMouseProc(nCode: c_int, wParam: w.WPARAM, lParam: w.LPARAM) callconv(.winapi) w.LRESULT {
-    if (nCode == w.HC_ACTION and g_app.settings.mouse_enabled) {
+    if (nCode == w.HC_ACTION and !g_app.suppressed and g_app.settings.mouse_enabled) {
         const info: *w.MSLLHOOKSTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
         const ev = MouseButtons.classify(@as(u32, @intCast(wParam)), info.mouseData);
         if (MouseButtons.matches(g_app.settings.mouse, ev)) {

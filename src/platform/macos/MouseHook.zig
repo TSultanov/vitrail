@@ -31,6 +31,9 @@ ctx: *anyopaque,
 // effect without reinstalling the tap.
 button: *const Config.MouseBinding,
 enabled: *const bool,
+// When set, pass every button through untouched (no trigger, no swallow) so the
+// settings window can capture the press during press-to-bind recording.
+suppressed: *const bool,
 
 /// Map a raw macOS mouse event (right-button flag + NSEvent/CGEvent
 /// buttonNumber) to a platform-neutral binding. Single source of truth shared
@@ -64,8 +67,9 @@ pub fn init(
     ctx: *anyopaque,
     button: *const Config.MouseBinding,
     enabled: *const bool,
+    suppressed: *const bool,
 ) void {
-    self.* = .{ .on_press = on_press, .ctx = ctx, .button = button, .enabled = enabled };
+    self.* = .{ .on_press = on_press, .ctx = ctx, .button = button, .enabled = enabled, .suppressed = suppressed };
 
     // Surface the Input Monitoring prompt during launch.
     _ = c.CGRequestListenEventAccess();
@@ -128,6 +132,10 @@ fn tapCallback(
         if (self.tap) |t| c.CGEventTapEnable(t, true);
         return event;
     }
+
+    // While the settings UI is recording, let every button through so it can be
+    // captured there instead of triggering the grid.
+    if (self.suppressed.*) return event;
 
     if (!self.enabled.*) return event;
 

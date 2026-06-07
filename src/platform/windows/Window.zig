@@ -97,12 +97,19 @@ pub const EventHandlers = struct {
     onSetFocus: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKillFocus: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onKeyDown: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    // System keys (Alt-combos, F10). Return true to consume — used while the
+    // settings UI records a hotkey so Alt+Space is captured instead of opening
+    // the window system menu. Default: not handled (falls to DefWindowProc).
+    onSysKeyDown: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!bool = onSysKeyDownDefaultHandler,
     onChar: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onEnable: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
 };
 
 pub fn onMouseMoveDefaultHandler(_: *EventHandlers, _: *Self, _: u64, _: i16, _: i16) !void {}
 pub fn onMouseButtonDefaultHandler(_: *EventHandlers, _: *Self, _: u32, _: u32, _: i16, _: i16) !void {}
+pub fn onSysKeyDownDefaultHandler(_: *EventHandlers, _: *Self, _: w.WPARAM, _: w.LPARAM) !bool {
+    return false;
+}
 /// Default WM_CLOSE behavior: destroy the window (matches DefWindowProc). The
 /// settings window overrides this to hide-and-keep instead.
 pub fn onCloseDefaultHandler(_: *EventHandlers, window: *Self) !void {
@@ -213,6 +220,11 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
         w.WM_KEYDOWN => {
             try self.event_handlers.onKeyDown(self.event_handlers, self, wParam, lParam);
             return 0;
+        },
+        w.WM_SYSKEYDOWN => {
+            const handled = self.event_handlers.onSysKeyDown(self.event_handlers, self, wParam, lParam) catch false;
+            if (handled) return 0;
+            return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);
         },
         w.WM_CHAR => {
             try self.event_handlers.onChar(self.event_handlers, self, wParam, lParam);

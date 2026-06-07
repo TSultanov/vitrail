@@ -119,6 +119,16 @@ pub fn rebind(self: *Self, binding: Binding) !void {
     if (reg != 0) return error.RegisterHotKeyFailed;
 }
 
+/// Unregister the current combo while keeping the installed event handler, so
+/// the keydown flows to the focused window (used while the settings UI records a
+/// new combo). Re-arm with `rebind`.
+pub fn unregister(self: *Self) void {
+    if (self.ref != null) {
+        _ = c.UnregisterEventHotKey(self.ref);
+        self.ref = null;
+    }
+}
+
 pub fn deinit(self: *Self) void {
     if (self.ref != null) _ = c.UnregisterEventHotKey(self.ref);
     if (self.handler_ref != null) _ = c.RemoveEventHandler(self.handler_ref);

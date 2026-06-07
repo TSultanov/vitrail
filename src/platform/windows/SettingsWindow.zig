@@ -25,6 +25,9 @@ event_handlers: Window.EventHandlers,
 view: SettingsView,
 settings: *Config.Settings,
 on_apply: *const fn (ctx: *anyopaque) void,
+// Called with the current recording state after every input event so the entry
+// point can suppress/restore the global triggers during press-to-bind.
+on_suppress: *const fn (ctx: *anyopaque, suppress: bool) void,
 apply_ctx: *anyopaque,
 
 // DIB framebuffer (top-down 32bpp), same approach as Layout.zig.
@@ -49,6 +52,7 @@ pub fn create(
     allocator: std.mem.Allocator,
     settings: *Config.Settings,
     on_apply: *const fn (ctx: *anyopaque) void,
+    on_suppress: *const fn (ctx: *anyopaque, suppress: bool) void,
     apply_ctx: *anyopaque,
 ) !*Self {
     var self = try allocator.create(Self);
@@ -59,11 +63,13 @@ pub fn create(
         .view = SettingsView.init(settings),
         .settings = settings,
         .on_apply = on_apply,
+        .on_suppress = on_suppress,
         .apply_ctx = apply_ctx,
         .event_handlers = .{
             .onPaint = onPaintHandler,
             .onClose = onCloseHandler,
             .onKeyDown = onKeyDownHandler,
+            .onSysKeyDown = onSysKeyDownHandler,
             .onMouseButton = onMouseButtonHandler,
             .onMouseMove = onMouseMoveHandler,
             .onClick = onClickHandler,
@@ -91,6 +97,7 @@ pub fn show(self: *Self) void {
     self.view.record_target = .none;
     self.view.close_requested = false;
     self.refreshKeyboardLabel();
+    self.syncSuppress(); // not recording on open → triggers active
     _ = w.ShowWindow(self.window.hwnd, w.SW_SHOW);
     _ = w.SetForegroundWindow(self.window.hwnd);
     _ = self.window.redraw() catch {};
@@ -101,6 +108,13 @@ fn applyIfChanged(self: *Self) void {
     self.on_apply(self.apply_ctx);
     self.refreshKeyboardLabel();
     self.view.changed = false;
+}
+
+/// Tell the entry point whether the settings UI is currently recording, so it
+/// can suppress/restore the global keyboard hotkey + mouse hook. Idempotent on
+/// the receiving side.
+fn syncSuppress(self: *Self) void {
+    self.on_suppress(self.apply_ctx, self.view.isRecording());
 }
 
 fn refreshKeyboardLabel(self: *Self) void {
@@ -120,8 +134,11 @@ fn toLogical(self: *Self, x: i16, y: i16) struct { x: i32, y: i32 } {
 
 // ─── Event handlers ──────────────────────────────────────────────────────────
 
-fn onCloseHandler(_: *Window.EventHandlers, window: *Window) !void {
+fn onCloseHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     // Hide instead of destroy so the same window is reused on the next open.
+    self.view.record_target = .none;
+    self.syncSuppress(); // restore triggers if closed mid-recording
     _ = w.ShowWindow(window.hwnd, w.SW_HIDE);
 }
 
@@ -136,11 +153,14 @@ fn onClickHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     _ = self.view.click(self.last_x, self.last_y);
     if (self.view.close_requested) {
+        self.view.record_target = .none;
+        self.syncSuppress();
         _ = w.ShowWindow(self.window.hwnd, w.SW_HIDE);
         self.view.close_requested = false;
         return;
     }
     self.applyIfChanged();
+    self.syncSuppress();
     try self.window.redraw();
 }
 
@@ -149,6 +169,7 @@ fn onMouseButtonHandler(event_handlers: *Window.EventHandlers, _: *Window, msg: 
     if (!self.view.isRecording()) return;
     const binding = MouseButtons.classify(msg, mouse_data);
     if (self.view.captureMouseButton(binding)) self.applyIfChanged();
+    self.syncSuppress();
     try self.window.redraw();
 }
 
@@ -161,10 +182,26 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
         } else if (!isModifierVk(vk)) {
             if (self.view.captureKey(vk, winMods())) self.applyIfChanged();
         }
+        self.syncSuppress();
         try self.window.redraw();
     } else if (vk == w.VK_ESCAPE) {
         _ = w.ShowWindow(self.window.hwnd, w.SW_HIDE);
     }
+}
+
+/// Alt-combos (incl. the default Alt+Space) and F10 arrive as WM_SYSKEYDOWN.
+/// While recording, capture them and consume the message so the window system
+/// menu doesn't open; otherwise let Windows handle it (Alt+F4, system menu).
+fn onSysKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, _: w.LPARAM) !bool {
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    if (!self.view.isRecording()) return false;
+    const vk: u32 = @intCast(wParam);
+    if (!isModifierVk(vk)) {
+        if (self.view.captureKey(vk, winMods())) self.applyIfChanged();
+        self.syncSuppress();
+        try self.window.redraw();
+    }
+    return true; // consume while recording (no system menu / Alt mode)
 }
 
 fn onResizeHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
