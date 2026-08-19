@@ -80,6 +80,8 @@ fn defaultHandler(_: *EventHandlers, _: *Self) !void {}
 
 fn defaultParamHandler(_: *EventHandlers, _: *Self, _: w.WPARAM, _: w.LPARAM) !void {}
 
+fn defaultMessageHandler(_: *EventHandlers, _: *Self, _: w.UINT, _: w.WPARAM, _: w.LPARAM) !void {}
+
 pub const EventHandlers = struct {
     onClick: *const fn (self: *EventHandlers, window: *Self) anyerror!void = defaultHandler,
     onResize: *const fn (self: *EventHandlers, window: *Self) anyerror!void = onResizeHandler,
@@ -103,6 +105,10 @@ pub const EventHandlers = struct {
     onSysKeyDown: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!bool = onSysKeyDownDefaultHandler,
     onChar: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
     onEnable: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    onTimer: *const fn (self: *EventHandlers, window: *Self, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultParamHandler,
+    // Application-private messages are dispatched here so platform features
+    // can marshal lightweight native callbacks back onto the window thread.
+    onAppMessage: *const fn (self: *EventHandlers, window: *Self, msg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) anyerror!void = defaultMessageHandler,
 };
 
 pub fn onMouseMoveDefaultHandler(_: *EventHandlers, _: *Self, _: u64, _: i16, _: i16) !void {}
@@ -234,7 +240,15 @@ pub fn wndProc(self: *Self, uMsg: w.UINT, wParam: w.WPARAM, lParam: w.LPARAM) !w
             try self.event_handlers.onEnable(self.event_handlers, self, wParam, lParam);
             return 0;
         },
+        w.WM_TIMER => {
+            try self.event_handlers.onTimer(self.event_handlers, self, wParam, lParam);
+            return 0;
+        },
         else => {
+            if (uMsg >= w.WM_APP and uMsg <= 0xBFFF) {
+                try self.event_handlers.onAppMessage(self.event_handlers, self, uMsg, wParam, lParam);
+                return 0;
+            }
             return w.DefWindowProcW(self.hwnd, uMsg, wParam, lParam);
         },
     }

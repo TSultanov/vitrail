@@ -6,6 +6,7 @@
 const std = @import("std");
 const ts = @import("../../test_scenarios.zig");
 const MainPresenter = @import("../../MainPresenter.zig");
+const Grid = @import("../../common/Grid.zig");
 const MainWindow = @import("MainWindow.zig");
 const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
@@ -55,10 +56,13 @@ pub const Driver = struct {
         .post_char = postChar,
         .post_mouse_move = postMouseMove,
         .post_mouse_click = postMouseClick,
+        .post_context_close = postContextClose,
+        .close_external = closeExternal,
         .selected_app_id = selectedAppId,
         .visible_count = visibleCount,
         .search_text = searchText,
         .last_activated_app_id = lastActivatedAppId,
+        .last_closed_app_id = lastClosedAppId,
         .window_visible = windowVisible,
         .tile_center = tileCenter,
         .snapshot = snapshot,
@@ -105,6 +109,104 @@ pub const Driver = struct {
         self.presenter.view.synthesizeMouse(.{ .click = .{ .x = x, .y = y } });
     }
 
+    fn postContextClose(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
+        const self = cast(ctx);
+        const view = self.presenter.view;
+        const target_idx = view.grid.tileAt(x, y) orelse return error.NoTile;
+        const target_id = view.grid.tiles.items[target_idx].dw.stable_id;
+
+        // Exercise the actual pointer-driven software-popup path. Prefer a
+        // command point whose popup pixels overlap another surviving tile:
+        // movement there is intentionally suppressed while the menu is open,
+        // then dismissal must immediately re-hit-test the stored pointer.
+        self.presenter.view.synthesizeMouse(.{ .context = .{ .x = x, .y = y } });
+        const menu = view.context_menu orelse return error.NoContextMenu;
+        if (!menu.enabled) {
+            // A disabled native-style menu row does not invoke or dismiss on
+            // click. Exercise that behavior, then cancel the popup so the
+            // shared scenario can continue without closing the overlay.
+            const command_x = menu.rect.x + @divFloor(menu.rect.w, 2);
+            const command_y = menu.rect.y + @divFloor(menu.rect.h, 2);
+            view.synthesizeMouse(.{ .move = .{ .x = command_x, .y = command_y } });
+            view.synthesizeMouse(.{ .click = .{ .x = command_x, .y = command_y } });
+            if (view.context_menu == null) return error.DisabledContextMenuDismissed;
+            view.synthesizeKey(.quit);
+            if (view.context_menu != null) return error.ContextMenuStillOpen;
+            try self.presenter.refreshWindowList();
+            view.refresh_due_ms = null;
+            return;
+        }
+
+        var survivor: ?Grid.Tile = null;
+        for (view.grid.tiles.items) |tile| {
+            if (!tile.visible or std.mem.eql(u8, tile.dw.stable_id, target_id)) continue;
+            survivor = tile;
+            break;
+        }
+        const survivor_tile = survivor orelse return error.NoSurvivingTile;
+        const expected_stable_id = self.dupe(survivor_tile.dw.stable_id);
+
+        // Popup placement depends on the target cell, and some layouts put the
+        // natural popup entirely over empty space. Move this test-only popup
+        // over a known surviving tile so the post-dismiss pointer reconciliation
+        // is always exercised. The copied close target remains unchanged.
+        if (view.context_menu) |*active_menu| {
+            active_menu.rect.x = std.math.clamp(
+                survivor_tile.x,
+                0,
+                @max(0, view.grid.viewport_w - active_menu.rect.w),
+            );
+            active_menu.rect.y = std.math.clamp(
+                survivor_tile.y,
+                0,
+                @max(0, view.grid.viewport_h - active_menu.rect.h),
+            );
+        }
+        const positioned_menu = view.context_menu orelse return error.NoContextMenu;
+        const command = ts.Point{
+            .x = positioned_menu.rect.x + @divFloor(positioned_menu.rect.w, 2),
+            .y = positioned_menu.rect.y + @divFloor(positioned_menu.rect.h, 2),
+        };
+        const command_tile_idx = view.grid.tileAt(command.x, command.y) orelse
+            return error.ContextMenuNotOverSurvivor;
+        if (!std.mem.eql(
+            u8,
+            expected_stable_id,
+            view.grid.tiles.items[command_tile_idx].dw.stable_id,
+        )) {
+            return error.ContextMenuNotOverSurvivor;
+        }
+
+        view.synthesizeMouse(.{ .move = .{ .x = command.x, .y = command.y } });
+        view.synthesizeMouse(.{ .click = .{ .x = command.x, .y = command.y } });
+        if (view.context_menu != null) return error.ContextMenuStillOpen;
+        const selected_after_dismiss = view.grid.selectedWindow() orelse
+            return error.LostPointerSelection;
+        if (!std.mem.eql(u8, expected_stable_id, selected_after_dismiss.stable_id)) {
+            return error.PointerSelectionNotReconciled;
+        }
+
+        // Restore the soon-to-disappear target while retaining pointer
+        // authority and coordinates. Stable-id continuity alone would preserve
+        // the survivor selected above and make the refresh assertion vacuous;
+        // this forces refreshDesktopWindows to perform its own pointer re-hit.
+        view.grid.selected = target_idx;
+        try self.presenter.refreshWindowList();
+        self.presenter.view.refresh_due_ms = null;
+
+        const selected_after_refresh = view.grid.selectedWindow() orelse
+            return error.LostPointerSelection;
+        if (!std.mem.eql(u8, expected_stable_id, selected_after_refresh.stable_id)) {
+            return error.RefreshOverwrotePointerSelection;
+        }
+    }
+
+    fn closeExternal(ctx: *anyopaque, app_id: []const u8) anyerror!void {
+        const self = cast(ctx);
+        if (!self.presenter.si.closeExternally(app_id)) return error.NoSuchWindow;
+        try self.presenter.refreshWindowList();
+    }
+
     fn selectedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const dw = self.presenter.view.grid.selectedWindow() orelse return null;
@@ -128,6 +230,12 @@ pub const Driver = struct {
     fn lastActivatedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const s = self.presenter.si.last_activated_app_id orelse return null;
+        return self.dupe(s);
+    }
+
+    fn lastClosedAppId(ctx: *anyopaque) ?[]const u8 {
+        const self = cast(ctx);
+        const s = self.presenter.si.last_closed_app_id orelse return null;
         return self.dupe(s);
     }
 
@@ -155,6 +263,7 @@ pub const Driver = struct {
     fn reset(ctx: *anyopaque) anyerror!void {
         const self = cast(ctx);
         _ = self.arena.reset(.retain_capacity);
+        self.presenter.si.resetActions();
 
         // First call: presenter.show() has not run yet — do it once.
         if (!self.initial_load_done) {
@@ -167,12 +276,13 @@ pub const Driver = struct {
             // hide() ran in a prior scenario — bring the grid back.
             try self.presenter.show();
         } else {
-            // Already visible — just reset search and selection without
-            // re-allocating the window list.
+            // Already visible — first reconcile any windows reopened by the
+            // mock reset, then clear search/selection drift.
+            try self.presenter.refreshWindowList();
             self.presenter.view.grid.search_len = 0;
             try self.presenter.view.grid.rebuild();
         }
-        self.presenter.si.resetActivations();
+        self.presenter.view.refresh_due_ms = null;
     }
 };
 

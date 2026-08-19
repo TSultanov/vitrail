@@ -1,6 +1,6 @@
-// Windows in-process test driver. Posts WM_KEYDOWN / WM_CHAR /
-// WM_MOUSEMOVE / WM_LBUTTONDOWN+UP into the main window message queue,
-// drains the queue between steps, and reads state directly from the grid.
+// Windows in-process test driver. Posts keyboard/click messages into the real
+// window queue, uses explicit logical pointer coordinates for hover
+// reconciliation, drains between steps, and reads state directly from Grid.
 // Build only when `-Dmock-backend=true`.
 
 const std = @import("std");
@@ -52,10 +52,13 @@ pub const Driver = struct {
         .post_char = postChar,
         .post_mouse_move = postMouseMove,
         .post_mouse_click = postMouseClick,
+        .post_context_close = postContextClose,
+        .close_external = closeExternal,
         .selected_app_id = selectedAppId,
         .visible_count = visibleCount,
         .search_text = searchText,
         .last_activated_app_id = lastActivatedAppId,
+        .last_closed_app_id = lastClosedAppId,
         .window_visible = windowVisible,
         .tile_center = tileCenter,
         .snapshot = snapshot,
@@ -84,6 +87,7 @@ pub const Driver = struct {
         // can't easily synthesize that. For shift+tab, mutate the grid
         // directly to avoid the async-key check, otherwise post the message.
         if (m.shift and m.vk == w.VK_TAB) {
+            layout.useKeyboardSelection();
             layout.grid.selectNext(true);
             layout.window.redraw() catch {};
         } else {
@@ -103,8 +107,7 @@ pub const Driver = struct {
     fn postMouseMove(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
         const self = cast(ctx);
         const layout = self.presenter.view.layout;
-        const phys = logicalToPhysical(layout, x, y);
-        _ = w.PostMessageW(layout.window.hwnd, w.WM_MOUSEMOVE, 0, makeLparam(phys.x, phys.y));
+        try layout.synthesizeMouseMove(x, y);
         drain();
     }
 
@@ -115,9 +118,11 @@ pub const Driver = struct {
         const inside_tile = layout.grid.tileAt(x, y) != null;
 
         if (inside_tile) {
+            // Keep the explicit test coordinate pointer-authoritative without
+            // consulting the host's unrelated physical cursor.
+            try layout.synthesizeMouseMove(x, y);
             const phys = logicalToPhysical(layout, x, y);
             const lparam = makeLparam(phys.x, phys.y);
-            _ = w.PostMessageW(layout.window.hwnd, w.WM_MOUSEMOVE, 0, lparam);
             _ = w.PostMessageW(layout.window.hwnd, w.WM_LBUTTONDOWN, 1, lparam);
             _ = w.PostMessageW(layout.window.hwnd, w.WM_LBUTTONUP, 0, lparam);
         } else {
@@ -127,6 +132,55 @@ pub const Driver = struct {
             // shortly after.
             _ = w.PostMessageW(self.presenter.view.window.hwnd, w.WM_ACTIVATE, 0, 0);
         }
+        drain();
+    }
+
+    /// Exercise the semantic result of choosing the native context-menu item
+    /// without entering TrackPopupMenuEx's blocking nested loop in CI.
+    fn postContextClose(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
+        const self = cast(ctx);
+        const layout = self.presenter.view.layout;
+        const tile_index = layout.grid.tileAt(x, y) orelse return error.NoTile;
+        const target = layout.grid.tiles.items[tile_index].dw;
+
+        // Model movement consumed by TrackPopupMenuEx. Verify both the
+        // post-menu live-pointer re-hit and the same re-hit during a refresh.
+        var expected_stable_id: ?[]const u8 = null;
+        for (layout.grid.tiles.items, 0..) |tile, idx| {
+            if (!tile.visible or idx == tile_index) continue;
+            expected_stable_id = self.dupe(tile.dw.stable_id);
+            layout.synthesizeDeferredPointerPosition(
+                tile.x + @divFloor(Grid.TILE_W, 2),
+                tile.y + @divFloor(Grid.TILE_H, 2),
+            );
+            if (!layout.selectAtCurrentPointer()) return error.PostMenuPointerNotSelected;
+            const selected = layout.grid.selectedWindow() orelse return error.LostPointerSelection;
+            if (!std.mem.eql(u8, expected_stable_id.?, selected.stable_id)) {
+                return error.PostMenuPointerMismatch;
+            }
+
+            // Restore the menu target while retaining the deferred pointer.
+            // refreshDesktopWindows must re-hit it after the target disappears.
+            layout.grid.selected = tile_index;
+            break;
+        }
+
+        try self.presenter.view.callbacks.closeWindow(self.presenter.view, target.stable_id);
+        try self.presenter.refreshWindowList();
+        drain();
+
+        if (expected_stable_id) |expected| {
+            const selected = layout.grid.selectedWindow() orelse return error.LostPointerSelection;
+            if (!std.mem.eql(u8, expected, selected.stable_id)) {
+                return error.RefreshPointerMismatch;
+            }
+        }
+    }
+
+    fn closeExternal(ctx: *anyopaque, app_id: []const u8) anyerror!void {
+        const self = cast(ctx);
+        if (!self.presenter.si.closeExternally(app_id)) return error.NoWindow;
+        try self.presenter.refreshWindowList();
         drain();
     }
 
@@ -153,6 +207,12 @@ pub const Driver = struct {
     fn lastActivatedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const s = self.presenter.si.last_activated_app_id orelse return null;
+        return self.dupe(s);
+    }
+
+    fn lastClosedAppId(ctx: *anyopaque) ?[]const u8 {
+        const self = cast(ctx);
+        const s = self.presenter.si.last_closed_app_id orelse return null;
         return self.dupe(s);
     }
 
@@ -183,6 +243,10 @@ pub const Driver = struct {
     fn reset(ctx: *anyopaque) anyerror!void {
         const self = cast(ctx);
         _ = self.arena.reset(.retain_capacity);
+        // Reset backend mutations first, then reconcile an already-visible
+        // presenter so a window closed by the previous scenario is restored
+        // in the borrowed grid snapshot before search/selection are reset.
+        self.presenter.si.resetActions();
         if (!self.initial_load_done) {
             try self.presenter.show();
             self.initial_load_done = true;
@@ -190,6 +254,7 @@ pub const Driver = struct {
         if (self.presenter.desktop_windows == null) {
             try self.presenter.show();
         } else {
+            try self.presenter.refreshWindowList();
             // Already visible: reset the grid's search buffer, rebuild
             // visibility, redraw, and refresh the window region.
             self.presenter.view.layout.grid.search_len = 0;
@@ -198,7 +263,6 @@ pub const Driver = struct {
             self.presenter.view.layout_callbacks.visibility_changed(&self.presenter.view.layout_callbacks) catch {};
             drain();
         }
-        self.presenter.si.resetActivations();
     }
 };
 

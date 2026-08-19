@@ -7,6 +7,8 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 - [x] Showing virtual desktop number in the background of a tile
 - ~[ ] Support for showing windows only from current virtual desktop~
 - [x] Incremental search in the list of windows
+- [x] Closing a window from its tile's context menu
+- [x] Refreshing the visible grid automatically as windows change
 
 ## Known issues
 - Icons and windows visibility states aren't resolved correctly for all applications

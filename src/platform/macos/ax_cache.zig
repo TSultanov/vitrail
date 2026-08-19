@@ -37,6 +37,35 @@ var g_initialized: bool = false;
 var g_n_window_created: cf.c.CFStringRef = null;
 var g_n_destroyed: cf.c.CFStringRef = null;
 var g_n_focused_window_changed: cf.c.CFStringRef = null;
+var g_n_title_changed: cf.c.CFStringRef = null;
+var g_n_window_miniaturized: cf.c.CFStringRef = null;
+var g_n_window_deminiaturized: cf.c.CFStringRef = null;
+var g_n_moved: cf.c.CFStringRef = null;
+var g_n_enabled_changed: cf.c.CFStringRef = null;
+var g_k_close_button: cf.c.CFStringRef = null;
+
+pub const ChangeCallback = *const fn (ctx: *anyopaque) void;
+var g_change_callback: ?ChangeCallback = null;
+var g_change_ctx: ?*anyopaque = null;
+
+/// Install the main-window invalidation sink. AX observers remain
+/// process-global, but the receiver is replaceable so short-lived tests can
+/// safely create and destroy a MainWindow.
+pub fn setChangeCallback(callback: ?ChangeCallback, ctx: ?*anyopaque) void {
+    g_change_callback = callback;
+    g_change_ctx = ctx;
+}
+
+fn notifyChange() void {
+    const callback = g_change_callback orelse return;
+    callback(g_change_ctx orelse return);
+}
+
+/// Test-only entry point for exercising the same invalidation sink used by
+/// AXObserver callbacks without requiring a real application's AX element.
+pub fn notifyChangeForTest() void {
+    notifyChange();
+}
 
 /// Initialize the cache, seed every currently-running regular-policy app,
 /// and install lifecycle observers (app launch/quit) so the cache stays
@@ -58,6 +87,12 @@ pub fn init(allocator: std.mem.Allocator) !void {
     g_n_window_created = cf.c.CFStringCreateWithCString(null, "AXWindowCreated", cf.c.kCFStringEncodingUTF8);
     g_n_destroyed = cf.c.CFStringCreateWithCString(null, "AXUIElementDestroyed", cf.c.kCFStringEncodingUTF8);
     g_n_focused_window_changed = cf.c.CFStringCreateWithCString(null, "AXFocusedWindowChanged", cf.c.kCFStringEncodingUTF8);
+    g_n_title_changed = cf.c.CFStringCreateWithCString(null, "AXTitleChanged", cf.c.kCFStringEncodingUTF8);
+    g_n_window_miniaturized = cf.c.CFStringCreateWithCString(null, "AXWindowMiniaturized", cf.c.kCFStringEncodingUTF8);
+    g_n_window_deminiaturized = cf.c.CFStringCreateWithCString(null, "AXWindowDeminiaturized", cf.c.kCFStringEncodingUTF8);
+    g_n_moved = cf.c.CFStringCreateWithCString(null, "AXMoved", cf.c.kCFStringEncodingUTF8);
+    g_n_enabled_changed = cf.c.CFStringCreateWithCString(null, "AXEnabledChanged", cf.c.kCFStringEncodingUTF8);
+    g_k_close_button = cf.c.CFStringCreateWithCString(null, "AXCloseButton", cf.c.kCFStringEncodingUTF8);
 
     const seed_start_ns = std.time.nanoTimestamp();
     var seeded_apps: usize = 0;
@@ -154,6 +189,16 @@ pub fn getForPid(pid: i32) []const ax.UIElementRef {
     return entry.windows.items;
 }
 
+/// Ensure a window surfaced by ordinary AX enumeration is retained in the
+/// cache and subscribed to lifecycle/metadata notifications. This closes the
+/// gap for high AX-element IDs that a bounded startup scan did not reach.
+/// The ref is borrowed; addWindow retains it only when it is genuinely new.
+pub fn observeWindow(pid: i32, window: ax.UIElementRef) void {
+    if (!g_initialized) return;
+    const entry = g_cache.getPtr(pid) orelse return;
+    addWindow(entry, window, pid);
+}
+
 /// Tear down every cached entry, release all retained AX refs and observer
 /// run-loop sources, and reset to the uninitialized state. Production
 /// long-running app doesn't call this — it relies on process teardown —
@@ -166,7 +211,7 @@ pub fn deinit() void {
         var entry = kv.value_ptr.*;
         if (entry.observer) |obs| {
             const src = ax.AXObserverGetRunLoopSource(obs);
-            if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
+            if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopCommonModes);
             cf.c.CFRelease(obs);
         }
         for (entry.windows.items) |w| {
@@ -179,9 +224,23 @@ pub fn deinit() void {
     if (g_n_window_created) |s| cf.c.CFRelease(s);
     if (g_n_destroyed) |s| cf.c.CFRelease(s);
     if (g_n_focused_window_changed) |s| cf.c.CFRelease(s);
+    if (g_n_title_changed) |s| cf.c.CFRelease(s);
+    if (g_n_window_miniaturized) |s| cf.c.CFRelease(s);
+    if (g_n_window_deminiaturized) |s| cf.c.CFRelease(s);
+    if (g_n_moved) |s| cf.c.CFRelease(s);
+    if (g_n_enabled_changed) |s| cf.c.CFRelease(s);
+    if (g_k_close_button) |s| cf.c.CFRelease(s);
     g_n_window_created = null;
     g_n_destroyed = null;
     g_n_focused_window_changed = null;
+    g_n_title_changed = null;
+    g_n_window_miniaturized = null;
+    g_n_window_deminiaturized = null;
+    g_n_moved = null;
+    g_n_enabled_changed = null;
+    g_k_close_button = null;
+    g_change_callback = null;
+    g_change_ctx = null;
     g_initialized = false;
 }
 
@@ -213,11 +272,30 @@ fn installObserver(entry: *AppEntry, pid: i32) void {
     _ = ax.AXObserverAddNotification(observer, entry.ax_app, g_n_window_created, refcon);
     _ = ax.AXObserverAddNotification(observer, entry.ax_app, g_n_focused_window_changed, refcon);
     for (entry.windows.items) |w| {
-        _ = ax.AXObserverAddNotification(observer, w, g_n_destroyed, refcon);
+        subscribeWindowNotifications(observer, w, refcon);
     }
     const src = ax.AXObserverGetRunLoopSource(observer);
     if (src != null) {
-        cf.c.CFRunLoopAddSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
+        cf.c.CFRunLoopAddSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopCommonModes);
+    }
+}
+
+fn subscribeWindowNotifications(
+    observer: ax.ObserverRef,
+    window: ax.UIElementRef,
+    refcon: ?*anyopaque,
+) void {
+    _ = ax.AXObserverAddNotification(observer, window, g_n_destroyed, refcon);
+    _ = ax.AXObserverAddNotification(observer, window, g_n_title_changed, refcon);
+    _ = ax.AXObserverAddNotification(observer, window, g_n_window_miniaturized, refcon);
+    _ = ax.AXObserverAddNotification(observer, window, g_n_window_deminiaturized, refcon);
+    _ = ax.AXObserverAddNotification(observer, window, g_n_moved, refcon);
+
+    var close_button_ref: cf.c.CFTypeRef = null;
+    if (ax.AXUIElementCopyAttributeValue(window, g_k_close_button, &close_button_ref) == ax.kAXErrorSuccess and close_button_ref != null) {
+        defer cf.c.CFRelease(close_button_ref);
+        const close_button: ax.UIElementRef = @ptrCast(@constCast(close_button_ref));
+        _ = ax.AXObserverAddNotification(observer, close_button, g_n_enabled_changed, refcon);
     }
 }
 
@@ -226,7 +304,7 @@ fn installObserver(entry: *AppEntry, pid: i32) void {
 fn releaseEntry(entry: *AppEntry) void {
     if (entry.observer) |obs| {
         const src = ax.AXObserverGetRunLoopSource(obs);
-        if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
+        if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopCommonModes);
         cf.c.CFRelease(obs);
     }
     for (entry.windows.items) |w| {
@@ -273,7 +351,7 @@ fn releasePid(pid: i32) void {
     var entry = kv.value;
     if (entry.observer) |obs| {
         const src = ax.AXObserverGetRunLoopSource(obs);
-        if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopDefaultMode);
+        if (src != null) cf.c.CFRunLoopRemoveSource(cf.c.CFRunLoopGetMain(), src, cf.c.kCFRunLoopCommonModes);
         cf.c.CFRelease(obs);
     }
     for (entry.windows.items) |w| {
@@ -301,6 +379,11 @@ fn observerCallback(
     } else if (cf.c.CFStringCompare(notification, g_n_destroyed, 0) == 0) {
         removeWindow(entry, element);
     }
+    // Creation/destruction, title changes, minimize/restore, focus, and moves
+    // all flow through the same debounced refresh path. Calling this even when
+    // addWindow deduped is intentional: focus/metadata can still affect order
+    // or rendering.
+    notifyChange();
 }
 
 fn addWindow(entry: *AppEntry, win: ax.UIElementRef, pid: i32) void {
@@ -318,7 +401,7 @@ fn addWindow(entry: *AppEntry, win: ax.UIElementRef, pid: i32) void {
     };
     if (entry.observer) |obs| {
         const refcon: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(pid)));
-        _ = ax.AXObserverAddNotification(obs, win, g_n_destroyed, refcon);
+        subscribeWindowNotifications(obs, win, refcon);
     }
 }
 
@@ -326,7 +409,13 @@ fn removeWindow(entry: *AppEntry, win: ax.UIElementRef) void {
     if (win == null) return;
     var i: usize = 0;
     while (i < entry.windows.items.len) : (i += 1) {
-        if (entry.windows.items[i] == win) {
+        const existing = entry.windows.items[i];
+        // Apple documents the element delivered with AXUIElementDestroyed as
+        // invalid except for equality comparison; it is not guaranteed to be
+        // the same pointer that was originally retained in the cache.
+        if (existing == win or
+            (existing != null and cf.c.CFEqual(existing, win) != 0))
+        {
             const ref = entry.windows.swapRemove(i);
             if (ref) |r| cf.c.CFRelease(r);
             return;
@@ -337,9 +426,11 @@ fn removeWindow(entry: *AppEntry, win: ax.UIElementRef) void {
 fn onAppLaunched(pid: c_int) callconv(.c) void {
     if (!g_initialized) return;
     seedPid(@intCast(pid)) catch {};
+    notifyChange();
 }
 
 fn onAppTerminated(pid: c_int) callconv(.c) void {
     if (!g_initialized) return;
     releasePid(@intCast(pid));
+    notifyChange();
 }

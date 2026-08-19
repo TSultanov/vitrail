@@ -52,7 +52,7 @@ pub fn deinit(self: *Self) void {
 pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     const list = switch (self.backend) {
         .kde => |*b| try b.getWindowList(allocator),
-        .wlroots => |b| try b.getWindowList(allocator),
+        .wlroots => |*b| try b.getWindowList(allocator),
     };
     for (list.items) |*dw| dw.icon = self.icon_loader.loadFor(dw);
     return list;
@@ -63,4 +63,53 @@ pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
         .kde => |*b| b.activateWindow(dw),
         .wlroots => |*b| b.activateWindow(dw),
     }
+}
+
+pub fn closeWindow(self: *Self, dw: common.DesktopWindow) void {
+    switch (self.backend) {
+        .kde => |*b| b.closeWindow(dw.stable_id),
+        .wlroots => |*b| b.closeWindow(dw.stable_id),
+    }
+}
+
+/// File descriptor carrying push-driven window-list notifications. MainWindow
+/// polls it beside the overlay's own Wayland display and asks MainPresenter to
+/// refresh after a short debounce.
+pub fn eventFd(self: *const Self) ?std.posix.fd_t {
+    return switch (self.backend) {
+        .kde => |*b| b.eventFd(),
+        .wlroots => |*b| b.eventFd(),
+    };
+}
+
+/// Let the KDE backend keep the overlay's separate Wayland connection moving
+/// while it awaits a KWin enumeration response. wlroots enumeration already
+/// uses Wayland roundtrips and does not enter the KDE D-Bus wait.
+pub fn setRefreshWaitPump(
+    self: *Self,
+    callback: KdeBackend.WaitPump,
+    ctx: *anyopaque,
+) void {
+    switch (self.backend) {
+        .kde => |*b| b.setWaitPump(callback, ctx),
+        .wlroots => {},
+    }
+}
+
+/// Consume all currently queued backend events before taking a fresh snapshot.
+pub fn dispatchPending(self: *Self) void {
+    switch (self.backend) {
+        .kde => |*b| b.dispatchPending(),
+        .wlroots => |*b| b.dispatchPending(),
+    }
+}
+
+/// Enumeration itself pumps the backend connection. If it consumed a change
+/// newer than the snapshot it just built, the presenter immediately takes a
+/// trailing snapshot instead of waiting for an already-drained fd edge.
+pub fn hasPendingChanges(self: *const Self) bool {
+    return switch (self.backend) {
+        .kde => |*b| b.hasPendingChanges(),
+        .wlroots => |*b| b.hasPendingChanges(),
+    };
 }

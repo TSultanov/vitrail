@@ -20,6 +20,7 @@ pub fn handle(self: *Self, kind: c_int, x: f64, y: f64) void {
     switch (kind) {
         0 => self.callbacks.on_action(self.callbacks.ctx, .{ .move = .{ .x = ix, .y = iy } }),
         1 => self.callbacks.on_action(self.callbacks.ctx, .{ .click = .{ .x = ix, .y = iy } }),
+        3 => self.callbacks.on_action(self.callbacks.ctx, .{ .context = .{ .x = ix, .y = iy } }),
         else => {},
     }
 }

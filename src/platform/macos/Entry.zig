@@ -110,7 +110,14 @@ pub fn main() !void {
 
     // Global mouse-button trigger. Reads the live settings, so a button bound
     // later in the settings UI takes effect without reinstalling.
-    app.mouse_hook.init(App.onMouseTrigger, &app, &app.settings.mouse, &app.settings.mouse_enabled, &app.suppressed);
+    app.mouse_hook.init(
+        App.onMouseTrigger,
+        &app,
+        &app.settings.mouse,
+        &app.settings.mouse_enabled,
+        &app.suppressed,
+        &presenter.view.visible,
+    );
     defer app.mouse_hook.deinit();
     defer if (app.settings_window) |sw| sw.destroy();
 

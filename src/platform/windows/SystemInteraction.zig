@@ -13,6 +13,14 @@ const Self = @This();
 desktopManager: *com.IVirtualDesktopManager,
 serviceProvider: *com.IServiceProvider,
 desktopManagerInternal: *com.IVirtualDesktopManagerInternal,
+allocator: std.mem.Allocator,
+window_generations: std.AutoHashMap(usize, u64),
+next_window_generation: u64 = 1,
+
+// WinEvent callbacks do not carry application context. Vitrail has one
+// SystemInteraction instance, registered here after it reaches its final
+// address inside MainPresenter.
+var lifecycle_tracker: ?*Self = null;
 
 pub fn toUtf16(str: []const u8) ![:0]u16 {
     var buf: [512:0]u16 = undefined;
@@ -31,8 +39,8 @@ pub fn toUtf8(str: []u16, allocator: std.mem.Allocator) ![]u8 {
 fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.c) c_int {
     const windows: *std.array_list.Managed(w.HWND) = @ptrFromInt(@as(usize, @intCast(lParam)));
 
-    var procId: w.DWORD = undefined;
-    _ = w.GetWindowThreadProcessId(hwnd, &procId);
+    var procId: w.DWORD = 0;
+    if (w.GetWindowThreadProcessId(hwnd, &procId) == 0 or procId == 0) return 1;
     const currProcId = w.GetCurrentProcessId();
 
     if (procId == currProcId) {
@@ -44,27 +52,57 @@ fn enumWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.c) c_int {
     return 1;
 }
 
-pub fn init(_: std.mem.Allocator) !Self {
+pub fn init(allocator: std.mem.Allocator) !Self {
     const serviceProvider = try com.IServiceProvider.create();
     return Self{
         .desktopManager = try com.IVirtualDesktopManager.create(),
         .serviceProvider = serviceProvider,
         .desktopManagerInternal = try com.IVirtualDesktopManagerInternal.create(serviceProvider),
+        .allocator = allocator,
+        .window_generations = std.AutoHashMap(usize, u64).init(allocator),
     };
 }
 
-pub fn deinit(self: Self) void {
-    self.desktopManager.Release();
-    self.serviceProvider.Release();
-    self.desktopManagerInternal.Release();
+pub fn bindLifecycleTracker(self: *Self) void {
+    lifecycle_tracker = self;
 }
 
-pub fn activateWindow(_: *Self, dw: common.DesktopWindow) void {
-    const hwnd: w.HWND = @ptrFromInt(dw.platform_handle);
+/// Invalidate the identity associated with an HWND at both ends of its native
+/// lifetime. If Windows recycles the numeric handle before the next snapshot,
+/// the replacement receives a different generation.
+pub fn retireWindowIdentity(hwnd: w.HWND) void {
+    const self = lifecycle_tracker orelse return;
+    _ = self.window_generations.remove(@intFromPtr(hwnd));
+}
+
+pub fn deinit(self: *Self) void {
+    if (lifecycle_tracker == self) lifecycle_tracker = null;
+    self.window_generations.deinit();
+    _ = self.desktopManager.Release();
+    _ = self.serviceProvider.Release();
+    _ = self.desktopManagerInternal.Release();
+}
+
+pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
+    const hwnd = self.resolveStableId(dw.stable_id) orelse return;
+    if (@intFromPtr(hwnd) != dw.platform_handle) return;
     _ = w.SwitchToThisWindow(hwnd, 1);
 }
 
-pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
+/// Request the target window's ordinary graceful-close path. The stable ID is
+/// decoded and checked against the current PID and lifecycle generation before
+/// posting WM_CLOSE, preventing a deferred menu command from acting on a
+/// recycled native handle.
+pub fn closeWindow(self: *Self, dw: common.DesktopWindow) void {
+    if (!dw.can_close) return;
+    const hwnd = self.resolveStableId(dw.stable_id) orelse return;
+    if (@intFromPtr(hwnd) != dw.platform_handle) return;
+    if (!(shouldShowWindow(hwnd) catch false)) return;
+    if (!canCloseWindow(hwnd)) return;
+    _ = w.PostMessageW(hwnd, w.WM_CLOSE, 0, 0);
+}
+
+pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     var desktopsNullable: ?*com.IObjectArray = null;
     _ = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
     var desktops = desktopsNullable orelse return error.Unknown;
@@ -94,9 +132,11 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         const r = desktops.GetAtWithIID(i, &ivd_iid, com.IVirtualDesktop);
         if (r.hr != 0) return error.Unknown;
         const desktop = r.ptr.?;
-        var desktopId: w.GUID = undefined;
-        _ = desktop.GetID(&desktopId);
-        try desktopsMap.put(desktopId, i);
+        defer _ = desktop.Release();
+        var desktop_id = std.mem.zeroes(w.GUID);
+        if (desktop.GetID(&desktop_id) == 0) {
+            try desktopsMap.put(desktop_id, i);
+        }
         i += 1;
     }
 
@@ -141,6 +181,9 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         errdefer allocator.free(app_id_lower);
         for (app_id_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
 
+        const stable_id = try self.stableIdForWindow(hwnd, allocator);
+        errdefer allocator.free(stable_id);
+
         const icon_opt: ?common.RgbaIcon = blk: {
             const hicon = getWindowIcon(hwnd) catch break :blk null;
             const rgba = icon_rgba.hIconToRgba(hicon, allocator) catch {
@@ -152,21 +195,85 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         };
         errdefer if (icon_opt) |ic| ic.destroy();
 
-        var desktopId: w.GUID = undefined;
-        _ = self.desktopManager.GetWindowDesktopId(hwnd, &desktopId);
+        var desktop_id = std.mem.zeroes(w.GUID);
+        const desktop_result = self.desktopManager.GetWindowDesktopId(hwnd, &desktop_id);
 
         try windowList.append(common.DesktopWindow{
+            .stable_id = stable_id,
             .platform_handle = @intFromPtr(hwnd),
             .title = title,
             .title_lower = title_lower,
             .app_id = app_id,
             .app_id_lower = app_id_lower,
             .icon = icon_opt,
-            .desktopNumber = desktopsMap.get(desktopId),
+            .desktopNumber = if (desktop_result == 0) desktopsMap.get(desktop_id) else null,
+            .can_close = canCloseWindow(hwnd),
             .allocator = allocator,
         });
     }
     return windowList;
+}
+
+const WindowIdentity = struct {
+    pid: w.DWORD,
+    hwnd_value: usize,
+    generation: u64,
+};
+
+fn stableIdForWindow(self: *Self, hwnd: w.HWND, allocator: std.mem.Allocator) ![:0]u8 {
+    var pid: w.DWORD = 0;
+    if (w.GetWindowThreadProcessId(hwnd, &pid) == 0 or pid == 0) return error.InvalidWindow;
+
+    const hwnd_value = @intFromPtr(hwnd);
+    const generation = self.window_generations.get(hwnd_value) orelse blk: {
+        const next = self.next_window_generation;
+        self.next_window_generation +%= 1;
+        if (self.next_window_generation == 0) self.next_window_generation = 1;
+        try self.window_generations.put(hwnd_value, next);
+        break :blk next;
+    };
+
+    return std.fmt.allocPrintSentinel(
+        allocator,
+        "win:{d}:{x}:{d}",
+        .{ pid, hwnd_value, generation },
+        0,
+    );
+}
+
+fn parseStableId(stable_id: []const u8) ?WindowIdentity {
+    var parts = std.mem.splitScalar(u8, stable_id, ':');
+    if (!std.mem.eql(u8, parts.next() orelse return null, "win")) return null;
+    const pid_text = parts.next() orelse return null;
+    const hwnd_text = parts.next() orelse return null;
+    const generation_text = parts.next() orelse return null;
+    if (parts.next() != null or pid_text.len == 0 or hwnd_text.len == 0 or generation_text.len == 0) return null;
+
+    return .{
+        .pid = std.fmt.parseInt(w.DWORD, pid_text, 10) catch return null,
+        .hwnd_value = std.fmt.parseInt(usize, hwnd_text, 16) catch return null,
+        .generation = std.fmt.parseInt(u64, generation_text, 10) catch return null,
+    };
+}
+
+fn resolveStableId(self: *Self, stable_id: []const u8) ?w.HWND {
+    const identity = parseStableId(stable_id) orelse return null;
+    if (identity.pid == 0 or identity.hwnd_value == 0 or identity.generation == 0) return null;
+    if (self.window_generations.get(identity.hwnd_value) != identity.generation) return null;
+
+    const hwnd: w.HWND = @ptrFromInt(identity.hwnd_value);
+    if (w.IsWindow(hwnd) == 0) return null;
+
+    var current_pid: w.DWORD = 0;
+    if (w.GetWindowThreadProcessId(hwnd, &current_pid) == 0 or current_pid != identity.pid) return null;
+    return hwnd;
+}
+
+fn canCloseWindow(hwnd: w.HWND) bool {
+    const menu = w.GetSystemMenu(hwnd, 0) orelse return false;
+    const state = w.GetMenuState(menu, w.SC_CLOSE, w.MF_BYCOMMAND);
+    if (state == std.math.maxInt(w.UINT)) return false;
+    return state & (w.MF_DISABLED | w.MF_GRAYED) == 0;
 }
 
 fn getWindowTitle(hwnd: w.HWND, allocator: std.mem.Allocator) ![:0]u16 {
@@ -234,24 +341,34 @@ fn getWindowIcon(hwnd: w.HWND) !w.HICON {
         var iconAddr: usize = 0;
         const lResult = w.SendMessageTimeoutW(realHwnd, w.WM_GETICON, which, 0, w.SMTO_ABORTIFHUNG, 100, &iconAddr);
         if (lResult != 0 and iconAddr != 0) {
-            return @ptrFromInt(iconAddr);
+            // WM_GETICON returns a handle owned by the target window. Copy it
+            // so the enumeration caller can destroy its result safely.
+            const copy = w.CopyIcon(@ptrFromInt(iconAddr));
+            if (copy != null) return copy;
         }
     }
 
     for ([_]c_int{ w.GCLP_HICON, w.GCLP_HICONSM }) |which| {
         const ptr = w.GetClassLongPtrW(realHwnd, which);
-        if (ptr != 0) return @ptrFromInt(ptr);
+        if (ptr != 0) {
+            // Class icons are shared; take an owned copy before returning.
+            const copy = w.CopyIcon(@ptrFromInt(ptr));
+            if (copy != null) return copy;
+        }
     }
 
     if (try extractIconFromExecutable(realHwnd)) |icon| return icon;
 
-    return @ptrCast(w.LoadIconW(null, @ptrFromInt(32512)));
+    const shared = w.LoadIconW(null, @ptrFromInt(32512));
+    if (shared == null) return error.NoWindowIcon;
+    return w.CopyIcon(shared) orelse error.NoWindowIcon;
 }
 
 fn getWindowFilePath(hwnd: w.HWND, allocator: std.mem.Allocator) !?[:0]u16 {
-    var pid: w.DWORD = undefined;
-    _ = w.GetWindowThreadProcessId(hwnd, &pid);
+    var pid: w.DWORD = 0;
+    if (w.GetWindowThreadProcessId(hwnd, &pid) == 0 or pid == 0) return null;
     const hProc: w.HANDLE = w.OpenProcess(w.PROCESS_QUERY_INFORMATION | w.PROCESS_VM_READ, 0, pid);
+    if (hProc == null) return null;
     defer _ = w.CloseHandle(hProc);
     const fileName: [:0]u16 = try allocator.allocSentinel(u16, 4096, 0);
     @memset(fileName, 0);
@@ -295,13 +412,15 @@ fn shouldShowWindow(hwnd: w.HWND) !bool {
     const owner = w.GetWindow(hwnd, w.GW_OWNER);
     var ownerVisible = false;
     if (owner != null) {
-        var ownerPwi: w.WINDOWINFO = undefined;
-        _ = w.GetWindowInfo(hwnd, &ownerPwi);
+        var ownerPwi = std.mem.zeroes(w.WINDOWINFO);
+        ownerPwi.cbSize = @sizeOf(w.WINDOWINFO);
+        if (w.GetWindowInfo(owner, &ownerPwi) == 0) return false;
         ownerVisible = ownerPwi.dwStyle & @as(c_ulong, @intCast(w.WS_VISIBLE)) != 0;
     }
 
-    var pwi: w.WINDOWINFO = undefined;
-    _ = w.GetWindowInfo(hwnd, &pwi);
+    var pwi = std.mem.zeroes(w.WINDOWINFO);
+    pwi.cbSize = @sizeOf(w.WINDOWINFO);
+    if (w.GetWindowInfo(hwnd, &pwi) == 0) return false;
 
     const titleLength = w.GetWindowTextLengthW(hwnd);
 
@@ -322,9 +441,6 @@ fn shouldShowWindow(hwnd: w.HWND) !bool {
 
     const taskListDeletedProp = toUtf16const("ITaskList_Deleted");
     const taskListDeleted = w.GetPropW(hwnd, taskListDeletedProp);
-    defer if (taskListDeleted != null) {
-        _ = w.CloseHandle(taskListDeleted);
-    };
     if (taskListDeleted != null) return false;
 
     if (classEquals(hwnd, "Windows.UI.Core.CoreWindow")) return false;

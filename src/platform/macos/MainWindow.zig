@@ -2,7 +2,6 @@
 // keyboard/mouse translation. Drives the shared Grid + Renderer.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const common = @import("../../common/DesktopWindow.zig");
 
 const ax = @import("ax.zig");
@@ -28,6 +27,8 @@ pub const PlatformArgs = struct {};
 
 pub const Callbacks = struct {
     activateWindow: *const fn (*Self, common.DesktopWindow) anyerror!void,
+    closeWindow: *const fn (*Self, stable_id: []const u8) anyerror!void,
+    refreshWindows: *const fn (*Self) anyerror!void,
     hide: *const fn (*Self) anyerror!void,
     openSettings: *const fn (*Self) anyerror!void,
 };
@@ -35,6 +36,11 @@ pub const Callbacks = struct {
 const LOGICAL_FONT_TILE: u32 = 12;
 const LOGICAL_FONT_SEARCH: u32 = 12;
 const LOGICAL_FONT_DESKTOP: u32 = 32;
+
+const PointerPosition = struct {
+    x: i32,
+    y: i32,
+};
 
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
@@ -57,6 +63,13 @@ scale_q120: u32,
 size_dirty: bool,
 
 running: bool,
+visible: bool,
+menu_tracking: bool,
+refresh_pending: bool,
+refresh_timer_armed: bool,
+pointer_position: ?PointerPosition,
+pointer_drives_selection: bool,
+native_pointer_events: bool,
 
 pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
     bridge.vt_app_init();
@@ -93,6 +106,13 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
         .scale_q120 = 120,
         .size_dirty = false,
         .running = true,
+        .visible = false,
+        .menu_tracking = false,
+        .refresh_pending = false,
+        .refresh_timer_armed = false,
+        .pointer_position = null,
+        .pointer_drives_selection = false,
+        .native_pointer_events = false,
     };
 
     const w = bridge.vt_window_create(self, onKeyCb, onMouseCb, onResizeCb, onCloseCb) orelse
@@ -108,10 +128,16 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
     self.desktop_text = try text.Renderer.create(allocator, LOGICAL_FONT_DESKTOP, .bold);
     errdefer self.desktop_text.destroy();
 
+    ax_cache.setChangeCallback(onAxWindowChanged, self);
+    bridge.vt_install_window_change_observer(self, onWorkspaceWindowChanged);
+
     return self;
 }
 
 pub fn deinit(self: *Self) void {
+    ax_cache.setChangeCallback(null, null);
+    bridge.vt_install_window_change_observer(null, null);
+    bridge.vt_window_cancel_refresh(self.window);
     self.desktop_text.destroy();
     self.search_text.destroy();
     self.tile_text.destroy();
@@ -124,6 +150,7 @@ pub fn deinit(self: *Self) void {
 // ─── Platform contract ──────────────────────────────────────────────────────
 
 pub fn show(self: *Self) !void {
+    self.visible = true;
     bridge.vt_window_move_to_main_screen(self.window);
     self.grid.clearCenter();
     bridge.vt_window_show(self.window);
@@ -135,6 +162,7 @@ pub fn show(self: *Self) !void {
 pub fn showAtCursor(self: *Self) !void {
     var x: f64 = 0;
     var y: f64 = 0;
+    self.visible = true;
     const ok = bridge.vt_window_move_to_cursor_screen(self.window, &x, &y) != 0;
     bridge.vt_window_show(self.window);
     if (self.size_dirty) try self.rebuildForScale();
@@ -153,14 +181,56 @@ pub fn requestQuit(self: *Self) void {
     bridge.vt_app_stop();
 }
 
-pub fn setDesktopWindows(self: *Self, dws: std.array_list.Managed(common.DesktopWindow)) !void {
-    try self.grid.setDesktopWindows(dws.items);
-    try self.repaint();
+pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
+    try self.grid.setDesktopWindows(dws);
+    // Grid now borrows dws. A drawing failure must not make the presenter
+    // discard that committed snapshot underneath it.
+    self.repaint() catch |err| {
+        std.log.warn("initial grid repaint failed: {s}", .{@errorName(err)});
+    };
+}
+
+pub fn refreshDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
+    // A last real macOS window is replaced by a windowless-app placeholder.
+    // Opt into continuity for that platform-specific identity transition;
+    // other platforms retain Grid's stable-id-then-rank default.
+    try self.grid.refreshDesktopWindowsWithOptions(dws, .{
+        .select_same_app_in_vacated_cell = true,
+    });
+    // A native menu runs its own event loop, and window enumeration can block
+    // AppKit briefly. Re-hit-test the current system pointer so a queued event
+    // or a newly-filled tile cannot leave selection behind the cursor.
+    _ = self.selectAtCurrentPointer();
+    // refreshDesktopWindows committed the borrow transactionally. Report
+    // drawing failures without turning the ownership commit into an error.
+    self.repaint() catch |err| {
+        std.log.warn("refreshed grid repaint failed: {s}", .{@errorName(err)});
+    };
 }
 
 pub fn hideBoxes(self: *Self) !void {
+    self.visible = false;
+    self.refresh_pending = false;
+    self.refresh_timer_armed = false;
+    self.pointer_position = null;
+    self.pointer_drives_selection = false;
+    self.native_pointer_events = false;
+    bridge.vt_window_cancel_refresh(self.window);
     self.grid.dropDesktopWindows();
     bridge.vt_window_hide(self.window);
+}
+
+/// Coalesce platform window-change notifications at the first event's 100 ms
+/// deadline. Keeping an already-armed timer is important: AX can emit title or
+/// move notifications continuously, so resetting the timer on every event can
+/// otherwise starve the refresh indefinitely. Hidden overlays intentionally do
+/// no work; the next show starts from a fresh enumeration.
+pub fn scheduleRefresh(self: *Self) void {
+    if (!self.visible) return;
+    self.refresh_pending = true;
+    if (self.menu_tracking or self.refresh_timer_armed) return;
+    self.refresh_timer_armed = true;
+    bridge.vt_window_schedule_refresh(self.window, 0.1, onRefreshTimerCb);
 }
 
 pub fn dispatch(self: *Self) bool {
@@ -174,6 +244,7 @@ pub fn synthesizeKey(self: *Self, action: Keyboard.Action) void {
     onKeyboardAction(self, action);
 }
 pub fn synthesizeMouse(self: *Self, action: Mouse.Action) void {
+    self.native_pointer_events = false;
     onMouseAction(self, action);
 }
 pub fn renderInto(self: *Self, pixels: []u32) void {
@@ -285,6 +356,7 @@ fn onKeyCb(ctx: ?*anyopaque, virtual_keycode: c_int, modifiers: u32, utf8: [*c]c
 
 fn onMouseCb(ctx: ?*anyopaque, kind: c_int, x: f64, y: f64) callconv(.c) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
+    self.native_pointer_events = true;
     self.mouse.handle(kind, x, y);
 }
 
@@ -307,6 +379,33 @@ fn onCloseCb(ctx: ?*anyopaque) callconv(.c) void {
     self.callbacks.hide(self) catch {};
 }
 
+fn onWorkspaceWindowChanged(ctx: ?*anyopaque) callconv(.c) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.scheduleRefresh();
+}
+
+fn onAxWindowChanged(ctx: *anyopaque) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.scheduleRefresh();
+}
+
+fn onRefreshTimerCb(ctx: ?*anyopaque) callconv(.c) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.refresh_timer_armed = false;
+    if (!self.visible) {
+        self.refresh_pending = false;
+        return;
+    }
+    if (self.menu_tracking) {
+        self.refresh_pending = true;
+        return;
+    }
+    self.refresh_pending = false;
+    self.callbacks.refreshWindows(self) catch |err| {
+        std.log.warn("live window refresh failed: {s}", .{@errorName(err)});
+    };
+}
+
 // ─── Action sinks ───────────────────────────────────────────────────────────
 
 fn hooks(self: *Self) input.Hooks {
@@ -327,12 +426,90 @@ fn onHookOpenSettings(ctx: *anyopaque) void {
 
 fn onKeyboardAction(ctx: *anyopaque, action: input.KeyAction) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
+    // Keep keyboard navigation authoritative until the pointer is used again;
+    // an unrelated live refresh must not snap selection back under an old
+    // mouse coordinate.
+    self.pointer_drives_selection = false;
     input.dispatchKey(&self.grid, self.hooks(), action);
     self.repaint() catch {};
 }
 
 fn onMouseAction(ctx: *anyopaque, action: input.MouseAction) void {
     const self: *Self = @ptrCast(@alignCast(ctx));
-    input.dispatchMouse(&self.grid, self.hooks(), action);
+    switch (action) {
+        .move => |point| {
+            self.rememberPointer(point.x, point.y);
+            // Rendering a physical full-screen framebuffer is relatively
+            // expensive on Retina displays. Queued movement inside the same
+            // tile has no visual effect and should not trigger another render.
+            if (self.grid.selectAt(point.x, point.y)) {
+                self.repaint() catch {};
+            }
+        },
+        .click => |point| {
+            self.rememberPointer(point.x, point.y);
+            input.dispatchMouse(&self.grid, self.hooks(), action);
+            self.repaint() catch {};
+        },
+        .context => |point| {
+            self.rememberPointer(point.x, point.y);
+            self.openContextMenu(point.x, point.y);
+        },
+    }
+}
+
+fn rememberPointer(self: *Self, x: i32, y: i32) void {
+    self.pointer_position = .{ .x = x, .y = y };
+    self.pointer_drives_selection = true;
+}
+
+/// Select the tile under the latest pointer position. Native input samples the
+/// live system pointer instead of trusting a possibly queued NSEvent. Synthetic
+/// test input keeps using its explicit coordinate.
+fn selectAtCurrentPointer(self: *Self) bool {
+    if (!self.pointer_drives_selection) return false;
+
+    var point = self.pointer_position orelse return false;
+    if (self.native_pointer_events) {
+        var x: f64 = 0;
+        var y: f64 = 0;
+        if (bridge.vt_window_mouse_position(self.window, &x, &y) == 0) return false;
+        point = .{ .x = @intFromFloat(x), .y = @intFromFloat(y) };
+        self.pointer_position = point;
+    }
+    return self.grid.selectAt(point.x, point.y);
+}
+
+fn openContextMenu(self: *Self, x: i32, y: i32) void {
+    if (self.grid.tileAt(x, y) == null) return;
+    _ = self.grid.selectAt(x, y);
     self.repaint() catch {};
+
+    const target = self.grid.selectedWindow() orelse return;
+    const stable_id = self.allocator.dupe(u8, target.stable_id) catch return;
+    defer self.allocator.free(stable_id);
+
+    self.menu_tracking = true;
+    const selected = bridge.vt_window_show_context_menu(
+        self.window,
+        @floatFromInt(x),
+        @floatFromInt(y),
+        @intFromBool(target.can_close),
+    ) != 0;
+    self.menu_tracking = false;
+
+    // NSMenu consumes movement while its nested tracking loop is active.
+    // Reconcile once at dismissal instead of replaying an obsolete event.
+    if (self.selectAtCurrentPointer()) {
+        self.repaint() catch {};
+    }
+
+    if (selected and target.can_close) {
+        self.callbacks.closeWindow(self, stable_id) catch |err| {
+            std.log.warn("close-window command failed: {s}", .{@errorName(err)});
+        };
+    }
+    // A timer can fire inside AppKit's nested menu-tracking loop. Its refresh
+    // is deliberately deferred until the copied menu target has been handled.
+    if (self.refresh_pending) self.scheduleRefresh();
 }

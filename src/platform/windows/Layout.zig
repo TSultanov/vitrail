@@ -14,12 +14,24 @@ const LOGICAL_FONT_TILE: u32 = 12;
 const LOGICAL_FONT_SEARCH: u32 = 12;
 const LOGICAL_FONT_DESKTOP: u32 = 32;
 
+const PointerPosition = struct {
+    x: i32,
+    y: i32,
+};
+
 /// Hooks the Layout invokes back into its parent. `activate` fires on click /
 /// Enter; `visibility_changed` fires whenever the set of *visible* tiles
 /// shifts (search edit, desktop-window list change) — the parent rebuilds its
 /// transparency region from `grid.tiles` in response.
 pub const Callbacks = struct {
     activate: *const fn (cbs: *Callbacks, dw: common.DesktopWindow) anyerror!void,
+    context_menu: *const fn (
+        cbs: *Callbacks,
+        stable_id: []const u8,
+        can_close: bool,
+        screen_x: c_int,
+        screen_y: c_int,
+    ) anyerror!void,
     visibility_changed: *const fn (cbs: *Callbacks) anyerror!void,
 };
 
@@ -50,6 +62,14 @@ fonts_dpi: u32 = 0,
 // WM_CHARs).
 pending_high_surrogate: ?u16 = null,
 
+// A live window refresh preserves keyboard navigation until the pointer is
+// used again. When pointer input is authoritative, native events can be
+// reconciled against GetCursorPos after a blocking menu/refresh; synthetic
+// tests retain their explicit logical coordinate instead.
+pointer_position: ?PointerPosition = null,
+pointer_drives_selection: bool = false,
+native_pointer_events: bool = false,
+
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
     if (window.docked) try window.dock();
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
@@ -72,6 +92,7 @@ fn onPaintHandler(event_handlers: *Window.EventHandlers, window: *Window) !void 
 
 fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, lParam: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    self.useKeyboardSelection();
     if (wParam == w.VK_TAB) {
         const shift_down = (w.GetAsyncKeyState(w.VK_SHIFT) >> 15) != 0;
         self.grid.selectNext(shift_down);
@@ -107,6 +128,7 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
 
 fn onCharHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    self.useKeyboardSelection();
 
     // Skip control characters — VK_BACK / VK_RETURN / VK_TAB / VK_ESCAPE are
     // already handled (or forwarded) from onKeyDownHandler. 0x7F (DEL) is
@@ -166,16 +188,53 @@ fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, window: *Window)
 fn onMouseMoveHandler(event_handlers: *Window.EventHandlers, _: *Window, _: u64, x: i16, y: i16) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     const dpi: c_int = @intCast(self.window.dpi);
-    const lx = w.MulDiv(x, 96, dpi);
-    const ly = w.MulDiv(y, 96, dpi);
-    if (self.grid.selectAt(lx, ly)) {
-        try self.window.redraw();
-    }
+    const effective_dpi: c_int = if (dpi == 0) 96 else dpi;
+    try self.updatePointerSelection(
+        w.MulDiv(x, 96, effective_dpi),
+        w.MulDiv(y, 96, effective_dpi),
+        true,
+    );
 }
 
 fn onClickHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     try self.activate();
+}
+
+fn onMouseButtonHandler(
+    event_handlers: *Window.EventHandlers,
+    _: *Window,
+    msg: u32,
+    _: u32,
+    x: i16,
+    y: i16,
+) !void {
+    if (msg != @as(u32, @intCast(w.WM_RBUTTONDOWN))) return;
+
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    const dpi: c_int = @intCast(self.window.dpi);
+    const effective_dpi: c_int = if (dpi == 0) 96 else dpi;
+    const logical_x = w.MulDiv(x, 96, effective_dpi);
+    const logical_y = w.MulDiv(y, 96, effective_dpi);
+    const tile_index = self.grid.tileAt(logical_x, logical_y) orelse return;
+
+    self.rememberPointer(logical_x, logical_y, true);
+    // Redraw synchronously so the right-clicked tile is visibly selected
+    // before TrackPopupMenuEx starts its nested native event loop.
+    if (self.grid.selectAt(logical_x, logical_y)) {
+        try self.window.redraw();
+    }
+
+    const target = self.grid.tiles.items[tile_index].dw;
+    var point = w.POINT{ .x = x, .y = y };
+    if (w.ClientToScreen(self.window.hwnd, &point) == 0) return;
+    try self.callbacks.context_menu(
+        self.callbacks,
+        target.stable_id,
+        target.can_close,
+        point.x,
+        point.y,
+    );
 }
 
 pub fn create(hInstance: w.HINSTANCE, parent: *Window, callbacks: *Callbacks, allocator: std.mem.Allocator) !*Self {
@@ -201,6 +260,7 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, callbacks: *Callbacks, al
             .onAfterDestroy = onAfterDestroyHandler,
             .onMouseMove = onMouseMoveHandler,
             .onClick = onClickHandler,
+            .onMouseButton = onMouseButtonHandler,
         },
     };
 
@@ -214,15 +274,99 @@ pub fn create(hInstance: w.HINSTANCE, parent: *Window, callbacks: *Callbacks, al
 }
 
 pub fn clear(self: *Self) !void {
+    self.pointer_position = null;
+    self.pointer_drives_selection = false;
+    self.native_pointer_events = false;
     self.grid.dropDesktopWindows();
-    try self.window.redraw();
+    self.window.redraw() catch |err| {
+        // The descriptor borrow is already gone. Hiding must still commit so
+        // the presenter can release its owned snapshot safely.
+        std.log.warn("Windows grid-clear redraw failed: {s}", .{@errorName(err)});
+    };
 }
 
 pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
     try self.ensureFramebuffer(); // sets grid viewport
     try self.grid.setDesktopWindows(dws);
-    try self.window.redraw();
-    try self.callbacks.visibility_changed(self.callbacks);
+    // Grid acceptance is the commit point. Native repaint and region work
+    // must not turn an accepted borrowed snapshot into an apparent failure.
+    self.window.redraw() catch |err| {
+        std.log.warn("Windows initial grid redraw failed: {s}", .{@errorName(err)});
+    };
+}
+
+pub fn refreshDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
+    try self.ensureFramebuffer(); // keeps the logical viewport current
+    try self.grid.refreshDesktopWindows(dws);
+    // Enumeration can briefly block the UI thread and the refreshed tiles may
+    // occupy different cells. Re-hit-test the current pointer before drawing
+    // the committed snapshot so selection cannot trail the system cursor.
+    _ = self.selectAtCurrentPointer();
+    // Grid replacement is the commit point: after it succeeds the view
+    // borrows `dws`. Do not report a later best-effort native repaint/region
+    // failure as a rejected snapshot, because the presenter would correctly
+    // destroy a rejected list and leave the committed Grid borrowing it.
+    self.window.redraw() catch |err| {
+        std.log.warn("Windows live-refresh redraw failed: {s}", .{@errorName(err)});
+    };
+    self.callbacks.visibility_changed(self.callbacks) catch |err| {
+        std.log.warn("Windows live-refresh region update failed: {s}", .{@errorName(err)});
+    };
+}
+
+/// Test-only input takes a logical coordinate directly so reconciliation does
+/// not replace it with the test host's unrelated physical cursor position.
+pub fn synthesizeMouseMove(self: *Self, x: i32, y: i32) !void {
+    try self.updatePointerSelection(x, y, false);
+}
+
+/// Test-only equivalent of movement consumed by a native popup: remember the
+/// system pointer's new logical position without dispatching a grid hover yet.
+pub fn synthesizeDeferredPointerPosition(self: *Self, x: i32, y: i32) void {
+    self.rememberPointer(x, y, false);
+}
+
+/// Keep keyboard navigation authoritative through unrelated live refreshes.
+/// Selection returns to pointer authority on the next pointer event.
+pub fn useKeyboardSelection(self: *Self) void {
+    self.pointer_drives_selection = false;
+}
+
+fn rememberPointer(self: *Self, x: i32, y: i32, native: bool) void {
+    self.pointer_position = .{ .x = x, .y = y };
+    self.pointer_drives_selection = true;
+    self.native_pointer_events = native;
+}
+
+fn updatePointerSelection(self: *Self, x: i32, y: i32, native: bool) !void {
+    self.rememberPointer(x, y, native);
+    if (self.grid.selectAt(x, y)) {
+        try self.window.redraw();
+    }
+}
+
+/// Re-select the tile under the latest pointer. Native input samples the live
+/// cursor instead of trusting coordinates queued before TrackPopupMenuEx or a
+/// potentially slow enumeration; synthetic input keeps its explicit point.
+pub fn selectAtCurrentPointer(self: *Self) bool {
+    if (!self.pointer_drives_selection) return false;
+
+    var point = self.pointer_position orelse return false;
+    if (self.native_pointer_events) {
+        var native_point: w.POINT = undefined;
+        if (w.GetCursorPos(&native_point) == 0 or
+            w.ScreenToClient(self.window.hwnd, &native_point) == 0) return false;
+
+        const dpi: c_int = @intCast(self.window.dpi);
+        const effective_dpi: c_int = if (dpi == 0) 96 else dpi;
+        point = .{
+            .x = w.MulDiv(native_point.x, 96, effective_dpi),
+            .y = w.MulDiv(native_point.y, 96, effective_dpi),
+        };
+        self.pointer_position = point;
+    }
+
+    return self.grid.selectAt(point.x, point.y);
 }
 
 pub fn activate(self: *Self) !void {

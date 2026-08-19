@@ -9,12 +9,24 @@ pub const Layout = @import("Layout.zig");
 
 const Self = @This();
 
+const WM_VITRAIL_WINDOWS_CHANGED: w.UINT = @as(w.UINT, @intCast(w.WM_APP)) + 2;
+const REFRESH_TIMER_ID: usize = 0x56545246; // "VTRF"
+const REFRESH_DEBOUNCE_MS: w.UINT = 100;
+const CONTEXT_CLOSE_COMMAND: usize = 1;
+
+// SetWinEventHook's callback has no context pointer. Only one resident Vitrail
+// overlay exists, so its HWND is the narrow bridge used to post a private
+// message back to the owning UI thread.
+var event_sink_hwnd: w.HWND = null;
+
 pub const PlatformArgs = struct {
     hInstance: w.HINSTANCE,
 };
 
 pub const Callbacks = struct {
     activateWindow: *const fn (main_window: *Self, dw: common.DesktopWindow) anyerror!void,
+    closeWindow: *const fn (main_window: *Self, stable_id: []const u8) anyerror!void,
+    refreshWindows: *const fn (main_window: *Self) anyerror!void,
     hide: *const fn (main_window: *Self) anyerror!void,
     openSettings: *const fn (main_window: *Self) anyerror!void,
 };
@@ -22,10 +34,17 @@ pub const Callbacks = struct {
 window: *Window,
 layout: *Layout,
 event_handlers: Window.EventHandlers,
-desktop_windows: ?std.array_list.Managed(common.DesktopWindow),
+// Borrowed from MainPresenter. MainWindow and Grid never free descriptors.
+desktop_windows: ?[]const common.DesktopWindow,
 hInstance: w.HINSTANCE,
 allocator: std.mem.Allocator,
 callbacks: *Callbacks,
+win_event_hook: w.HWINEVENTHOOK = null,
+cloak_event_hook: w.HWINEVENTHOOK = null,
+desktop_event_hook: w.HWINEVENTHOOK = null,
+refresh_dirty: bool = false,
+refresh_timer_armed: bool = false,
+menu_tracking: bool = false,
 
 // Bridge from Layout up to this MainWindow. Layout calls .activate when a
 // tile is clicked / Enter-pressed and .visibility_changed when the search
@@ -33,6 +52,7 @@ callbacks: *Callbacks,
 // @fieldParentPtr.
 layout_callbacks: Layout.Callbacks = .{
     .activate = onLayoutActivate,
+    .context_menu = onLayoutContextMenu,
     .visibility_changed = onLayoutVisibilityChanged,
 },
 
@@ -41,13 +61,85 @@ fn onLayoutActivate(cbs: *Layout.Callbacks, dw: common.DesktopWindow) !void {
     try self.callbacks.activateWindow(self, dw);
 }
 
+fn onLayoutContextMenu(
+    cbs: *Layout.Callbacks,
+    stable_id: []const u8,
+    can_close: bool,
+    screen_x: c_int,
+    screen_y: c_int,
+) !void {
+    const self: *Self = @fieldParentPtr("layout_callbacks", cbs);
+    try self.showContextMenu(stable_id, can_close, screen_x, screen_y);
+}
+
 fn onLayoutVisibilityChanged(cbs: *Layout.Callbacks) !void {
     const self: *Self = @fieldParentPtr("layout_callbacks", cbs);
     try self.updateRegion();
 }
 
+fn winEventProc(
+    _: w.HWINEVENTHOOK,
+    event: w.DWORD,
+    hwnd: w.HWND,
+    id_object: w.LONG,
+    id_child: w.LONG,
+    _: w.DWORD,
+    _: w.DWORD,
+) callconv(.winapi) void {
+    if (event == w.EVENT_SYSTEM_DESKTOPSWITCH) {
+        if (event_sink_hwnd) |sink| {
+            _ = w.PostMessageW(sink, WM_VITRAIL_WINDOWS_CHANGED, 0, 0);
+        }
+        return;
+    }
+
+    switch (event) {
+        w.EVENT_OBJECT_CREATE,
+        w.EVENT_OBJECT_DESTROY,
+        w.EVENT_OBJECT_SHOW,
+        w.EVENT_OBJECT_HIDE,
+        w.EVENT_OBJECT_STATECHANGE,
+        w.EVENT_OBJECT_LOCATIONCHANGE,
+        w.EVENT_OBJECT_NAMECHANGE,
+        w.EVENT_OBJECT_CLOAKED,
+        w.EVENT_OBJECT_UNCLOAKED,
+        => {},
+        else => return,
+    }
+
+    if (hwnd == null or id_object != w.OBJID_WINDOW or id_child != w.CHILDID_SELF) return;
+    // At create/show/name/state time the HWND is live, so reject child HWNDs.
+    // During EVENT_OBJECT_DESTROY GetAncestor may already fail; allowing that
+    // event only causes a coalesced extra refresh and ensures closures aren't
+    // missed.
+    if (event != w.EVENT_OBJECT_DESTROY and w.GetAncestor(hwnd, w.GA_ROOT) != hwnd) return;
+
+    if (event == w.EVENT_OBJECT_CREATE or event == w.EVENT_OBJECT_DESTROY) {
+        sys.retireWindowIdentity(hwnd);
+    }
+
+    if (event_sink_hwnd) |sink| {
+        _ = w.PostMessageW(sink, WM_VITRAIL_WINDOWS_CHANGED, 0, 0);
+    }
+}
+
 fn onAfterDestroyHandler(event_handlers: *Window.EventHandlers, _: *Window) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    _ = w.KillTimer(self.window.hwnd, REFRESH_TIMER_ID);
+    self.refresh_timer_armed = false;
+    if (self.win_event_hook) |hook| {
+        _ = w.UnhookWinEvent(hook);
+        self.win_event_hook = null;
+    }
+    if (self.cloak_event_hook) |hook| {
+        _ = w.UnhookWinEvent(hook);
+        self.cloak_event_hook = null;
+    }
+    if (self.desktop_event_hook) |hook| {
+        _ = w.UnhookWinEvent(hook);
+        self.desktop_event_hook = null;
+    }
+    if (event_sink_hwnd == self.window.hwnd) event_sink_hwnd = null;
     self.allocator.destroy(self.window);
     self.allocator.destroy(self.layout);
     _ = w.PostQuitMessage(0);
@@ -67,9 +159,41 @@ fn onKeyDownHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w
 fn onActivateHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
     const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
     const state = wParam & 0xFFFF;
-    if (state == w.WA_INACTIVE and self.desktop_windows != null) {
+    if (state == w.WA_INACTIVE and self.desktop_windows != null and !self.menu_tracking) {
         try self.callbacks.hide(self);
     }
+}
+
+fn onTimerHandler(event_handlers: *Window.EventHandlers, _: *Window, wParam: w.WPARAM, _: w.LPARAM) !void {
+    if (wParam != REFRESH_TIMER_ID) return;
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    _ = w.KillTimer(self.window.hwnd, REFRESH_TIMER_ID);
+    self.refresh_timer_armed = false;
+
+    if (self.desktop_windows == null) {
+        self.refresh_dirty = false;
+        return;
+    }
+    if (self.menu_tracking) {
+        self.refresh_dirty = true;
+        return;
+    }
+    if (!self.refresh_dirty) return;
+
+    self.refresh_dirty = false;
+    try self.callbacks.refreshWindows(self);
+}
+
+fn onAppMessageHandler(
+    event_handlers: *Window.EventHandlers,
+    _: *Window,
+    msg: w.UINT,
+    _: w.WPARAM,
+    _: w.LPARAM,
+) !void {
+    if (msg != WM_VITRAIL_WINDOWS_CHANGED) return;
+    const self: *Self = @fieldParentPtr("event_handlers", event_handlers);
+    self.scheduleRefresh();
 }
 
 fn onResizeHandler(event_handlers: *Window.EventHandlers, window: *Window) !void {
@@ -180,11 +304,19 @@ pub fn create(args: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allo
             .onDpiChange = onDpiChangeHandler,
             .onEnable = onEnableHandler,
             .onActivate = onActivateHandler,
+            .onTimer = onTimerHandler,
+            .onAppMessage = onAppMessageHandler,
         },
         .desktop_windows = null,
         .hInstance = hInstance,
         .allocator = allocator,
         .callbacks = callbacks,
+        .win_event_hook = null,
+        .cloak_event_hook = null,
+        .desktop_event_hook = null,
+        .refresh_dirty = false,
+        .refresh_timer_armed = false,
+        .menu_tracking = false,
     };
 
     const window = try Window.create(windowConfig, &self.event_handlers, hInstance, allocator);
@@ -193,6 +325,35 @@ pub fn create(args: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allo
     self.layout = try Layout.create(hInstance, window, &self.layout_callbacks, allocator);
 
     try window.setSize(desktopRect.left, desktopRect.top, desktopRect.right - desktopRect.left, desktopRect.bottom - desktopRect.top);
+
+    event_sink_hwnd = window.hwnd;
+    self.win_event_hook = w.SetWinEventHook(
+        w.EVENT_OBJECT_CREATE,
+        w.EVENT_OBJECT_NAMECHANGE,
+        null,
+        @ptrCast(&winEventProc),
+        0,
+        0,
+        w.WINEVENT_OUTOFCONTEXT | w.WINEVENT_SKIPOWNPROCESS,
+    );
+    self.cloak_event_hook = w.SetWinEventHook(
+        w.EVENT_OBJECT_CLOAKED,
+        w.EVENT_OBJECT_UNCLOAKED,
+        null,
+        @ptrCast(&winEventProc),
+        0,
+        0,
+        w.WINEVENT_OUTOFCONTEXT | w.WINEVENT_SKIPOWNPROCESS,
+    );
+    self.desktop_event_hook = w.SetWinEventHook(
+        w.EVENT_SYSTEM_DESKTOPSWITCH,
+        w.EVENT_SYSTEM_DESKTOPSWITCH,
+        null,
+        @ptrCast(&winEventProc),
+        0,
+        0,
+        w.WINEVENT_OUTOFCONTEXT | w.WINEVENT_SKIPOWNPROCESS,
+    );
 
     return self;
 }
@@ -284,18 +445,109 @@ pub fn requestQuit(_: *Self) void {
     w.PostQuitMessage(0);
 }
 
-pub fn setDesktopWindows(self: *Self, desktopWindows: std.array_list.Managed(common.DesktopWindow)) !void {
-    try self.hideBoxes();
-    self.desktop_windows = desktopWindows;
-    if (desktopWindows.items.len > 0) {
-        try self.layout.setDesktopWindows(desktopWindows.items);
-        try self.layout.window.focus();
-        try self.updateRegion();
+fn armRefreshTimer(self: *Self) void {
+    if (self.desktop_windows == null or
+        self.menu_tracking or
+        self.refresh_timer_armed)
+    {
+        return;
+    }
+    self.refresh_timer_armed =
+        w.SetTimer(self.window.hwnd, REFRESH_TIMER_ID, REFRESH_DEBOUNCE_MS, null) != 0;
+}
+
+/// Coalesce platform lifecycle bursts at the first event's deadline. WinEvent
+/// can emit name or location changes continuously, and resetting SetTimer for
+/// each one would otherwise starve the refresh. Calls made while a native menu
+/// is tracking remain dirty and are armed when its nested event loop exits.
+pub fn scheduleRefresh(self: *Self) void {
+    if (self.desktop_windows == null) return;
+    self.refresh_dirty = true;
+    self.armRefreshTimer();
+}
+
+fn finishMenuTracking(self: *Self) void {
+    self.menu_tracking = false;
+    if (self.refresh_dirty) self.armRefreshTimer();
+}
+
+fn showContextMenu(
+    self: *Self,
+    stable_id: []const u8,
+    can_close: bool,
+    screen_x: c_int,
+    screen_y: c_int,
+) !void {
+    const menu = w.CreatePopupMenu();
+    if (menu == null) return error.CreatePopupMenuFailed;
+    defer _ = w.DestroyMenu(menu);
+
+    const enabled_flags: w.UINT = if (can_close)
+        w.MF_STRING
+    else
+        w.MF_STRING | w.MF_DISABLED | w.MF_GRAYED;
+    if (w.AppendMenuW(
+        menu,
+        enabled_flags,
+        CONTEXT_CLOSE_COMMAND,
+        sys.toUtf16const("Close window"),
+    ) == 0) return error.AppendMenuFailed;
+
+    self.menu_tracking = true;
+    defer self.finishMenuTracking();
+
+    _ = w.SetForegroundWindow(self.window.hwnd);
+    const command = w.TrackPopupMenuEx(
+        menu,
+        w.TPM_RIGHTBUTTON | w.TPM_RETURNCMD | w.TPM_NONOTIFY,
+        screen_x,
+        screen_y,
+        self.window.hwnd,
+        null,
+    );
+
+    // TrackPopupMenuEx runs a nested native loop and consumes pointer movement.
+    // Reconcile against the current cursor before handling the captured target;
+    // this updates hover without changing which window the command applies to.
+    if (self.layout.selectAtCurrentPointer()) {
+        self.layout.window.redraw() catch |err| {
+            std.log.warn("Windows post-menu pointer redraw failed: {s}", .{@errorName(err)});
+        };
+    }
+
+    if (can_close and command == CONTEXT_CLOSE_COMMAND) {
+        try self.callbacks.closeWindow(self, stable_id);
     }
 }
 
+pub fn setDesktopWindows(self: *Self, desktopWindows: []const common.DesktopWindow) !void {
+    try self.hideBoxes();
+    if (desktopWindows.len > 0) {
+        try self.layout.setDesktopWindows(desktopWindows);
+    }
+    // Publish the borrow only after Grid has accepted the snapshot. Everything
+    // below is best-effort native presentation and cannot reject ownership.
+    self.desktop_windows = desktopWindows;
+    self.layout.window.focus() catch |err| {
+        std.log.warn("Windows initial grid focus failed: {s}", .{@errorName(err)});
+    };
+    self.updateRegion() catch |err| {
+        std.log.warn("Windows initial grid region update failed: {s}", .{@errorName(err)});
+    };
+}
+
+pub fn refreshDesktopWindows(self: *Self, desktopWindows: []const common.DesktopWindow) !void {
+    try self.layout.refreshDesktopWindows(desktopWindows);
+    self.desktop_windows = desktopWindows;
+}
+
 pub fn hideBoxes(self: *Self) !void {
+    _ = w.KillTimer(self.window.hwnd, REFRESH_TIMER_ID);
+    self.refresh_dirty = false;
+    self.refresh_timer_armed = false;
     try self.layout.clear();
     self.desktop_windows = null;
-    try self.updateRegion();
+    self.updateRegion() catch |err| {
+        std.log.warn("Windows hidden-region update failed: {s}", .{@errorName(err)});
+    };
 }

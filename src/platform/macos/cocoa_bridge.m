@@ -27,6 +27,7 @@
 @property (nonatomic, assign) vt_key_cb on_key;
 @property (nonatomic, assign) vt_mouse_cb on_mouse;
 @property (nonatomic, assign) vt_capture_cb on_capture; // settings press-to-bind
+- (BOOL)currentMousePoint:(NSPoint *)outPoint;
 @end
 
 @implementation VTContentView
@@ -34,6 +35,17 @@
 - (BOOL)acceptsFirstResponder { return YES; }
 - (BOOL)canBecomeKeyView { return YES; }
 - (BOOL)isFlipped { return YES; } // top-left origin, matching our renderer
+
+- (BOOL)currentMousePoint:(NSPoint *)outPoint {
+    NSWindow *window = self.window;
+    if (!window) return NO;
+    NSPoint windowPoint =
+        [window convertPointFromScreen:[NSEvent mouseLocation]];
+    NSPoint viewPoint = [self convertPoint:windowPoint fromView:nil];
+    if (!NSPointInRect(viewPoint, self.bounds)) return NO;
+    if (outPoint) *outPoint = viewPoint;
+    return YES;
+}
 
 - (void)keyDown:(NSEvent *)event {
     if (!self.on_key) return;
@@ -51,8 +63,13 @@
 
 - (void)mouseMoved:(NSEvent *)event {
     if (!self.on_mouse) return;
-    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    // Menu tracking and a live window-list refresh can temporarily block the
+    // main run loop. Use the current system pointer instead of replaying an
+    // NSEvent coordinate which may now be several queued movements old.
+    NSPoint p;
+    if (![self currentMousePoint:&p]) return;
     self.on_mouse(self.zig_ctx, 0, p.x, p.y);
+    (void)event;
 }
 
 - (void)mouseDragged:(NSEvent *)event {
@@ -71,10 +88,14 @@
     self.on_mouse(self.zig_ctx, 2, p.x, p.y);
 }
 
-// Right/other button presses are only wired in the settings window (overlay
-// leaves on_capture NULL) — they feed press-to-bind capture, not the grid.
 - (void)rightMouseDown:(NSEvent *)event {
-    if (self.on_capture) self.on_capture(self.zig_ctx, 1, (long)event.buttonNumber);
+    if (self.on_capture) {
+        self.on_capture(self.zig_ctx, 1, (long)event.buttonNumber);
+        return;
+    }
+    if (!self.on_mouse) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    self.on_mouse(self.zig_ctx, 3, p.x, p.y);
 }
 
 - (void)otherMouseDown:(NSEvent *)event {
@@ -95,6 +116,9 @@
 // not (it closes only on an explicit close). Selects which delegate path fires
 // on_close.
 @property (nonatomic, assign) BOOL close_on_resign;
+@property (nonatomic, assign) BOOL menu_tracking;
+@property (nonatomic, assign) BOOL context_close_selected;
+@property (nonatomic, strong) NSTimer *refresh_timer;
 @end
 
 @implementation VTWindowOwner
@@ -121,11 +145,18 @@
 }
 
 - (void)windowDidResignKey:(NSNotification *)note {
-    if (self.close_on_resign && self.on_close) self.on_close(self.zig_ctx);
+    if (self.close_on_resign && !self.menu_tracking && self.on_close) {
+        self.on_close(self.zig_ctx);
+    }
 }
 
 - (void)windowWillClose:(NSNotification *)note {
     if (!self.close_on_resign && self.on_close) self.on_close(self.zig_ctx);
+}
+
+- (void)selectContextClose:(id)sender {
+    self.context_close_selected = YES;
+    (void)sender;
 }
 
 @end
@@ -193,6 +224,9 @@ int64_t vt_app_activation_ordinal(int pid) {
 static vt_pid_cb g_on_app_launch = NULL;
 static vt_pid_cb g_on_app_terminate = NULL;
 static BOOL g_lifecycle_observers_installed = NO;
+static void *g_window_change_ctx = NULL;
+static vt_simple_cb g_on_window_change = NULL;
+static BOOL g_window_change_observers_installed = NO;
 
 void vt_install_app_lifecycle_observers(vt_pid_cb on_launch, vt_pid_cb on_terminate) {
     g_on_app_launch = on_launch;
@@ -217,6 +251,30 @@ void vt_install_app_lifecycle_observers(vt_pid_cb on_launch, vt_pid_cb on_termin
         if (!app) return;
         if (g_on_app_terminate) g_on_app_terminate((int)app.processIdentifier);
     }];
+}
+
+void vt_install_window_change_observer(void *ctx, vt_simple_cb on_change) {
+    g_window_change_ctx = ctx;
+    g_on_window_change = on_change;
+    if (g_window_change_observers_installed) return;
+    g_window_change_observers_installed = YES;
+
+    NSNotificationCenter *nc = [NSWorkspace sharedWorkspace].notificationCenter;
+    NSArray<NSNotificationName> *names = @[
+        NSWorkspaceDidLaunchApplicationNotification,
+        NSWorkspaceDidTerminateApplicationNotification,
+        NSWorkspaceDidActivateApplicationNotification,
+        NSWorkspaceActiveSpaceDidChangeNotification,
+    ];
+    for (NSNotificationName name in names) {
+        [nc addObserverForName:name
+                       object:nil
+                        queue:[NSOperationQueue mainQueue]
+                   usingBlock:^(NSNotification *note) {
+            if (g_on_window_change) g_on_window_change(g_window_change_ctx);
+            (void)note;
+        }];
+    }
 }
 
 int vt_app_pump_one(int blocking) {
@@ -406,10 +464,83 @@ int vt_window_move_to_cursor_screen(vt_window *w, double *out_x, double *out_y) 
 void vt_window_destroy(vt_window *w) {
     if (!w) return;
     VTWindowOwner *owner = (__bridge_transfer VTWindowOwner *)w->owner;
+    [owner.refresh_timer invalidate];
+    owner.refresh_timer = nil;
     owner.window.delegate = nil;
     [owner.window close];
     (void)owner;
     free(w);
+}
+
+int vt_window_show_context_menu(vt_window *w,
+                                double x,
+                                double y,
+                                int close_enabled) {
+    if (!w) return 0;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    NSMenuItem *close_item =
+        [[NSMenuItem alloc] initWithTitle:@"Close window"
+                                  action:@selector(selectContextClose:)
+                           keyEquivalent:@""];
+    close_item.target = owner;
+    close_item.enabled = close_enabled != 0;
+    [menu addItem:close_item];
+
+    owner.context_close_selected = NO;
+    owner.menu_tracking = YES;
+    [menu popUpMenuPositioningItem:nil
+                       atLocation:NSMakePoint((CGFloat)x, (CGFloat)y)
+                           inView:owner.view];
+    owner.menu_tracking = NO;
+    [owner.window makeKeyWindow];
+    return owner.context_close_selected ? 1 : 0;
+}
+
+int vt_window_mouse_position(vt_window *w, double *out_x, double *out_y) {
+    if (!w) return 0;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    NSPoint point;
+    if (![owner.view currentMousePoint:&point]) return 0;
+    if (out_x) *out_x = point.x;
+    if (out_y) *out_y = point.y;
+    return 1;
+}
+
+void vt_window_schedule_refresh(vt_window *w,
+                                double delay_seconds,
+                                vt_simple_cb callback) {
+    if (!w || !callback) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    [owner.refresh_timer invalidate];
+
+    __weak VTWindowOwner *weak_owner = owner;
+    NSTimer *timer = [NSTimer timerWithTimeInterval:delay_seconds
+                                           repeats:NO
+                                             block:^(NSTimer *fired) {
+        VTWindowOwner *strong_owner = weak_owner;
+        if (!strong_owner) return;
+        strong_owner.refresh_timer = nil;
+        callback(strong_owner.zig_ctx);
+        (void)fired;
+    }];
+    owner.refresh_timer = timer;
+    [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+}
+
+void vt_window_cancel_refresh(vt_window *w) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    [owner.refresh_timer invalidate];
+    owner.refresh_timer = nil;
+}
+
+void vt_test_post_window_change_notification(void) {
+    NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
+    [workspace.notificationCenter
+        postNotificationName:NSWorkspaceActiveSpaceDidChangeNotification
+                      object:workspace];
 }
 
 void vt_window_set_image(vt_window *w, const void *cg_image) {

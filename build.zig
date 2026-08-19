@@ -286,7 +286,7 @@ const info_plist =
     \\    <key>NSHighResolutionCapable</key>
     \\    <true/>
     \\    <key>NSAccessibilityUsageDescription</key>
-    \\    <string>Vitrail uses Accessibility to raise the window you pick.</string>
+    \\    <string>Vitrail uses Accessibility to switch to and close the window you pick.</string>
     \\</dict>
     \\</plist>
     \\

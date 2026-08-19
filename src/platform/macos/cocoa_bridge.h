@@ -29,7 +29,8 @@ typedef void (*vt_key_cb)(void *ctx,
                           const char *utf8,
                           int utf8_len);
 
-// kind: 0 = move, 1 = left button down, 2 = left button up.
+// kind: 0 = move, 1 = left button down, 2 = left button up,
+//       3 = right button down.
 typedef void (*vt_mouse_cb)(void *ctx, int kind, double x, double y);
 
 typedef void (*vt_resize_cb)(void *ctx,
@@ -40,6 +41,7 @@ typedef void (*vt_resize_cb)(void *ctx,
                              double backing_scale);
 
 typedef void (*vt_close_cb)(void *ctx);
+typedef void (*vt_simple_cb)(void *ctx);
 
 vt_window *vt_window_create(void *ctx,
                             vt_key_cb on_key,
@@ -50,6 +52,30 @@ vt_window *vt_window_create(void *ctx,
 void vt_window_show(vt_window *w);
 void vt_window_hide(vt_window *w);
 void vt_window_destroy(vt_window *w);
+
+// Shows a native one-item context menu at the view-local point. The return
+// value is 1 when the enabled "Close window" command was selected, otherwise
+// 0. Menu tracking is synchronous.
+int vt_window_show_context_menu(vt_window *w,
+                                double x,
+                                double y,
+                                int close_enabled);
+
+// Return the current system pointer in content-view coordinates. Unlike an
+// NSEvent's location, this is not a historical point from AppKit's queue.
+// Returns 1 while the pointer is inside the content view.
+int vt_window_mouse_position(vt_window *w, double *out_x, double *out_y);
+
+// Debounced-refresh timer owned by the window. Scheduling replaces any
+// existing timer. The callback runs on the AppKit main thread.
+void vt_window_schedule_refresh(vt_window *w,
+                                double delay_seconds,
+                                vt_simple_cb callback);
+void vt_window_cancel_refresh(vt_window *w);
+
+// Test hook: posts one of the real NSWorkspace notifications observed by the
+// production window-change path.
+void vt_test_post_window_change_notification(void);
 
 // Reposition the overlay to the main display (keyboard-activation path).
 void vt_window_move_to_main_screen(vt_window *w);
@@ -135,6 +161,11 @@ void vt_free(void *p);
 // Higher = more recently activated. Returns 0 for pids never seen by the
 // activation observer (which is installed during vt_app_init).
 int64_t vt_app_activation_ordinal(int pid);
+
+// Reports workspace-level changes that can affect the visible grid: app
+// lifecycle/activation and active-Space changes. Passing NULL clears the
+// current receiver; observer installation itself is process-wide/idempotent.
+void vt_install_window_change_observer(void *ctx, vt_simple_cb on_change);
 
 // Subscribes the given callbacks to NSWorkspaceDidLaunchApplicationNotification
 // and NSWorkspaceDidTerminateApplicationNotification. The callbacks fire on

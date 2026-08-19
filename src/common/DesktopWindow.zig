@@ -12,10 +12,18 @@ pub const RgbaIcon = struct {
 };
 
 /// Platform-agnostic window descriptor. All strings are UTF-8 and null-terminated.
-/// `platform_handle` is an opaque value whose meaning is defined by the platform layer;
-/// MainPresenter never dereferences it — it passes the whole DesktopWindow back to
-/// SystemInteraction.activateWindow().
+///
+/// `stable_id` is an opaque, platform-defined identity that remains the same
+/// across live window-list refreshes. UI state and deferred commands use it
+/// instead of titles, array indexes, or native handles (all of which can
+/// change or be reused).
+///
+/// `platform_handle` is an opaque operational token whose meaning is defined
+/// by the platform layer. MainPresenter never dereferences it; it passes the
+/// whole DesktopWindow back to SystemInteraction after resolving `stable_id`
+/// against the current snapshot.
 pub const DesktopWindow = struct {
+    stable_id: [:0]u8, // allocator-owned exact identity bytes
     platform_handle: usize, // Win32: @intFromPtr(HWND); Wayland: index into handle table
     title: [:0]u8, // UTF-8, allocator-owned
     title_lower: [:0]u8, // UTF-8 lowercase for search, allocator-owned
@@ -27,9 +35,11 @@ pub const DesktopWindow = struct {
     desktop_file: ?[:0]u8 = null,
     icon: ?RgbaIcon,
     desktopNumber: ?usize,
+    can_close: bool = true,
     allocator: std.mem.Allocator,
 
     pub fn destroy(self: DesktopWindow) void {
+        self.allocator.free(self.stable_id);
         self.allocator.free(self.title);
         self.allocator.free(self.title_lower);
         self.allocator.free(self.app_id);

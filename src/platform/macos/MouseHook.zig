@@ -34,6 +34,9 @@ enabled: *const bool,
 // When set, pass every button through untouched (no trigger, no swallow) so the
 // settings window can capture the press during press-to-bind recording.
 suppressed: *const bool,
+// Right-click must reach the overlay while it is visible, even when Right
+// Mouse is configured as the global summon trigger.
+overlay_visible: *const bool,
 
 /// Map a raw macOS mouse event (right-button flag + NSEvent/CGEvent
 /// buttonNumber) to a platform-neutral binding. Single source of truth shared
@@ -68,8 +71,16 @@ pub fn init(
     button: *const Config.MouseBinding,
     enabled: *const bool,
     suppressed: *const bool,
+    overlay_visible: *const bool,
 ) void {
-    self.* = .{ .on_press = on_press, .ctx = ctx, .button = button, .enabled = enabled, .suppressed = suppressed };
+    self.* = .{
+        .on_press = on_press,
+        .ctx = ctx,
+        .button = button,
+        .enabled = enabled,
+        .suppressed = suppressed,
+        .overlay_visible = overlay_visible,
+    };
 
     // Surface the Input Monitoring prompt during launch.
     _ = c.CGRequestListenEventAccess();
@@ -137,9 +148,11 @@ fn tapCallback(
     // captured there instead of triggering the grid.
     if (self.suppressed.*) return event;
 
+    const is_right = etype == c.kCGEventRightMouseDown;
+    if (is_right and self.overlay_visible.*) return event;
+
     if (!self.enabled.*) return event;
 
-    const is_right = etype == c.kCGEventRightMouseDown;
     const bn = c.CGEventGetIntegerValueField(event, c.kCGMouseEventButtonNumber);
     const ev = classifyButtonNumber(is_right, bn);
     if (!matches(self.button.*, ev)) return event;

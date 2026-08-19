@@ -76,6 +76,11 @@ fn lowLevelMouseProc(nCode: c_int, wParam: w.WPARAM, lParam: w.LPARAM) callconv(
         const info: *w.MSLLHOOKSTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
         const ev = MouseButtons.classify(@as(u32, @intCast(wParam)), info.mouseData);
         if (MouseButtons.matches(g_app.settings.mouse, ev)) {
+            // A configured right-button summon gesture must not steal
+            // right-clicks from tiles while the overlay is already open.
+            if (ev.kind == .right and g_app.presenter.isVisible()) {
+                return w.CallNextHookEx(null, nCode, wParam, lParam);
+            }
             _ = w.PostMessageW(null, WM_VITRAIL_SHOW, 0, 0);
             return 1; // swallow the trigger click
         }

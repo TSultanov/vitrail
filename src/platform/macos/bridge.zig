@@ -29,6 +29,7 @@ pub const ResizeCb = *const fn (
 ) callconv(.c) void;
 
 pub const CloseCb = *const fn (ctx: ?*anyopaque) callconv(.c) void;
+pub const SimpleCb = *const fn (ctx: ?*anyopaque) callconv(.c) void;
 
 pub const CaptureCb = *const fn (
     ctx: ?*anyopaque,
@@ -60,6 +61,20 @@ pub extern "c" fn vt_settings_create(
 pub extern "c" fn vt_window_show(w: *VtWindow) void;
 pub extern "c" fn vt_window_hide(w: *VtWindow) void;
 pub extern "c" fn vt_window_destroy(w: *VtWindow) void;
+pub extern "c" fn vt_window_show_context_menu(
+    w: *VtWindow,
+    x: f64,
+    y: f64,
+    close_enabled: c_int,
+) c_int;
+pub extern "c" fn vt_window_mouse_position(w: *VtWindow, out_x: *f64, out_y: *f64) c_int;
+pub extern "c" fn vt_window_schedule_refresh(
+    w: *VtWindow,
+    delay_seconds: f64,
+    callback: SimpleCb,
+) void;
+pub extern "c" fn vt_window_cancel_refresh(w: *VtWindow) void;
+pub extern "c" fn vt_test_post_window_change_notification() void;
 pub extern "c" fn vt_window_move_to_main_screen(w: *VtWindow) void;
 pub extern "c" fn vt_window_move_to_cursor_screen(w: *VtWindow, out_x: *f64, out_y: *f64) c_int;
 pub extern "c" fn vt_window_set_image(w: *VtWindow, cg_image: ?*const anyopaque) void;
@@ -85,6 +100,13 @@ pub extern "c" fn vt_free(p: ?*anyopaque) void;
 // Monotonic counter for app activations. Higher = more recently activated.
 // Returns 0 for pids the observer hasn't seen.
 pub extern "c" fn vt_app_activation_ordinal(pid: c_int) i64;
+
+// Workspace-level window-list invalidation (app lifecycle/activation and
+// active-Space changes). A null callback disconnects the receiver.
+pub extern "c" fn vt_install_window_change_observer(
+    ctx: ?*anyopaque,
+    on_change: ?SimpleCb,
+) void;
 
 pub const PidCb = *const fn (pid: c_int) callconv(.c) void;
 // Installs main-thread callbacks for NSWorkspaceDidLaunchApplication and

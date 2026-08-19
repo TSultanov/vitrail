@@ -8,6 +8,9 @@ const MainPresenter = @import("../../MainPresenter.zig");
 const MainWindow = @import("MainWindow.zig");
 const Keyboard = @import("Keyboard.zig");
 const Mouse = @import("Mouse.zig");
+const bridge = @import("bridge.zig");
+const cf = @import("cf.zig");
+const ax_cache = @import("ax_cache.zig");
 
 pub const Driver = struct {
     presenter: *MainPresenter,
@@ -51,10 +54,13 @@ pub const Driver = struct {
         .post_char = postChar,
         .post_mouse_move = postMouseMove,
         .post_mouse_click = postMouseClick,
+        .post_context_close = postContextClose,
+        .close_external = closeExternal,
         .selected_app_id = selectedAppId,
         .visible_count = visibleCount,
         .search_text = searchText,
         .last_activated_app_id = lastActivatedAppId,
+        .last_closed_app_id = lastClosedAppId,
         .window_visible = windowVisible,
         .tile_center = tileCenter,
         .snapshot = snapshot,
@@ -101,6 +107,66 @@ pub const Driver = struct {
         self.presenter.view.synthesizeMouse(.{ .click = .{ .x = x, .y = y } });
     }
 
+    /// Exercise the semantic result of the native menu without entering
+    /// AppKit's blocking menu-tracking loop in the automated scenario.
+    fn postContextClose(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
+        const self = cast(ctx);
+        self.presenter.view.synthesizeMouse(.{ .move = .{ .x = x, .y = y } });
+        const target = self.presenter.view.grid.selectedWindow() orelse return error.NoTile;
+        const stable_id = self.dupe(target.stable_id);
+        const can_close = target.can_close;
+        try self.presenter.view.callbacks.closeWindow(self.presenter.view, target.stable_id);
+        if (can_close) try self.waitForStableIdGone(stable_id);
+    }
+
+    fn closeExternal(ctx: *anyopaque, app_id: []const u8) anyerror!void {
+        const self = cast(ctx);
+        if (!self.presenter.si.closeExternally(app_id)) return error.NoWindow;
+        try self.waitForAppIdGone(app_id);
+    }
+
+    fn waitForStableIdGone(self: *Driver, stable_id: []const u8) !void {
+        const deadline_ms = std.time.milliTimestamp() + 1000;
+        while (self.presenter.desktop_windows != null and
+            self.gridContainsStableId(stable_id))
+        {
+            try self.driveWindowChangeNotifications(deadline_ms);
+        }
+    }
+
+    fn waitForAppIdGone(self: *Driver, app_id: []const u8) !void {
+        const deadline_ms = std.time.milliTimestamp() + 1000;
+        while (self.presenter.desktop_windows != null and
+            self.presenter.view.grid.tileCenter(app_id) != null)
+        {
+            try self.driveWindowChangeNotifications(deadline_ms);
+        }
+    }
+
+    fn driveWindowChangeNotifications(_: *Driver, deadline_ms: i64) !void {
+        if (std.time.milliTimestamp() >= deadline_ms) {
+            return error.AutomaticRefreshTimeout;
+        }
+
+        // Exercise both production invalidation sinks and keep doing so faster
+        // than the 100 ms refresh interval. A resettable debounce timer is
+        // starved by this loop; a fixed-deadline coalescer still fires.
+        ax_cache.notifyChangeForTest();
+        bridge.vt_test_post_window_change_notification();
+        _ = cf.c.CFRunLoopRunInMode(
+            cf.c.kCFRunLoopDefaultMode,
+            0.01,
+            0,
+        );
+    }
+
+    fn gridContainsStableId(self: *Driver, stable_id: []const u8) bool {
+        for (self.presenter.view.grid.tiles.items) |tile| {
+            if (std.mem.eql(u8, tile.dw.stable_id, stable_id)) return true;
+        }
+        return false;
+    }
+
     fn selectedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const dw = self.presenter.view.grid.selectedWindow() orelse return null;
@@ -124,6 +190,12 @@ pub const Driver = struct {
     fn lastActivatedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const s = self.presenter.si.last_activated_app_id orelse return null;
+        return self.dupe(s);
+    }
+
+    fn lastClosedAppId(ctx: *anyopaque) ?[]const u8 {
+        const self = cast(ctx);
+        const s = self.presenter.si.last_closed_app_id orelse return null;
         return self.dupe(s);
     }
 
@@ -151,18 +223,17 @@ pub const Driver = struct {
     fn reset(ctx: *anyopaque) anyerror!void {
         const self = cast(ctx);
         _ = self.arena.reset(.retain_capacity);
+        self.presenter.si.resetActions();
 
         if (!self.initial_load_done) {
             try self.presenter.show();
             self.initial_load_done = true;
-        }
-        if (self.presenter.desktop_windows == null) {
+        } else if (self.presenter.desktop_windows == null) {
             try self.presenter.show();
         } else {
             self.presenter.view.grid.search_len = 0;
-            try self.presenter.view.grid.rebuild();
+            try self.presenter.refreshWindowList();
         }
-        self.presenter.si.resetActivations();
     }
 };
 

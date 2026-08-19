@@ -10,32 +10,100 @@ const c = @cImport({
 
 const Self = @This();
 
+const VirtualDesktopInfo = struct {
+    id: []u8,
+    position: usize,
+    handle: ?*c.org_kde_plasma_virtual_desktop = null,
+};
+
 // Heap-allocated per window so pointer stays stable across ArrayList resizes.
 const ToplevelEntry = struct {
     title: []const u8,
     app_id: []const u8,
+    // wlroots does not expose an identity, so each persistent protocol entry
+    // receives a monotonic id. KDE's protocol does expose the exact KWin UUID.
+    stable_id: u64,
+    kde_uuid: ?[:0]u8 = null,
+    desktop_number: ?usize = null,
+    legacy_desktop_number: ?usize = null,
+    desktop_ids: std.ArrayListUnmanaged([]u8) = .{},
+    has_modern_desktop_membership: bool = false,
     minimized: bool = false,
+    can_close: bool = true,
     closed: bool = false,
     handle_wlr: ?*c.zwlr_foreign_toplevel_handle_v1 = null,
     handle_kde: ?*c.org_kde_plasma_window = null,
+    state: *State,
     allocator: std.mem.Allocator,
 
     fn destroy(self: *ToplevelEntry) void {
         self.allocator.free(self.title);
         self.allocator.free(self.app_id);
+        if (self.kde_uuid) |uuid| self.allocator.free(uuid);
+        for (self.desktop_ids.items) |id| self.allocator.free(id);
+        self.desktop_ids.deinit(self.allocator);
         if (self.handle_wlr) |h| c.zwlr_foreign_toplevel_handle_v1_destroy(h);
         if (self.handle_kde) |h| c.org_kde_plasma_window_destroy(h);
         self.allocator.destroy(self);
     }
 
     fn setTitle(self: *ToplevelEntry, raw: [*c]const u8) void {
+        const next = self.allocator.dupe(u8, std.mem.span(raw)) catch return;
         self.allocator.free(self.title);
-        self.title = self.allocator.dupe(u8, std.mem.span(raw)) catch "";
+        self.title = next;
     }
 
     fn setAppId(self: *ToplevelEntry, raw: [*c]const u8) void {
+        const next = self.allocator.dupe(u8, std.mem.span(raw)) catch return;
         self.allocator.free(self.app_id);
-        self.app_id = self.allocator.dupe(u8, std.mem.span(raw)) catch "";
+        self.app_id = next;
+    }
+
+    fn enterDesktop(self: *ToplevelEntry, id: []const u8) void {
+        for (self.desktop_ids.items) |existing| {
+            if (std.mem.eql(u8, existing, id)) {
+                self.has_modern_desktop_membership = true;
+                return;
+            }
+        }
+        const owned = self.allocator.dupe(u8, id) catch return;
+        self.desktop_ids.append(self.allocator, owned) catch {
+            self.allocator.free(owned);
+            return;
+        };
+        self.has_modern_desktop_membership = true;
+    }
+
+    fn leaveDesktop(self: *ToplevelEntry, id: []const u8) void {
+        self.has_modern_desktop_membership = true;
+        for (self.desktop_ids.items, 0..) |existing, idx| {
+            if (!std.mem.eql(u8, existing, id)) continue;
+            const owned = self.desktop_ids.orderedRemove(idx);
+            self.allocator.free(owned);
+            return;
+        }
+    }
+
+    fn recomputeDesktopNumber(self: *ToplevelEntry) void {
+        if (!self.has_modern_desktop_membership) {
+            self.desktop_number = self.legacy_desktop_number;
+            return;
+        }
+        // No memberships means the compositor considers the window present on
+        // every desktop, for which Vitrail intentionally displays no badge.
+        if (self.desktop_ids.items.len == 0) {
+            self.desktop_number = null;
+            return;
+        }
+
+        var best: ?usize = null;
+        for (self.desktop_ids.items) |id| {
+            const position = self.state.desktopPosition(id) orelse continue;
+            best = if (best) |current| @min(current, position) else position;
+        }
+        // If the desktop-management global is unavailable or has not announced
+        // a referenced id yet, retain the deprecated integer event as fallback.
+        self.desktop_number = best orelse self.legacy_desktop_number;
     }
 };
 
@@ -44,7 +112,52 @@ const State = struct {
     seat: ?*c.wl_seat = null,
     foreign_toplevel_mgr: ?*c.zwlr_foreign_toplevel_manager_v1 = null,
     plasma_window_mgr: ?*c.org_kde_plasma_window_management = null,
+    plasma_virtual_desktop_mgr: ?*c.org_kde_plasma_virtual_desktop_management = null,
+    virtual_desktops: std.ArrayListUnmanaged(VirtualDesktopInfo) = .{},
+    virtual_desktops_ready: bool = false,
     toplevels: std.ArrayListUnmanaged(*ToplevelEntry) = .{},
+    next_stable_id: u64 = 1,
+    dirty: bool = false,
+
+    fn markDirty(self: *State) void {
+        self.dirty = true;
+    }
+
+    fn desktopPosition(self: *const State, id: []const u8) ?usize {
+        for (self.virtual_desktops.items) |desktop| {
+            if (std.mem.eql(u8, desktop.id, id)) return desktop.position;
+        }
+        return null;
+    }
+
+    fn desktopByHandle(self: *State, handle: ?*c.org_kde_plasma_virtual_desktop) ?*VirtualDesktopInfo {
+        const target = handle orelse return null;
+        for (self.virtual_desktops.items) |*desktop| {
+            if (desktop.handle) |candidate| {
+                if (candidate == target) return desktop;
+            }
+        }
+        return null;
+    }
+
+    fn recomputeDesktopNumbers(self: *State) void {
+        for (self.toplevels.items) |entry| {
+            if (!entry.closed) entry.recomputeDesktopNumber();
+        }
+    }
+
+    fn deinitOwned(self: *State) void {
+        for (self.toplevels.items) |entry| entry.destroy();
+        self.toplevels.deinit(self.allocator);
+        for (self.virtual_desktops.items) |desktop| {
+            if (desktop.handle) |handle| c.org_kde_plasma_virtual_desktop_destroy(handle);
+            self.allocator.free(desktop.id);
+        }
+        self.virtual_desktops.deinit(self.allocator);
+        if (self.plasma_virtual_desktop_mgr) |mgr| {
+            c.org_kde_plasma_virtual_desktop_management_destroy(mgr);
+        }
+    }
 };
 
 display: *c.wl_display,
@@ -55,8 +168,11 @@ pub fn init(allocator: std.mem.Allocator) !Self {
     errdefer _ = c.wl_display_disconnect(display);
 
     const state = try allocator.create(State);
-    errdefer allocator.destroy(state);
     state.* = .{ .allocator = allocator };
+    errdefer {
+        state.deinitOwned();
+        allocator.destroy(state);
+    }
 
     const registry = c.wl_display_get_registry(display) orelse return error.RegistryFailed;
     _ = c.wl_registry_add_listener(registry, &registry_listener, state);
@@ -77,10 +193,42 @@ pub fn init(allocator: std.mem.Allocator) !Self {
 }
 
 pub fn deinit(self: Self) void {
-    for (self.state.toplevels.items) |entry| entry.destroy();
-    self.state.toplevels.deinit(self.state.allocator);
+    self.state.deinitOwned();
     self.state.allocator.destroy(self.state);
     _ = c.wl_display_disconnect(self.display);
+}
+
+pub fn eventFd(self: *const Self) ?std.posix.fd_t {
+    const fd = c.wl_display_get_fd(self.display);
+    return if (fd >= 0) @intCast(fd) else null;
+}
+
+/// Consume compositor notifications after eventFd() becomes readable. The
+/// caller follows this by taking a fresh snapshot; listeners below only update
+/// the persistent protocol entries and mark the backend dirty.
+pub fn dispatchPending(self: *Self) void {
+    if (c.wl_display_dispatch_pending(self.display) < 0) {
+        std.log.err("WlrootsBackend: failed to dispatch window-list events", .{});
+        return;
+    }
+
+    // Manual/test-triggered refreshes can call this when no lifecycle event is
+    // waiting. Check readiness so draining backend state is always nonblocking.
+    const event_fd = self.eventFd() orelse return;
+    var fd = [_]std.posix.pollfd{.{
+        .fd = event_fd,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    _ = std.posix.poll(&fd, 0) catch return;
+    if (fd[0].revents & std.posix.POLL.IN != 0 and c.wl_display_dispatch(self.display) < 0) {
+        std.log.err("WlrootsBackend: failed to read window-list events", .{});
+    }
+    self.state.dirty = false;
+}
+
+pub fn hasPendingChanges(self: *const Self) bool {
+    return self.state.dirty;
 }
 
 pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
@@ -97,9 +245,14 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         list.deinit();
     }
 
-    for (self.state.toplevels.items, 0..) |entry, idx| {
+    for (self.state.toplevels.items) |entry| {
         if (entry.closed) continue;
 
+        const stable_id = if (entry.kde_uuid) |uuid|
+            try allocator.dupeZ(u8, uuid)
+        else
+            try std.fmt.allocPrintSentinel(allocator, "wlroots:{d}", .{entry.stable_id}, 0);
+        errdefer allocator.free(stable_id);
         const title = try allocator.dupeZ(u8, entry.title);
         errdefer allocator.free(title);
         const title_lower = try allocator.dupeZ(u8, entry.title);
@@ -112,13 +265,15 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
         for (app_id_lower) |*ch| ch.* = std.ascii.toLower(ch.*);
 
         try list.append(.{
-            .platform_handle = idx,
+            .stable_id = stable_id,
+            .platform_handle = @intCast(entry.stable_id),
             .title = title,
             .title_lower = title_lower,
             .app_id = app_id,
             .app_id_lower = app_id_lower,
             .icon = null,
-            .desktopNumber = null,
+            .desktopNumber = entry.desktop_number,
+            .can_close = entry.can_close,
             .allocator = allocator,
         });
     }
@@ -127,10 +282,7 @@ pub fn getWindowList(self: Self, allocator: std.mem.Allocator) !std.array_list.M
 }
 
 pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
-    const idx = dw.platform_handle;
-    if (idx >= self.state.toplevels.items.len) return;
-    const entry = self.state.toplevels.items[idx];
-    if (entry.closed) return;
+    const entry = self.findEntry(dw.stable_id) orelse return;
 
     if (entry.handle_wlr) |h| {
         if (self.state.seat) |seat| {
@@ -142,6 +294,34 @@ pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
         c.org_kde_plasma_window_set_state(h, ACTIVE, ACTIVE);
         _ = c.wl_display_flush(self.display);
     }
+}
+
+pub fn closeWindow(self: *Self, stable_id: []const u8) void {
+    const entry = self.findEntry(stable_id) orelse return;
+    if (!entry.can_close) return;
+
+    if (entry.handle_wlr) |h| {
+        c.zwlr_foreign_toplevel_handle_v1_close(h);
+    } else if (entry.handle_kde) |h| {
+        c.org_kde_plasma_window_close(h);
+    } else {
+        return;
+    }
+    _ = c.wl_display_flush(self.display);
+}
+
+fn findEntry(self: *Self, stable_id: []const u8) ?*ToplevelEntry {
+    for (self.state.toplevels.items) |entry| {
+        if (entry.closed) continue;
+        if (entry.kde_uuid) |uuid| {
+            if (std.mem.eql(u8, uuid, stable_id)) return entry;
+        } else {
+            var buf: [48]u8 = undefined;
+            const id = std.fmt.bufPrint(&buf, "wlroots:{d}", .{entry.stable_id}) catch continue;
+            if (std.mem.eql(u8, id, stable_id)) return entry;
+        }
+    }
+    return null;
 }
 
 // ─── Registry listener ────────────────────────────────────────────────────────
@@ -160,6 +340,17 @@ fn registryGlobal(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, inter
         const mgr: ?*c.org_kde_plasma_window_management = @ptrCast(c.wl_registry_bind(registry, name, &c.org_kde_plasma_window_management_interface, @min(version, 16)));
         state.plasma_window_mgr = mgr;
         if (mgr) |m| _ = c.org_kde_plasma_window_management_add_listener(m, &plasma_mgr_listener, state);
+    } else if (std.mem.eql(u8, iface, "org_kde_plasma_virtual_desktop_management")) {
+        const mgr: ?*c.org_kde_plasma_virtual_desktop_management = @ptrCast(c.wl_registry_bind(
+            registry,
+            name,
+            &c.org_kde_plasma_virtual_desktop_management_interface,
+            @min(version, 3),
+        ));
+        state.plasma_virtual_desktop_mgr = mgr;
+        if (mgr) |m| {
+            _ = c.org_kde_plasma_virtual_desktop_management_add_listener(m, &plasma_virtual_desktop_mgr_listener, state);
+        }
     }
 }
 
@@ -170,19 +361,212 @@ const registry_listener = c.wl_registry_listener{
     .global_remove = registryGlobalRemove,
 };
 
+// ─── KDE virtual desktop management listener ─────────────────────────────────
+
+fn virtualDesktopCreated(
+    data: ?*anyopaque,
+    mgr: ?*c.org_kde_plasma_virtual_desktop_management,
+    desktop_id: [*c]const u8,
+    position_raw: u32,
+) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    const id = std.mem.span(desktop_id);
+    const position: usize = @intCast(position_raw);
+
+    for (state.virtual_desktops.items) |*desktop| {
+        if (!std.mem.eql(u8, desktop.id, id)) continue;
+        desktop.position = position;
+        attachVirtualDesktopHandle(state, desktop, mgr, desktop_id);
+        return;
+    }
+
+    // During the initial advertisement every event carries its final absolute
+    // position. After the first done, a new desktop is an insertion and shifts
+    // the positions which follow it.
+    const owned = state.allocator.dupe(u8, id) catch return;
+    state.virtual_desktops.ensureUnusedCapacity(state.allocator, 1) catch {
+        state.allocator.free(owned);
+        return;
+    };
+    if (state.virtual_desktops_ready) {
+        for (state.virtual_desktops.items) |*desktop| {
+            if (desktop.position >= position) desktop.position += 1;
+        }
+    }
+    state.virtual_desktops.appendAssumeCapacity(.{
+        .id = owned,
+        .position = position,
+    });
+    attachVirtualDesktopHandle(
+        state,
+        &state.virtual_desktops.items[state.virtual_desktops.items.len - 1],
+        mgr,
+        desktop_id,
+    );
+}
+
+fn attachVirtualDesktopHandle(
+    state: *State,
+    desktop: *VirtualDesktopInfo,
+    mgr: ?*c.org_kde_plasma_virtual_desktop_management,
+    desktop_id: [*c]const u8,
+) void {
+    if (desktop.handle != null) return;
+    const manager = mgr orelse return;
+    const handle = c.org_kde_plasma_virtual_desktop_management_get_virtual_desktop(manager, desktop_id) orelse return;
+    desktop.handle = handle;
+    if (c.org_kde_plasma_virtual_desktop_add_listener(handle, &plasma_virtual_desktop_listener, state) < 0) {
+        c.org_kde_plasma_virtual_desktop_destroy(handle);
+        desktop.handle = null;
+    }
+}
+
+fn virtualDesktopRemoved(
+    data: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop_management,
+    desktop_id: [*c]const u8,
+) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    const id = std.mem.span(desktop_id);
+
+    var removed_position: ?usize = null;
+    for (state.virtual_desktops.items, 0..) |desktop, idx| {
+        if (!std.mem.eql(u8, desktop.id, id)) continue;
+        const removed = state.virtual_desktops.orderedRemove(idx);
+        removed_position = removed.position;
+        if (removed.handle) |handle| c.org_kde_plasma_virtual_desktop_destroy(handle);
+        state.allocator.free(removed.id);
+        break;
+    }
+    if (removed_position) |position| {
+        for (state.virtual_desktops.items) |*desktop| {
+            if (desktop.position > position) desktop.position -= 1;
+        }
+    }
+
+    // The protocol defines removal as dropping this association from every
+    // window. Do this even if the desktop id was not present in our map.
+    for (state.toplevels.items) |entry| {
+        for (entry.desktop_ids.items) |membership| {
+            if (!std.mem.eql(u8, membership, id)) continue;
+            entry.leaveDesktop(id);
+            break;
+        }
+    }
+}
+
+fn virtualDesktopManagerDone(
+    data: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop_management,
+) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    state.virtual_desktops_ready = true;
+    state.recomputeDesktopNumbers();
+    state.markDirty();
+}
+
+fn virtualDesktopRows(
+    _: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop_management,
+    _: u32,
+) callconv(.c) void {}
+
+const plasma_virtual_desktop_mgr_listener = c.org_kde_plasma_virtual_desktop_management_listener{
+    .desktop_created = virtualDesktopCreated,
+    .desktop_removed = virtualDesktopRemoved,
+    .done = virtualDesktopManagerDone,
+    .rows = virtualDesktopRows,
+};
+
+// ─── KDE virtual desktop object listener ─────────────────────────────────────
+
+fn virtualDesktopObjectId(
+    _: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop,
+    _: [*c]const u8,
+) callconv(.c) void {}
+
+fn virtualDesktopObjectName(
+    _: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop,
+    _: [*c]const u8,
+) callconv(.c) void {}
+
+fn virtualDesktopObjectState(
+    _: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop,
+) callconv(.c) void {}
+
+fn virtualDesktopObjectDone(
+    data: ?*anyopaque,
+    _: ?*c.org_kde_plasma_virtual_desktop,
+) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    state.recomputeDesktopNumbers();
+    state.markDirty();
+}
+
+fn virtualDesktopObjectRemoved(
+    data: ?*anyopaque,
+    desktop_handle: ?*c.org_kde_plasma_virtual_desktop,
+) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    const desktop = state.desktopByHandle(desktop_handle) orelse return;
+    if (desktop.handle) |handle| c.org_kde_plasma_virtual_desktop_destroy(handle);
+    desktop.handle = null;
+}
+
+fn virtualDesktopObjectPosition(
+    data: ?*anyopaque,
+    desktop_handle: ?*c.org_kde_plasma_virtual_desktop,
+    position: u32,
+) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data));
+    const desktop = state.desktopByHandle(desktop_handle) orelse return;
+    desktop.position = @intCast(position);
+}
+
+const plasma_virtual_desktop_listener = c.org_kde_plasma_virtual_desktop_listener{
+    .desktop_id = virtualDesktopObjectId,
+    .name = virtualDesktopObjectName,
+    .activated = virtualDesktopObjectState,
+    .deactivated = virtualDesktopObjectState,
+    .done = virtualDesktopObjectDone,
+    .removed = virtualDesktopObjectRemoved,
+    .position = virtualDesktopObjectPosition,
+};
+
 // ─── wlr-foreign-toplevel-manager listener ────────────────────────────────────
 
 fn ftmToplevel(data: ?*anyopaque, _: ?*c.zwlr_foreign_toplevel_manager_v1, handle: ?*c.zwlr_foreign_toplevel_handle_v1) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data));
     const h = handle orelse return;
 
-    const entry = state.allocator.create(ToplevelEntry) catch return;
+    const entry = state.allocator.create(ToplevelEntry) catch {
+        c.zwlr_foreign_toplevel_handle_v1_destroy(h);
+        return;
+    };
+    const title = state.allocator.dupe(u8, "") catch {
+        state.allocator.destroy(entry);
+        c.zwlr_foreign_toplevel_handle_v1_destroy(h);
+        return;
+    };
+    const app_id = state.allocator.dupe(u8, "") catch {
+        state.allocator.free(title);
+        state.allocator.destroy(entry);
+        c.zwlr_foreign_toplevel_handle_v1_destroy(h);
+        return;
+    };
     entry.* = .{
-        .title = state.allocator.dupe(u8, "") catch "",
-        .app_id = state.allocator.dupe(u8, "") catch "",
+        .title = title,
+        .app_id = app_id,
+        .stable_id = state.next_stable_id,
         .handle_wlr = h,
+        .state = state,
         .allocator = state.allocator,
     };
+    state.next_stable_id +%= 1;
+    if (state.next_stable_id == 0) state.next_stable_id = 1;
     state.toplevels.append(state.allocator, entry) catch {
         entry.destroy();
         return;
@@ -223,12 +607,19 @@ fn fthState(data: ?*anyopaque, _: ?*c.zwlr_foreign_toplevel_handle_v1, states: ?
     }
 }
 
-fn fthDone(_: ?*anyopaque, _: ?*c.zwlr_foreign_toplevel_handle_v1) callconv(.c) void {}
+fn fthDone(data: ?*anyopaque, _: ?*c.zwlr_foreign_toplevel_handle_v1) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.state.markDirty();
+}
 
 fn fthClosed(data: ?*anyopaque, _: ?*c.zwlr_foreign_toplevel_handle_v1) callconv(.c) void {
     const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    if (entry.handle_wlr) |handle| {
+        c.zwlr_foreign_toplevel_handle_v1_destroy(handle);
+    }
     entry.closed = true;
-    entry.handle_wlr = null; // ownership transferred to closed event; don't destroy
+    entry.handle_wlr = null;
+    entry.state.markDirty();
 }
 
 fn fthParent(_: ?*anyopaque, _: ?*c.zwlr_foreign_toplevel_handle_v1, _: ?*c.zwlr_foreign_toplevel_handle_v1) callconv(.c) void {}
@@ -255,18 +646,44 @@ fn plasmaWindowWithUuid(data: ?*anyopaque, mgr: ?*c.org_kde_plasma_window_manage
     const state: *State = @ptrCast(@alignCast(data));
     const m = mgr orelse return;
     const handle = c.org_kde_plasma_window_management_get_window_by_uuid(m, uuid);
-    plasmaMakeEntry(state, handle);
+    plasmaMakeEntry(state, handle, std.mem.span(uuid));
 }
 
-fn plasmaMakeEntry(state: *State, handle: ?*c.org_kde_plasma_window) void {
+fn plasmaMakeEntry(state: *State, handle: ?*c.org_kde_plasma_window, uuid: []const u8) void {
     const h = handle orelse return;
-    const entry = state.allocator.create(ToplevelEntry) catch return;
+    const entry = state.allocator.create(ToplevelEntry) catch {
+        c.org_kde_plasma_window_destroy(h);
+        return;
+    };
+    const title = state.allocator.dupe(u8, "") catch {
+        state.allocator.destroy(entry);
+        c.org_kde_plasma_window_destroy(h);
+        return;
+    };
+    const app_id = state.allocator.dupe(u8, "") catch {
+        state.allocator.free(title);
+        state.allocator.destroy(entry);
+        c.org_kde_plasma_window_destroy(h);
+        return;
+    };
+    const kde_uuid = state.allocator.dupeZ(u8, uuid) catch {
+        state.allocator.free(app_id);
+        state.allocator.free(title);
+        state.allocator.destroy(entry);
+        c.org_kde_plasma_window_destroy(h);
+        return;
+    };
     entry.* = .{
-        .title = state.allocator.dupe(u8, "") catch "",
-        .app_id = state.allocator.dupe(u8, "") catch "",
+        .title = title,
+        .app_id = app_id,
+        .stable_id = state.next_stable_id,
+        .kde_uuid = kde_uuid,
         .handle_kde = h,
+        .state = state,
         .allocator = state.allocator,
     };
+    state.next_stable_id +%= 1;
+    if (state.next_stable_id == 0) state.next_stable_id = 1;
     state.toplevels.append(state.allocator, entry) catch {
         entry.destroy();
         return;
@@ -293,52 +710,86 @@ const plasma_mgr_listener = c.org_kde_plasma_window_management_listener{
 fn pwTitleChanged(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, title: [*c]const u8) callconv(.c) void {
     const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
     entry.setTitle(title);
+    entry.state.markDirty();
 }
 
 fn pwAppIdChanged(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, app_id: [*c]const u8) callconv(.c) void {
     const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
     entry.setAppId(app_id);
+    entry.state.markDirty();
 }
 
 fn pwStateChanged(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, flags: u32) callconv(.c) void {
     const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
     entry.minimized = (flags & 0x2) != 0; // STATE_MINIMIZED = 0x2
+    entry.can_close = (flags & 0x100) != 0; // STATE_CLOSEABLE = 0x100
+    entry.state.markDirty();
 }
 
 fn pwUnmapped(data: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {
     const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    if (entry.handle_kde) |handle| {
+        c.org_kde_plasma_window_destroy(handle);
+    }
     entry.closed = true;
     entry.handle_kde = null;
+    entry.state.markDirty();
 }
 
-fn pwNoop0(_: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {}
+fn pwInitialState(data: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.state.markDirty();
+}
 fn pwNoop1u(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: u32) callconv(.c) void {}
-fn pwNoop1i(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: i32) callconv(.c) void {}
-fn pwNoop2(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: [*c]const u8) callconv(.c) void {}
+fn pwVirtualDesktopChanged(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, number: i32) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.legacy_desktop_number = if (number >= 0) @intCast(number) else null;
+    entry.recomputeDesktopNumber();
+    entry.state.markDirty();
+}
+fn pwVirtualDesktopEntered(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, desktop_id: [*c]const u8) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.enterDesktop(std.mem.span(desktop_id));
+    entry.recomputeDesktopNumber();
+    entry.state.markDirty();
+}
+fn pwVirtualDesktopLeft(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, desktop_id: [*c]const u8) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.leaveDesktop(std.mem.span(desktop_id));
+    entry.recomputeDesktopNumber();
+    entry.state.markDirty();
+}
+fn pwChanged2(data: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: [*c]const u8) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.state.markDirty();
+}
 fn pwParentWindow(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: ?*c.org_kde_plasma_window) callconv(.c) void {}
 fn pwGeometry(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: i32, _: i32, _: u32, _: u32) callconv(.c) void {}
 // pid_changed listener uses pwNoop1u above
 fn pwAppMenu(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: [*c]const u8, _: [*c]const u8) callconv(.c) void {}
-fn pwIconChanged(_: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {}
+fn pwIconChanged(data: ?*anyopaque, _: ?*c.org_kde_plasma_window) callconv(.c) void {
+    const entry: *ToplevelEntry = @ptrCast(@alignCast(data));
+    entry.state.markDirty();
+}
 fn pwClientGeometry(_: ?*anyopaque, _: ?*c.org_kde_plasma_window, _: i32, _: i32, _: u32, _: u32) callconv(.c) void {}
 
 const plasma_window_listener = c.org_kde_plasma_window_listener{
     .title_changed = pwTitleChanged,
     .app_id_changed = pwAppIdChanged,
     .state_changed = pwStateChanged,
-    .virtual_desktop_changed = pwNoop1i,
-    .themed_icon_name_changed = pwNoop2,
+    .virtual_desktop_changed = pwVirtualDesktopChanged,
+    .themed_icon_name_changed = pwChanged2,
     .unmapped = pwUnmapped,
-    .initial_state = pwNoop0,
+    .initial_state = pwInitialState,
     .parent_window = pwParentWindow,
     .geometry = pwGeometry,
     .icon_changed = pwIconChanged,
     .pid_changed = pwNoop1u,
-    .virtual_desktop_entered = pwNoop2,
-    .virtual_desktop_left = pwNoop2,
+    .virtual_desktop_entered = pwVirtualDesktopEntered,
+    .virtual_desktop_left = pwVirtualDesktopLeft,
     .application_menu = pwAppMenu,
-    .activity_entered = pwNoop2,
-    .activity_left = pwNoop2,
-    .resource_name_changed = pwNoop2,
+    .activity_entered = pwChanged2,
+    .activity_left = pwChanged2,
+    .resource_name_changed = pwChanged2,
     .client_geometry = pwClientGeometry,
 };

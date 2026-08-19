@@ -38,6 +38,22 @@ pub fn loadFor(self: *Self, pid: i32) ?common.RgbaIcon {
     return dupeIcon(self.allocator, resolved);
 }
 
+pub fn pruneExcept(self: *Self, live_pids: *const std.AutoHashMap(i32, void)) void {
+    var stale = std.ArrayListUnmanaged(i32){};
+    defer stale.deinit(self.allocator);
+
+    var it = self.cache.keyIterator();
+    while (it.next()) |pid| {
+        if (!live_pids.contains(pid.*)) {
+            stale.append(self.allocator, pid.*) catch return;
+        }
+    }
+    for (stale.items) |pid| {
+        const removed = self.cache.fetchRemove(pid) orelse continue;
+        if (removed.value) |icon| icon.destroy();
+    }
+}
+
 fn resolve(self: *Self, pid: i32) ?common.RgbaIcon {
     var raw: [*]u8 = undefined;
     var w: u32 = 0;

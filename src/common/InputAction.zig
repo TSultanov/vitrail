@@ -21,6 +21,11 @@ pub const KeyAction = union(enum) {
 pub const MouseAction = union(enum) {
     move: struct { x: i32, y: i32 },
     click: struct { x: i32, y: i32 },
+    context: struct { x: i32, y: i32 },
+};
+
+pub const ContextCommand = enum {
+    close_window,
 };
 
 pub const KeyCallbacks = struct {
@@ -72,6 +77,12 @@ pub fn dispatchMouse(grid: *Grid, hooks: Hooks, action: MouseAction) void {
             } else if (!grid.isInsideSearchBox(m.x, m.y)) {
                 hooks.hide(hooks.ctx);
             }
+        },
+        // Context-menu presentation is platform-specific. MainWindow handles
+        // this action after selecting/repainting so native menus appear over
+        // the updated selection.
+        .context => |m| {
+            _ = grid.selectAt(m.x, m.y);
         },
     }
 }

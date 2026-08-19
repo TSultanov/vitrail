@@ -15,10 +15,13 @@ pub const Driver = struct {
         post_char: *const fn (ctx: *anyopaque, codepoint: u21) anyerror!void,
         post_mouse_move: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
         post_mouse_click: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
+        post_context_close: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
+        close_external: *const fn (ctx: *anyopaque, app_id: []const u8) anyerror!void,
         selected_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
         visible_count: *const fn (ctx: *anyopaque) usize,
         search_text: *const fn (ctx: *anyopaque) []const u8,
         last_activated_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
+        last_closed_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
         window_visible: *const fn (ctx: *anyopaque) bool,
         tile_center: *const fn (ctx: *anyopaque, app_id: []const u8) ?Point,
         snapshot: *const fn (ctx: *anyopaque, name: []const u8) anyerror!void,
@@ -37,6 +40,12 @@ pub const Driver = struct {
     fn postMouseClick(self: *Driver, x: i32, y: i32) !void {
         return self.vt.post_mouse_click(self.ctx, x, y);
     }
+    fn postContextClose(self: *Driver, x: i32, y: i32) !void {
+        return self.vt.post_context_close(self.ctx, x, y);
+    }
+    fn closeExternal(self: *Driver, app_id: []const u8) !void {
+        return self.vt.close_external(self.ctx, app_id);
+    }
     fn selectedAppId(self: *Driver) ?[]const u8 {
         return self.vt.selected_app_id(self.ctx);
     }
@@ -48,6 +57,9 @@ pub const Driver = struct {
     }
     fn lastActivatedAppId(self: *Driver) ?[]const u8 {
         return self.vt.last_activated_app_id(self.ctx);
+    }
+    fn lastClosedAppId(self: *Driver) ?[]const u8 {
+        return self.vt.last_closed_app_id(self.ctx);
     }
     fn windowVisible(self: *Driver) bool {
         return self.vt.window_visible(self.ctx);
@@ -77,6 +89,10 @@ pub const all = [_]Scenario{
     .{ .name = "06-mouse-move-changes-selection", .run = scenario6 },
     .{ .name = "07-mouse-click-activates", .run = scenario7 },
     .{ .name = "08-click-outside-closes", .run = scenario8 },
+    .{ .name = "09-context-menu-closes-target", .run = scenario9 },
+    .{ .name = "10-context-menu-disabled-for-uncloseable-window", .run = scenario10 },
+    .{ .name = "11-external-close-refreshes-grid", .run = scenario11 },
+    .{ .name = "12-empty-refresh-dismisses-grid", .run = scenario12 },
 };
 
 /// Returns the number of failed scenarios.
@@ -190,4 +206,73 @@ fn scenario8(d: *Driver) !void {
     try expect(d.windowVisible());
     try d.postMouseClick(5, 5); // top-left corner — empty
     try expect(!d.windowVisible());
+}
+
+// 9. Choosing Close window from a tile's context menu closes that exact
+// window, refreshes the grid, and leaves the overlay open.
+fn scenario9(d: *Driver) !void {
+    const target = d.tileCenter("slack") orelse return error.NoTile;
+    try d.postContextClose(target.x, target.y);
+
+    const closed = d.lastClosedAppId() orelse return error.NoClose;
+    try expectStrEq("slack", closed);
+    try expect(d.lastActivatedAppId() == null);
+    try expect(d.windowVisible());
+    try expect(d.visibleCount() == 7);
+    try expect(d.tileCenter("slack") == null);
+}
+
+// 10. The context-menu close command is disabled for an uncloseable window.
+fn scenario10(d: *Driver) !void {
+    const target = d.tileCenter("obsidian") orelse return error.NoTile;
+    const count_before = d.visibleCount();
+    try d.postContextClose(target.x, target.y);
+
+    try expect(d.lastClosedAppId() == null);
+    try expect(d.windowVisible());
+    try expect(d.visibleCount() == count_before);
+    try expect(d.tileCenter("obsidian") != null);
+}
+
+// 11. A window which closes without a Vitrail command follows the same
+// generalized reconciliation path and disappears while the overlay remains.
+fn scenario11(d: *Driver) !void {
+    const target = d.tileCenter("spotify") orelse return error.NoTile;
+    const survivor_before = d.tileCenter("thunderbird") orelse return error.NoTile;
+    try d.postMouseMove(target.x, target.y);
+    try expectStrEq("spotify", d.selectedAppId() orelse return error.LostSelection);
+
+    try d.closeExternal("spotify");
+
+    try expect(d.lastClosedAppId() == null);
+    try expect(d.windowVisible());
+    try expect(d.visibleCount() == 7);
+    try expect(d.tileCenter("spotify") == null);
+    const survivor_after = d.tileCenter("thunderbird") orelse return error.NoTile;
+    try expect(survivor_before.x == survivor_after.x and survivor_before.y == survivor_after.y);
+    const replacement = d.selectedAppId() orelse return error.LostSelection;
+    try expectStrNeq("spotify", replacement);
+}
+
+// 12. When the last external window disappears, the normal refresh path
+// dismisses the now-empty overlay.
+fn scenario12(d: *Driver) !void {
+    const app_ids = [_][]const u8{
+        "code",
+        "firefox",
+        "terminal",
+        "slack",
+        "spotify",
+        "thunderbird",
+        "obsidian",
+        "figma",
+    };
+
+    for (app_ids, 0..) |app_id, idx| {
+        try d.closeExternal(app_id);
+        if (idx + 1 < app_ids.len) try expect(d.windowVisible());
+    }
+
+    try expect(!d.windowVisible());
+    try expect(d.visibleCount() == 0);
 }

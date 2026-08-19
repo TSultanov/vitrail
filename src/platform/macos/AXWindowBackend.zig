@@ -56,7 +56,11 @@ pub fn deinit(self: *Self) void {
 }
 
 fn releaseHandles(self: *Self) void {
-    for (self.handles.items) |h| {
+    releaseHandleSlice(self.handles.items);
+}
+
+fn releaseHandleSlice(handles: []const PlatformHandle) void {
+    for (handles) |h| {
         if (h.ax_window) |w| cf.c.CFRelease(w);
     }
 }
@@ -67,8 +71,15 @@ pub fn pidFor(self: *const Self, idx: usize) ?i32 {
 }
 
 pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
-    self.releaseHandles();
-    self.handles.clearRetainingCapacity();
+    // Enumeration is transactional. Keep the resolver table for the currently
+    // displayed snapshot alive until a complete replacement snapshot exists.
+    // This keeps activation/context-menu commands valid if AX enumeration
+    // fails midway.
+    var next_handles = std.ArrayListUnmanaged(PlatformHandle){};
+    errdefer {
+        releaseHandleSlice(next_handles.items);
+        next_handles.deinit(self.allocator);
+    }
 
     var list = std.array_list.Managed(common.DesktopWindow).init(allocator);
     errdefer {
@@ -81,8 +92,16 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
             ax_warn_logged = true;
             std.log.warn("AX permission not granted; window list will be empty until granted via System Settings → Privacy & Security → Accessibility.", .{});
         }
+        self.commitHandles(&next_handles);
         return list;
     }
+
+    // The initial permission prompt is asynchronous. If the user granted
+    // Accessibility after launch, initialize the observer cache on the first
+    // successful enumeration instead of requiring an application restart.
+    ax_cache.init(self.allocator) catch |err| {
+        std.log.warn("AX observer cache initialization failed: {s}", .{@errorName(err)});
+    };
 
     const cid = cgs.CGSMainConnectionID();
 
@@ -148,15 +167,25 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
     defer cf.c.CFRelease(k_subrole);
     const k_size = cfStr("AXSize") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(k_size);
+    const k_close_button = cfStr("AXCloseButton") orelse return error.CFStringCreate;
+    defer cf.c.CFRelease(k_close_button);
+    const k_enabled = cfStr("AXEnabled") orelse return error.CFStringCreate;
+    defer cf.c.CFRelease(k_enabled);
     const v_standard = cfStr("AXStandardWindow") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(v_standard);
     const v_dialog = cfStr("AXDialog") orelse return error.CFStringCreate;
     defer cf.c.CFRelease(v_dialog);
 
     var pid_count: c_int = 0;
-    const pids_ptr = bridge.vt_running_pids(&pid_count) orelse return list;
+    const pids_ptr = bridge.vt_running_pids(&pid_count) orelse {
+        self.commitHandles(&next_handles);
+        return list;
+    };
     defer bridge.vt_free(@ptrCast(pids_ptr));
-    if (pid_count <= 0) return list;
+    if (pid_count <= 0) {
+        self.commitHandles(&next_handles);
+        return list;
+    }
     const pids = pids_ptr[0..@intCast(pid_count)];
 
     var sort_infos = std.ArrayListUnmanaged(SortInfo){};
@@ -169,16 +198,20 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         .list = &list,
         .sort_infos = &sort_infos,
         .allocator = allocator,
+        .handles_allocator = self.allocator,
         .cid = cid,
         .space_index = &space_index,
         .wid_zorder = &wid_zorder,
         .emitted_wids = &emitted_wids,
+        .handles = &next_handles,
         .pid = 0,
         .app_name = "",
         .app_ordinal = 0,
         .k_subrole = k_subrole,
         .k_size = k_size,
         .k_title = k_title,
+        .k_close_button = k_close_button,
+        .k_enabled = k_enabled,
         .v_standard = v_standard,
         .v_dialog = v_dialog,
     };
@@ -256,7 +289,16 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         .keys = sort_infos.items,
     });
 
+    self.commitHandles(&next_handles);
+
     return list;
+}
+
+fn commitHandles(self: *Self, next_handles: *std.ArrayListUnmanaged(PlatformHandle)) void {
+    std.mem.swap(std.ArrayListUnmanaged(PlatformHandle), &self.handles, next_handles);
+    releaseHandleSlice(next_handles.items);
+    next_handles.deinit(self.allocator);
+    next_handles.* = .{};
 }
 
 const SortCtx = struct {
@@ -279,16 +321,20 @@ const EmitCtx = struct {
     list: *std.array_list.Managed(common.DesktopWindow),
     sort_infos: *std.ArrayListUnmanaged(SortInfo),
     allocator: std.mem.Allocator,
+    handles_allocator: std.mem.Allocator,
     cid: cgs.ConnectionID,
     space_index: *std.AutoHashMap(i64, usize),
     wid_zorder: *std.AutoHashMap(u32, u32),
     emitted_wids: *std.AutoHashMap(u32, void),
+    handles: *std.ArrayListUnmanaged(PlatformHandle),
     pid: i32,
     app_name: []const u8,
     app_ordinal: i64,
     k_subrole: cf.c.CFStringRef,
     k_size: cf.c.CFStringRef,
     k_title: cf.c.CFStringRef,
+    k_close_button: cf.c.CFStringRef,
+    k_enabled: cf.c.CFStringRef,
     v_standard: cf.c.CFStringRef,
     v_dialog: cf.c.CFStringRef,
 };
@@ -297,7 +343,7 @@ const EmitCtx = struct {
 /// retains the element, registers a handle, and appends a DesktopWindow.
 /// Returns true on emit, false on filter rejection. Errors only on OOM /
 /// allocator failure.
-fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
+fn tryEmit(_: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     // Cheap windowness + dedupe gate before the more expensive subrole
     // copy. Cache walk has already filtered by _AXUIElementGetWindow, so
     // this re-check is redundant for that path — but it's still cheap and
@@ -344,6 +390,11 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
         .idx => |i| i,
     };
 
+    // Phase 0/1 can surface a window whose high AX element ID was missed by
+    // the bounded startup scan. Adopt it into the observer cache so later
+    // self-close/title/desktop changes still invalidate the live grid.
+    ax_cache.observeWindow(ctx.pid, win_elem);
+
     const title_z: [:0]u8 = blk: {
         var title_ref: cf.c.CFTypeRef = null;
         if (ax.AXUIElementCopyAttributeValue(win_elem, ctx.k_title, &title_ref) == ax.kAXErrorSuccess and title_ref != null) {
@@ -368,9 +419,17 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     errdefer ctx.allocator.free(app_id_lower);
     for (app_id_z, 0..) |ch, i| app_id_lower[i] = std.ascii.toLower(ch);
 
+    const stable_id = try std.fmt.allocPrintSentinel(
+        ctx.allocator,
+        "mac-window:{d}:{d}",
+        .{ ctx.pid, wid },
+        0,
+    );
+    errdefer ctx.allocator.free(stable_id);
+
     _ = cf.c.CFRetain(win_elem);
-    const idx = self.handles.items.len;
-    self.handles.append(self.allocator, .{
+    const idx = ctx.handles.items.len;
+    ctx.handles.append(ctx.handles_allocator, .{
         .pid = ctx.pid,
         .wid = wid,
         .ax_window = win_elem,
@@ -379,7 +438,18 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
         return e;
     };
 
+    // Make the descriptor append the final fallible ownership transfer. If
+    // sort/map growth fails first, the local errdefers still own every string;
+    // once append succeeds this function cannot fail and the list owns them.
+    const insertion: u32 = @intCast(ctx.list.items.len);
+    const sort_info: SortInfo = if (ctx.wid_zorder.get(wid)) |z|
+        .{ .group = 0, .rank = @intCast(z), .insertion = insertion }
+    else
+        .{ .group = 1, .rank = -ctx.app_ordinal, .insertion = insertion };
+    try ctx.sort_infos.append(ctx.allocator, sort_info);
+    try ctx.emitted_wids.put(wid, {});
     try ctx.list.append(.{
+        .stable_id = stable_id,
         .platform_handle = idx,
         .title = title_z,
         .title_lower = title_lower,
@@ -387,16 +457,9 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
         .app_id_lower = app_id_lower,
         .icon = null,
         .desktopNumber = desktop_number,
+        .can_close = hasUsableCloseButton(win_elem, ctx.k_close_button, ctx.k_enabled),
         .allocator = ctx.allocator,
     });
-
-    const insertion: u32 = @intCast(ctx.list.items.len - 1);
-    const sort_info: SortInfo = if (ctx.wid_zorder.get(wid)) |z|
-        .{ .group = 0, .rank = @intCast(z), .insertion = insertion }
-    else
-        .{ .group = 1, .rank = -ctx.app_ordinal, .insertion = insertion };
-    try ctx.sort_infos.append(ctx.allocator, sort_info);
-    try ctx.emitted_wids.put(wid, {});
     return true;
 }
 
@@ -404,7 +467,7 @@ fn tryEmit(self: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
 /// windows. Activation routes through `vt_activate_pid`, which lets the
 /// OS deliver `applicationShouldHandleReopen:hasVisibleWindows:NO` so
 /// the target app reopens its main window per its own conventions.
-fn emitAppPlaceholder(self: *Self, ctx: *EmitCtx) !void {
+fn emitAppPlaceholder(_: *Self, ctx: *EmitCtx) !void {
     const title_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
     errdefer ctx.allocator.free(title_z);
 
@@ -419,14 +482,29 @@ fn emitAppPlaceholder(self: *Self, ctx: *EmitCtx) !void {
     errdefer ctx.allocator.free(app_id_lower);
     for (app_id_z, 0..) |ch, i| app_id_lower[i] = std.ascii.toLower(ch);
 
-    const idx = self.handles.items.len;
-    try self.handles.append(self.allocator, .{
+    const stable_id = try std.fmt.allocPrintSentinel(
+        ctx.allocator,
+        "mac-app:{d}",
+        .{ctx.pid},
+        0,
+    );
+    errdefer ctx.allocator.free(stable_id);
+
+    const idx = ctx.handles.items.len;
+    try ctx.handles.append(ctx.handles_allocator, .{
         .pid = ctx.pid,
         .wid = 0,
         .ax_window = null,
     });
 
+    const insertion: u32 = @intCast(ctx.list.items.len);
+    try ctx.sort_infos.append(ctx.allocator, .{
+        .group = 1,
+        .rank = -ctx.app_ordinal,
+        .insertion = insertion,
+    });
     try ctx.list.append(.{
+        .stable_id = stable_id,
         .platform_handle = idx,
         .title = title_z,
         .title_lower = title_lower,
@@ -434,21 +512,16 @@ fn emitAppPlaceholder(self: *Self, ctx: *EmitCtx) !void {
         .app_id_lower = app_id_lower,
         .icon = null,
         .desktopNumber = null,
+        .can_close = false,
         .allocator = ctx.allocator,
-    });
-
-    const insertion: u32 = @intCast(ctx.list.items.len - 1);
-    try ctx.sort_infos.append(ctx.allocator, .{
-        .group = 1,
-        .rank = -ctx.app_ordinal,
-        .insertion = insertion,
     });
 }
 
 pub fn activate(self: *Self, dw: common.DesktopWindow) void {
-    if (dw.platform_handle >= self.handles.items.len) return;
-    const h = self.handles.items[dw.platform_handle];
+    const h = self.resolve(dw) orelse return;
     if (h.ax_window) |w| {
+        var current_wid: u32 = 0;
+        if (ax._AXUIElementGetWindow(w, &current_wid) != ax.kAXErrorSuccess or current_wid != h.wid) return;
         if (cfStr("AXMain")) |k_main| {
             defer cf.c.CFRelease(k_main);
             _ = ax.AXUIElementSetAttributeValue(w, k_main, cf.c.kCFBooleanTrue);
@@ -465,6 +538,82 @@ pub fn activate(self: *Self, dw: common.DesktopWindow) void {
         // through Launch Services. vt_reopen_pid does that.
         _ = bridge.vt_reopen_pid(h.pid);
     }
+}
+
+/// Gracefully close the exact current window identified by the descriptor.
+/// The stable ID is re-resolved against the atomically committed handle table
+/// and the AX element's current CGWindowID is validated before pressing its
+/// standard close button.
+pub fn close(self: *Self, dw: common.DesktopWindow) void {
+    const h = self.resolve(dw) orelse return;
+    const window = h.ax_window orelse return;
+
+    var current_wid: u32 = 0;
+    if (ax._AXUIElementGetWindow(window, &current_wid) != ax.kAXErrorSuccess or current_wid != h.wid) return;
+
+    const k_close_button = cfStr("AXCloseButton") orelse return;
+    defer cf.c.CFRelease(k_close_button);
+    const k_enabled = cfStr("AXEnabled") orelse return;
+    defer cf.c.CFRelease(k_enabled);
+    const close_button = copyUsableCloseButton(window, k_close_button, k_enabled) orelse return;
+    defer cf.c.CFRelease(close_button);
+
+    const k_press = cfStr("AXPress") orelse return;
+    defer cf.c.CFRelease(k_press);
+    _ = ax.AXUIElementPerformAction(close_button, k_press);
+}
+
+fn resolve(self: *const Self, dw: common.DesktopWindow) ?PlatformHandle {
+    if (dw.platform_handle < self.handles.items.len) {
+        const candidate = self.handles.items[dw.platform_handle];
+        if (handleMatchesStableId(candidate, dw.stable_id)) return candidate;
+    }
+    for (self.handles.items) |candidate| {
+        if (handleMatchesStableId(candidate, dw.stable_id)) return candidate;
+    }
+    return null;
+}
+
+fn handleMatchesStableId(handle: PlatformHandle, stable_id: []const u8) bool {
+    var buf: [96]u8 = undefined;
+    const expected = if (handle.wid == 0)
+        std.fmt.bufPrint(&buf, "mac-app:{d}", .{handle.pid}) catch return false
+    else
+        std.fmt.bufPrint(&buf, "mac-window:{d}:{d}", .{ handle.pid, handle.wid }) catch return false;
+    return std.mem.eql(u8, expected, stable_id);
+}
+
+fn hasUsableCloseButton(
+    window: ax.UIElementRef,
+    k_close_button: cf.c.CFStringRef,
+    k_enabled: cf.c.CFStringRef,
+) bool {
+    const button = copyUsableCloseButton(window, k_close_button, k_enabled) orelse return false;
+    cf.c.CFRelease(button);
+    return true;
+}
+
+fn copyUsableCloseButton(
+    window: ax.UIElementRef,
+    k_close_button: cf.c.CFStringRef,
+    k_enabled: cf.c.CFStringRef,
+) ax.UIElementRef {
+    var button_ref: cf.c.CFTypeRef = null;
+    if (ax.AXUIElementCopyAttributeValue(window, k_close_button, &button_ref) != ax.kAXErrorSuccess or button_ref == null) {
+        return null;
+    }
+    const button: ax.UIElementRef = @ptrCast(@constCast(button_ref));
+
+    var enabled_ref: cf.c.CFTypeRef = null;
+    if (ax.AXUIElementCopyAttributeValue(button, k_enabled, &enabled_ref) == ax.kAXErrorSuccess and enabled_ref != null) {
+        defer cf.c.CFRelease(enabled_ref);
+        const enabled: cf.c.CFBooleanRef = @ptrCast(@constCast(enabled_ref));
+        if (cf.c.CFBooleanGetValue(enabled) == 0) {
+            cf.c.CFRelease(button_ref);
+            return null;
+        }
+    }
+    return button;
 }
 
 fn cfStr(s: [*:0]const u8) ?cf.c.CFStringRef {
