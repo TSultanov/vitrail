@@ -364,32 +364,37 @@ fn tryEmit(_: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     if (ax.AXValueGetValue(@ptrCast(@constCast(size_ref)), ax.kAXValueTypeCGSize, &size) == 0) return false;
     if (size.width < 100 or size.height < 50) return false;
 
-    // Resolve Space membership. Done before the title/app_id allocations
-    // so the sc==0 stale-wid filter doesn't leak. sc==0 → no Space
-    // binding (closed terminal sessions, etc. — drop). sc==1 → single
-    // known Space; sc>1 → sticky/multi-Space (desktop_number = null).
-    const space_lookup: union(enum) { drop, idx: ?usize } = blk: {
+    // Resolve Space membership before allocating. sc==0 → no Space binding;
+    // sc==1 → that Space; sc>1 → sticky (desktop_number = null).
+    // sc==0 is unreliable for full-screen windows (CGSCopySpacesForWindows can
+    // transiently return empty), so only drop when the window is off-screen.
+    const space_lookup: union(enum) { drop, keep_unknown, idx: ?usize } = blk: {
         var wid_val: c_int = @intCast(wid);
-        const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk .{ .idx = null };
+        const wid_cfnum = cf.c.CFNumberCreate(null, cf.c.kCFNumberIntType, &wid_val) orelse break :blk .keep_unknown;
         defer cf.c.CFRelease(wid_cfnum);
         var wid_ptrs = [_]?*const anyopaque{wid_cfnum};
-        const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk .{ .idx = null };
+        const wids_arr = cf.c.CFArrayCreate(null, &wid_ptrs, 1, &cf.c.kCFTypeArrayCallBacks) orelse break :blk .keep_unknown;
         defer cf.c.CFRelease(wids_arr);
-        const spaces_arr = cgs.CGSCopySpacesForWindows(ctx.cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk .{ .idx = null };
+        const spaces_arr = cgs.CGSCopySpacesForWindows(ctx.cid, cgs.SPACE_MASK_ALL, wids_arr) orelse break :blk .keep_unknown;
         defer cf.c.CFRelease(spaces_arr);
         const sc = cg.CFArrayGetCount(@ptrCast(spaces_arr));
-        if (sc == 0) break :blk .drop;
-        if (sc != 1) break :blk .{ .idx = null };
-        const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :blk .{ .idx = null };
-        const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
-        const sid = cf.cfNumberToI64(sn) orelse break :blk .{ .idx = null };
-        break :blk .{ .idx = ctx.space_index.get(sid) };
+        const space_id: ?i64 = if (sc == 1) sidblk: {
+            const sptr = cg.CFArrayGetValueAtIndex(@ptrCast(spaces_arr), 0) orelse break :sidblk null;
+            const sn: cf.c.CFNumberRef = @ptrCast(@constCast(sptr));
+            break :sidblk cf.cfNumberToI64(sn);
+        } else null;
+        const verdict = classifySpaceBinding(sc, space_id, ctx.wid_zorder.contains(wid));
+        switch (verdict) {
+            .drop => break :blk .drop,
+            .keep_unknown => break :blk .keep_unknown,
+            .single_space => |sid| break :blk .{ .idx = ctx.space_index.get(sid) },
+        }
     };
     const desktop_number: ?usize = switch (space_lookup) {
         .drop => return false,
+        .keep_unknown => null,
         .idx => |i| i,
     };
-
     // Phase 0/1 can surface a window whose high AX element ID was missed by
     // the bounded startup scan. Adopt it into the observer cache so later
     // self-close/title/desktop changes still invalidate the live grid.
@@ -636,4 +641,45 @@ fn matchesAnyString(
         if (cf.c.CFStringCompare(s, c, 0) == 0) return true;
     }
     return false;
+}
+
+/// How a window's Space binding decides whether to keep it. sc==0 (no Space)
+/// is only treated as "stale, closed" when the window is off-screen; full-screen
+/// windows can transiently report zero Spaces while still on-screen, and must
+/// not be dropped or the switcher shows them intermittently.
+const SpaceBindingVerdict = union(enum) {
+    drop,
+    keep_unknown,
+    single_space: i64,
+};
+
+fn classifySpaceBinding(sc: cg.CFIndex, space_id: ?i64, on_screen: bool) SpaceBindingVerdict {
+    if (sc == 0) {
+        if (on_screen) return .keep_unknown;
+        return .drop;
+    }
+    if (sc != 1) return .keep_unknown;
+    return .{ .single_space = space_id orelse return .keep_unknown };
+}
+
+test "classifySpaceBinding keeps on-screen windows with an empty Space binding" {
+    // Full-screen windows can transiently report zero Spaces while on-screen;
+    // dropping them made only one of several same-named full-screen windows show.
+    const verdict = classifySpaceBinding(0, null, true);
+    try std.testing.expectEqual(SpaceBindingVerdict.keep_unknown, verdict);
+}
+
+test "classifySpaceBinding drops off-screen windows with no Space binding" {
+    const verdict = classifySpaceBinding(0, null, false);
+    try std.testing.expectEqual(SpaceBindingVerdict.drop, verdict);
+}
+
+test "classifySpaceBinding resolves a single Space binding" {
+    const verdict = classifySpaceBinding(1, 206, false);
+    try std.testing.expectEqual(SpaceBindingVerdict{ .single_space = 206 }, verdict);
+}
+
+test "classifySpaceBinding keeps sticky multi-Space windows with unknown desktop" {
+    const verdict = classifySpaceBinding(3, null, false);
+    try std.testing.expectEqual(SpaceBindingVerdict.keep_unknown, verdict);
 }
