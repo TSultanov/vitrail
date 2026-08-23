@@ -268,7 +268,7 @@ const info_plist =
     \\    <key>CFBundleExecutable</key>
     \\    <string>vitrail</string>
     \\    <key>CFBundleIdentifier</key>
-    \\    <string>org.vitrail</string>
+    \\    <string>com.github.TSultanov.vitrail</string>
     \\    <key>CFBundleInfoDictionaryVersion</key>
     \\    <string>6.0</string>
     \\    <key>CFBundleName</key>

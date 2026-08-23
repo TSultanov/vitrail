@@ -30,6 +30,7 @@ pub const Callbacks = struct {
     closeWindow: *const fn (main_window: *Self, stable_id: []const u8) anyerror!void,
     quitApplication: *const fn (main_window: *Self, stable_id: []const u8) anyerror!void,
     refreshWindows: *const fn (main_window: *Self) anyerror!void,
+    retryShow: *const fn (main_window: *Self, at_cursor: bool) anyerror!void,
     hide: *const fn (main_window: *Self) anyerror!void,
     openSettings: *const fn (main_window: *Self) anyerror!void,
 };

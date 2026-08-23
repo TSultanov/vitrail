@@ -2,6 +2,7 @@
 // keyboard/mouse translation. Drives the shared Grid + Renderer.
 
 const std = @import("std");
+const build_options = @import("build_options");
 const common = @import("../../common/DesktopWindow.zig");
 
 const ax = @import("ax.zig");
@@ -30,9 +31,18 @@ pub const Callbacks = struct {
     closeWindow: *const fn (*Self, stable_id: []const u8) anyerror!void,
     quitApplication: *const fn (*Self, stable_id: []const u8) anyerror!void,
     refreshWindows: *const fn (*Self) anyerror!void,
+    retryShow: *const fn (*Self, at_cursor: bool) anyerror!void,
     hide: *const fn (*Self) anyerror!void,
     openSettings: *const fn (*Self) anyerror!void,
 };
+
+const AccessibilityShowRequest = enum {
+    none,
+    main_screen,
+    cursor_screen,
+};
+
+const ACCESSIBILITY_POLL_SECONDS: f64 = 0.5;
 
 const LOGICAL_FONT_TILE: u32 = 12;
 const LOGICAL_FONT_SEARCH: u32 = 12;
@@ -68,6 +78,8 @@ visible: bool,
 menu_tracking: bool,
 refresh_pending: bool,
 refresh_timer_armed: bool,
+accessibility_poll_armed: bool,
+accessibility_show_request: AccessibilityShowRequest,
 pointer_position: ?PointerPosition,
 pointer_drives_selection: bool,
 native_pointer_events: bool,
@@ -78,13 +90,14 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
     // Surface the Accessibility prompt once during launch rather than
     // lazily on the first window-list refresh, so the user can grant the
     // permission before they ever pop the switcher.
-    _ = ax.promptTrust();
+    const accessibility_required = !build_options.mock_backend;
+    const initially_trusted = !accessibility_required or ax.promptTrust() != 0;
 
     // Seed the AX-element cache with a high-cap brute-force scan of every
     // currently-running app, then install observers so the cache stays
     // fresh. Runs synchronously here — vitrail's UI isn't visible yet,
     // so the few seconds it takes are invisible to the user.
-    ax_cache.init(allocator) catch {};
+    if (accessibility_required and initially_trusted) ax_cache.init(allocator) catch {};
 
     var self = try allocator.create(Self);
     errdefer allocator.destroy(self);
@@ -111,6 +124,8 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
         .menu_tracking = false,
         .refresh_pending = false,
         .refresh_timer_armed = false,
+        .accessibility_poll_armed = false,
+        .accessibility_show_request = .none,
         .pointer_position = null,
         .pointer_drives_selection = false,
         .native_pointer_events = false,
@@ -132,6 +147,11 @@ pub fn create(_: PlatformArgs, callbacks: *Callbacks, allocator: std.mem.Allocat
     ax_cache.setChangeCallback(onAxWindowChanged, self);
     bridge.vt_install_window_change_observer(self, onWorkspaceWindowChanged);
 
+    // TCC does not notify the process when the user grants Accessibility in
+    // System Settings. Poll while untrusted so the first grant takes effect
+    // without restarting Vitrail.
+    if (accessibility_required and !initially_trusted) self.scheduleAccessibilityPoll();
+
     return self;
 }
 
@@ -139,6 +159,7 @@ pub fn deinit(self: *Self) void {
     ax_cache.setChangeCallback(null, null);
     bridge.vt_install_window_change_observer(null, null);
     bridge.vt_window_cancel_refresh(self.window);
+    bridge.vt_window_cancel_accessibility_poll(self.window);
     self.desktop_text.destroy();
     self.search_text.destroy();
     self.tile_text.destroy();
@@ -151,6 +172,11 @@ pub fn deinit(self: *Self) void {
 // ─── Platform contract ──────────────────────────────────────────────────────
 
 pub fn show(self: *Self) !void {
+    if (!build_options.mock_backend and ax.AXIsProcessTrusted() == 0) {
+        self.accessibility_show_request = .main_screen;
+        self.scheduleAccessibilityPoll();
+        return;
+    }
     self.visible = true;
     bridge.vt_window_move_to_main_screen(self.window);
     self.grid.clearCenter();
@@ -161,6 +187,11 @@ pub fn show(self: *Self) !void {
 
 /// Show on the pointer's display with the grid centered under the cursor.
 pub fn showAtCursor(self: *Self) !void {
+    if (!build_options.mock_backend and ax.AXIsProcessTrusted() == 0) {
+        self.accessibility_show_request = .cursor_screen;
+        self.scheduleAccessibilityPoll();
+        return;
+    }
     var x: f64 = 0;
     var y: f64 = 0;
     self.visible = true;
@@ -232,6 +263,16 @@ pub fn scheduleRefresh(self: *Self) void {
     if (self.menu_tracking or self.refresh_timer_armed) return;
     self.refresh_timer_armed = true;
     bridge.vt_window_schedule_refresh(self.window, 0.1, onRefreshTimerCb);
+}
+
+fn scheduleAccessibilityPoll(self: *Self) void {
+    if (self.accessibility_poll_armed) return;
+    self.accessibility_poll_armed = true;
+    bridge.vt_window_schedule_accessibility_poll(
+        self.window,
+        ACCESSIBILITY_POLL_SECONDS,
+        onAccessibilityPollTimerCb,
+    );
 }
 
 pub fn dispatch(self: *Self) bool {
@@ -405,6 +446,28 @@ fn onRefreshTimerCb(ctx: ?*anyopaque) callconv(.c) void {
     self.callbacks.refreshWindows(self) catch |err| {
         std.log.warn("live window refresh failed: {s}", .{@errorName(err)});
     };
+}
+
+fn onAccessibilityPollTimerCb(ctx: ?*anyopaque) callconv(.c) void {
+    const self: *Self = @ptrCast(@alignCast(ctx));
+    self.accessibility_poll_armed = false;
+
+    if (ax.AXIsProcessTrusted() == 0) {
+        self.scheduleAccessibilityPoll();
+        return;
+    }
+
+    ax_cache.init(self.allocator) catch |err| {
+        std.log.warn("AX observer cache initialization after permission grant failed: {s}", .{@errorName(err)});
+    };
+
+    const request = self.accessibility_show_request;
+    self.accessibility_show_request = .none;
+    if (request != .none) {
+        self.callbacks.retryShow(self, request == .cursor_screen) catch |err| {
+            std.log.warn("window show retry after Accessibility grant failed: {s}", .{@errorName(err)});
+        };
+    }
 }
 
 // ─── Action sinks ───────────────────────────────────────────────────────────

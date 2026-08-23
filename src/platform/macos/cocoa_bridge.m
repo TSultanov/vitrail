@@ -119,6 +119,7 @@
 @property (nonatomic, assign) BOOL menu_tracking;
 @property (nonatomic, assign) NSInteger context_command_selected;
 @property (nonatomic, strong) NSTimer *refresh_timer;
+@property (nonatomic, strong) NSTimer *accessibility_timer;
 @end
 
 @implementation VTWindowOwner
@@ -471,6 +472,8 @@ void vt_window_destroy(vt_window *w) {
     VTWindowOwner *owner = (__bridge_transfer VTWindowOwner *)w->owner;
     [owner.refresh_timer invalidate];
     owner.refresh_timer = nil;
+    [owner.accessibility_timer invalidate];
+    owner.accessibility_timer = nil;
     owner.window.delegate = nil;
     [owner.window close];
     (void)owner;
@@ -546,6 +549,34 @@ void vt_window_cancel_refresh(vt_window *w) {
     VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
     [owner.refresh_timer invalidate];
     owner.refresh_timer = nil;
+}
+
+void vt_window_schedule_accessibility_poll(vt_window *w,
+                                           double delay_seconds,
+                                           vt_simple_cb callback) {
+    if (!w || !callback) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    [owner.accessibility_timer invalidate];
+
+    __weak VTWindowOwner *weak_owner = owner;
+    NSTimer *timer = [NSTimer timerWithTimeInterval:delay_seconds
+                                           repeats:NO
+                                             block:^(NSTimer *fired) {
+        VTWindowOwner *strong_owner = weak_owner;
+        if (!strong_owner) return;
+        strong_owner.accessibility_timer = nil;
+        callback(strong_owner.zig_ctx);
+        (void)fired;
+    }];
+    owner.accessibility_timer = timer;
+    [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+}
+
+void vt_window_cancel_accessibility_poll(vt_window *w) {
+    if (!w) return;
+    VTWindowOwner *owner = (__bridge VTWindowOwner *)w->owner;
+    [owner.accessibility_timer invalidate];
+    owner.accessibility_timer = nil;
 }
 
 void vt_test_post_window_change_notification(void) {

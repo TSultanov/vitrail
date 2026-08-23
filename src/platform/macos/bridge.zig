@@ -74,6 +74,12 @@ pub extern "c" fn vt_window_schedule_refresh(
     callback: SimpleCb,
 ) void;
 pub extern "c" fn vt_window_cancel_refresh(w: *VtWindow) void;
+pub extern "c" fn vt_window_schedule_accessibility_poll(
+    w: *VtWindow,
+    delay_seconds: f64,
+    callback: SimpleCb,
+) void;
+pub extern "c" fn vt_window_cancel_accessibility_poll(w: *VtWindow) void;
 pub extern "c" fn vt_test_post_window_change_notification() void;
 pub extern "c" fn vt_window_move_to_main_screen(w: *VtWindow) void;
 pub extern "c" fn vt_window_move_to_cursor_screen(w: *VtWindow, out_x: *f64, out_y: *f64) c_int;

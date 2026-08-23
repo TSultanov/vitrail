@@ -73,6 +73,13 @@ void vt_window_schedule_refresh(vt_window *w,
                                 vt_simple_cb callback);
 void vt_window_cancel_refresh(vt_window *w);
 
+// Independent timer used to observe a first-run Accessibility grant while the
+// overlay is hidden. It must not contend with the live-window refresh timer.
+void vt_window_schedule_accessibility_poll(vt_window *w,
+                                           double delay_seconds,
+                                           vt_simple_cb callback);
+void vt_window_cancel_accessibility_poll(vt_window *w);
+
 // Test hook: posts one of the real NSWorkspace notifications observed by the
 // production window-change path.
 void vt_test_post_window_change_notification(void);

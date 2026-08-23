@@ -24,13 +24,27 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 Build and install for the current platform with GNU Make:
 
 - `make install-user` installs for the current user.
-- `sudo make install` installs system-wide on macOS and Linux.
+- `make install` installs system-wide. Linux requests elevation for the copy
+  step; a standard macOS admin account can install directly into `/Applications`.
 - On Windows, run `make install` from an elevated terminal for a system-wide installation.
 
 The default destinations are `~/Applications` or `/Applications` on macOS,
 `~/.local/bin` or `/usr/local/bin` on Linux, and LocalAppData or Program Files
 on Windows. Destination variables in the Makefile can be overridden when
 staging packages or using a nonstandard location.
+On a managed or non-admin Mac, use `make install MACOS_SUDO=sudo` if writing to
+`/Applications` requires elevation.
+
+On macOS, installation signs the bundle with the first valid code-signing
+identity in the user's keychain. This stable identity is necessary for macOS
+to retain Accessibility permission across rebuilds. Override the selection
+with `MACOS_CODESIGN_IDENTITY="identity name or SHA-1"`. The first transition
+from an older unsigned installation may require removing and granting its
+existing Accessibility entry once; subsequent signed updates retain the permission.
+Vitrail detects a first-run Accessibility grant while it is open and retries a
+pending switcher request, so granting access does not require another restart.
+The macOS install targets stop a running Vitrail instance before replacing the
+bundle, ensuring the next launch uses the newly installed build.
 
 ## Downloading
 You can download recent build from the [releases page](https://github.com/TSultanov/vitrail/releases).

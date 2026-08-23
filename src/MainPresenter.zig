@@ -20,6 +20,7 @@ window_callbacks: MainWindow.Callbacks = .{
     .closeWindow = closeWindow,
     .quitApplication = quitApplication,
     .refreshWindows = refreshWindows,
+    .retryShow = retryShow,
     .hide = hide,
     .openSettings = openSettings,
 },
@@ -126,6 +127,15 @@ fn quitApplication(main_window: *MainWindow, stable_id: []const u8) !void {
 fn refreshWindows(main_window: *MainWindow) !void {
     const self: *Self = @fieldParentPtr("window_callbacks", main_window.callbacks);
     try self.refreshWindowList();
+}
+
+fn retryShow(main_window: *MainWindow, at_cursor: bool) !void {
+    const self: *Self = @fieldParentPtr("window_callbacks", main_window.callbacks);
+    if (at_cursor) {
+        try self.showAtCursor();
+    } else {
+        try self.show();
+    }
 }
 
 pub fn refreshWindowList(self: *Self) !void {
