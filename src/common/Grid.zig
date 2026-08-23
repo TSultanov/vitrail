@@ -30,10 +30,10 @@ pub const Tile = struct {
 
 pub const RefreshOptions = struct {
     /// Preserve selection across a platform-specific identity transition when
-    /// a replacement for the same non-empty app occupies the selected tile's
-    /// old cell. Disabled by default: on most platforms this would treat an
-    /// unrelated new window from the same app as the vanished window.
-    select_same_app_in_vacated_cell: bool = false,
+    /// a replacement represents the same non-empty app as the selected tile.
+    /// Disabled by default: on most platforms this could treat an unrelated
+    /// new window from the same app as the vanished window.
+    select_same_app_replacement: bool = false,
 };
 
 allocator: std.mem.Allocator,
@@ -87,8 +87,8 @@ pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
 }
 
 /// Transactionally replace the borrowed window snapshot while preserving the
-/// current overlay session and every surviving tile's coordinates. Candidate
-/// tiles are built in a separate Grid so an allocation failure leaves this
+/// current overlay session. Candidate tiles are fully rebuilt in a separate
+/// Grid so removals compact the layout and an allocation failure leaves this
 /// instance untouched.
 pub fn refreshDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
     try self.refreshDesktopWindowsWithOptions(dws, .{});
@@ -129,7 +129,6 @@ pub fn refreshDesktopWindowsWithOptions(
     }
     staged.desktop_windows = dws;
     try staged.rebuild();
-    staged.preserveSurvivingPositions(self);
 
     var selected_by_id: ?usize = null;
     if (selected_id) |id| {
@@ -140,20 +139,20 @@ pub fn refreshDesktopWindowsWithOptions(
             }
         }
     }
-    var selected_same_app_cell: ?usize = null;
-    if (selected_by_id == null and options.select_same_app_in_vacated_cell) {
+    var selected_same_app: ?usize = null;
+    if (selected_by_id == null and options.select_same_app_replacement) {
         // macOS replaces an app's last real-window entry with a windowless-app
-        // placeholder. Its stable identity necessarily changes, but it is laid
-        // into the vacated cell and represents the same app. Preserve that
-        // spatial/semantic selection before falling back to list rank.
+        // placeholder. Its stable identity necessarily changes, but it still
+        // represents the same app. Preserve that semantic selection before
+        // falling back to list rank.
         if (selected_tile) |old| {
             // Empty app identifiers carry no identity and must never make two
             // otherwise-unrelated entries equivalent.
             if (old.dw.app_id.len != 0) {
                 for (staged.tiles.items, 0..) |tile, idx| {
-                    if (!tile.visible or tile.x != old.x or tile.y != old.y) continue;
+                    if (!tile.visible) continue;
                     if (!std.mem.eql(u8, tile.dw.app_id, old.dw.app_id)) continue;
-                    selected_same_app_cell = idx;
+                    selected_same_app = idx;
                     break;
                 }
             }
@@ -161,7 +160,7 @@ pub fn refreshDesktopWindowsWithOptions(
     }
     if (selected_by_id) |idx| {
         staged.selected = idx;
-    } else if (selected_same_app_cell) |idx| {
+    } else if (selected_same_app) |idx| {
         staged.selected = idx;
     } else {
         staged.selected = visibleIndexAtRank(staged.tiles.items, selected_visible_rank);
@@ -310,74 +309,6 @@ pub fn rebuild(self: *Self) !void {
 fn positionFits(viewport_w: i32, viewport_h: i32, sr: Rect, cx: i32, cy: i32) bool {
     if (cx < 0 or cy < 0 or cx + TILE_W > viewport_w or cy + TILE_H > viewport_h) return false;
     return !(cy < sr.y + sr.h and cy + TILE_H > sr.y);
-}
-
-/// Keep every still-visible window at its existing coordinates across a live
-/// snapshot replacement. New windows (and windows newly admitted by the
-/// current filter) take the first free spiral cell, so removals do not make
-/// the rest of the grid jump around.
-fn preserveSurvivingPositions(self: *Self, previous: *const Self) void {
-    for (self.tiles.items) |*tile| {
-        tile.x = 0;
-        tile.y = 0;
-        tile.visible = false;
-    }
-
-    const search_rect = self.searchBoxRect();
-
-    // Claim valid old cells first.
-    for (self.tiles.items, 0..) |*tile, idx| {
-        if (!matchesFilter(self.searchSlice(), tile.dw)) continue;
-        const old = previous.visibleTileById(tile.dw.stable_id) orelse continue;
-        if (!positionFits(self.viewport_w, self.viewport_h, search_rect, old.x, old.y)) continue;
-        if (positionOccupied(self.tiles.items[0..idx], old.x, old.y)) continue;
-        tile.x = old.x;
-        tile.y = old.y;
-        tile.visible = true;
-    }
-
-    // Fill vacated cells with genuinely new/newly-visible windows.
-    const tile_step_x = TILE_W + TILE_MARGIN;
-    const tile_step_y = TILE_H + TILE_MARGIN;
-    const grid_h = self.viewport_h - GRID_BOTTOM_PAD;
-    const default_cx = @divFloor(self.viewport_w, 2);
-    const default_cy = @divFloor(grid_h, 2);
-    const cols: i32 = @max(@as(i32, 1), @divFloor(self.viewport_w, tile_step_x));
-    const rows: i32 = @max(@as(i32, 1), @divFloor(grid_h, tile_step_y));
-    const span: i32 = @max(cols, rows) + 1;
-    const max_probe: usize = @intCast((2 * span + 1) * (2 * span + 1));
-
-    for (self.tiles.items) |*tile| {
-        if (tile.visible or !matchesFilter(self.searchSlice(), tile.dw)) continue;
-
-        var probe: usize = 0;
-        while (probe < max_probe) : (probe += 1) {
-            const col = spiral.numToCol(probe);
-            const row = spiral.numToRow(probe);
-            const x = default_cx + col * tile_step_x - @divFloor(TILE_W, 2) + self.offset_x;
-            const y = default_cy + row * tile_step_y - @divFloor(TILE_H, 2) + self.offset_y;
-            if (!positionFits(self.viewport_w, self.viewport_h, search_rect, x, y)) continue;
-            if (positionOccupied(self.tiles.items, x, y)) continue;
-            tile.x = x;
-            tile.y = y;
-            tile.visible = true;
-            break;
-        }
-    }
-}
-
-fn visibleTileById(self: *const Self, stable_id: []const u8) ?Tile {
-    for (self.tiles.items) |tile| {
-        if (tile.visible and std.mem.eql(u8, tile.dw.stable_id, stable_id)) return tile;
-    }
-    return null;
-}
-
-fn positionOccupied(tiles: []const Tile, x: i32, y: i32) bool {
-    for (tiles) |tile| {
-        if (tile.visible and tile.x == x and tile.y == y) return true;
-    }
-    return false;
 }
 
 fn matchesFilter(filter: []const u8, dw: common.DesktopWindow) bool {
@@ -655,8 +586,6 @@ test "live refresh admits new windows and replaces metadata for stable identitie
     try g.appendSearch("work");
     const selected_before = g.selectedWindow() orelse return error.NoSelection;
     try std.testing.expectEqualStrings("window-1", selected_before.stable_id);
-    const position_before = g.tileCenter("editor").?;
-
     const refreshed = [_]common.DesktopWindow{
         testDwWithMetadata(
             "window-2",
@@ -694,7 +623,6 @@ test "live refresh admits new windows and replaces metadata for stable identitie
     try std.testing.expectEqualStrings("work", g.searchSlice());
     try std.testing.expectEqual(@as(usize, 2), countVisible(g.tiles.items));
     try std.testing.expectEqualStrings("window-1", g.selectedWindowId().?);
-    try std.testing.expectEqual(position_before, g.tileCenter("workbench").?);
     try std.testing.expect(g.tileCenter("messenger") != null);
 
     const current = g.windowById("window-1") orelse return error.WindowMissing;
@@ -768,7 +696,7 @@ test "live refresh selects the same visible rank when selected window disappears
     try std.testing.expectEqualStrings("gamma", g.selectedWindowId().?);
 }
 
-test "live refresh selects a same-app replacement in the vanished window's cell" {
+test "live refresh selects a same-app replacement after compact relayout" {
     var g = Self.init(std.testing.allocator);
     defer g.deinit();
     g.setViewport(1000, 800);
@@ -806,11 +734,13 @@ test "live refresh selects a same-app replacement in the vanished window's cell"
         ),
     };
     try g.refreshDesktopWindowsWithOptions(&refreshed, .{
-        .select_same_app_in_vacated_cell = true,
+        .select_same_app_replacement = true,
     });
 
     try std.testing.expectEqualStrings("mac-app:42", g.selectedWindowId().?);
-    try std.testing.expectEqual(selected_cell, g.tileCenter("Notes").?);
+    try std.testing.expectEqual(selected_cell, g.tileCenter("gamma").?);
+    const replacement_cell = g.tileCenter("Notes").?;
+    try std.testing.expect(selected_cell.x != replacement_cell.x or selected_cell.y != replacement_cell.y);
 }
 
 test "live refresh does not select a same-app newcomer by default" {
@@ -852,13 +782,13 @@ test "live refresh does not select a same-app newcomer by default" {
     };
     try g.refreshDesktopWindows(&refreshed);
 
-    // The newcomer fills the old cell, but default selection continuity is by
-    // stable id and then visible rank, so the next ranked survivor wins.
+    // Default selection continuity is by stable id and then visible rank, so
+    // the next ranked survivor wins and compacts into the removed tile's cell.
     try std.testing.expectEqualStrings("gamma", g.selectedWindowId().?);
-    try std.testing.expectEqual(selected_cell, g.tileCenter("notes-app").?);
+    try std.testing.expectEqual(selected_cell, g.tileCenter("gamma").?);
 }
 
-test "same-app cell continuity does not match empty app identifiers" {
+test "same-app replacement continuity does not match empty app identifiers" {
     var g = Self.init(std.testing.allocator);
     defer g.deinit();
     g.setViewport(1000, 800);
@@ -899,13 +829,13 @@ test "same-app cell continuity does not match empty app identifiers" {
         ),
     };
     try g.refreshDesktopWindowsWithOptions(&refreshed, .{
-        .select_same_app_in_vacated_cell = true,
+        .select_same_app_replacement = true,
     });
 
     try std.testing.expectEqualStrings("gamma", g.selectedWindowId().?);
 }
 
-test "live refresh keeps surviving tile coordinates and fills a vacated cell with a newcomer" {
+test "live refresh compacts surviving tiles after a removal" {
     var g = Self.init(std.testing.allocator);
     defer g.deinit();
     g.setViewport(1000, 800);
@@ -917,23 +847,16 @@ test "live refresh keeps surviving tile coordinates and fills a vacated cell wit
         testDw("delta"),
     };
     try g.setDesktopWindows(&initial);
-    const alpha_before = g.tileCenter("alpha").?;
     const beta_before = g.tileCenter("beta").?;
-    const gamma_before = g.tileCenter("gamma").?;
-    const delta_before = g.tileCenter("delta").?;
 
     const refreshed = [_]common.DesktopWindow{
+        testDw("alpha"),
         testDw("gamma"),
         testDw("delta"),
-        testDw("alpha"),
-        testDw("epsilon"),
     };
     try g.refreshDesktopWindows(&refreshed);
 
-    try std.testing.expectEqual(alpha_before, g.tileCenter("alpha").?);
-    try std.testing.expectEqual(gamma_before, g.tileCenter("gamma").?);
-    try std.testing.expectEqual(delta_before, g.tileCenter("delta").?);
-    try std.testing.expectEqual(beta_before, g.tileCenter("epsilon").?);
+    try std.testing.expectEqual(beta_before, g.tileCenter("gamma").?);
 }
 
 test "tiles pack on-screen and clear of the search box when centered near a corner" {

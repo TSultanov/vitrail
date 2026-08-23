@@ -196,7 +196,7 @@ pub fn refreshDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !vo
     // Opt into continuity for that platform-specific identity transition;
     // other platforms retain Grid's stable-id-then-rank default.
     try self.grid.refreshDesktopWindowsWithOptions(dws, .{
-        .select_same_app_in_vacated_cell = true,
+        .select_same_app_replacement = true,
     });
     // A native menu runs its own event loop, and window enumeration can block
     // AppKit briefly. Re-hit-test the current system pointer so a queued event

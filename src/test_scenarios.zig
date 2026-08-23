@@ -221,6 +221,7 @@ fn scenario8(d: *Driver) !void {
 // window, refreshes the grid, and leaves the overlay open.
 fn scenario9(d: *Driver) !void {
     const target = d.tileCenter("slack") orelse return error.NoTile;
+    const successor_before = d.tileCenter("spotify") orelse return error.NoTile;
     try d.postContextClose(target.x, target.y);
 
     const closed = d.lastClosedAppId() orelse return error.NoClose;
@@ -229,6 +230,9 @@ fn scenario9(d: *Driver) !void {
     try expect(d.windowVisible());
     try expect(d.visibleCount() == 7);
     try expect(d.tileCenter("slack") == null);
+    const successor_after = d.tileCenter("spotify") orelse return error.NoTile;
+    try expect(successor_after.x == target.x and successor_after.y == target.y);
+    try expect(successor_before.x != successor_after.x or successor_before.y != successor_after.y);
 }
 
 // 10. The context-menu close command is disabled for an uncloseable window.
@@ -258,7 +262,8 @@ fn scenario11(d: *Driver) !void {
     try expect(d.visibleCount() == 7);
     try expect(d.tileCenter("spotify") == null);
     const survivor_after = d.tileCenter("thunderbird") orelse return error.NoTile;
-    try expect(survivor_before.x == survivor_after.x and survivor_before.y == survivor_after.y);
+    try expect(survivor_after.x == target.x and survivor_after.y == target.y);
+    try expect(survivor_before.x != survivor_after.x or survivor_before.y != survivor_after.y);
     const replacement = d.selectedAppId() orelse return error.LostSelection;
     try expectStrNeq("spotify", replacement);
 }
@@ -291,6 +296,7 @@ fn scenario13(d: *Driver) !void {
     // Obsidian's fixture deliberately has can_close=false: Quit application
     // must remain available independently of the per-window close capability.
     const target = d.tileCenter("obsidian") orelse return error.NoTile;
+    const successor_before = d.tileCenter("figma") orelse return error.NoTile;
     try d.postContextQuit(target.x, target.y);
 
     try expectStrEq("obsidian", d.lastQuitAppId() orelse return error.NoQuit);
@@ -298,4 +304,7 @@ fn scenario13(d: *Driver) !void {
     try expect(d.windowVisible());
     try expect(d.visibleCount() == 7);
     try expect(d.tileCenter("obsidian") == null);
+    const successor_after = d.tileCenter("figma") orelse return error.NoTile;
+    try expect(successor_after.x == target.x and successor_after.y == target.y);
+    try expect(successor_before.x != successor_after.x or successor_before.y != successor_after.y);
 }
