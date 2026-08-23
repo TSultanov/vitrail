@@ -128,6 +128,34 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         }
     }
 
+    // AX exposes floating panels and composition surfaces as ordinary
+    // AXStandardWindow / AXDialog elements. They are not task-switcher
+    // windows: CoreGraphics distinguishes them by placing them above the
+    // normal window layer (for example Codex Pet uses layer 3). Preserve AX
+    // as the source of truth for window identity, but join the CG layer by
+    // CGWindowID so those helper surfaces do not become tiles.
+    var wid_layers = std.AutoHashMap(u32, i64).init(allocator);
+    defer wid_layers.deinit();
+    {
+        const opts: u32 = cg.kCGWindowListOptionAll | cg.kCGWindowListExcludeDesktopElements;
+        if (cg.CGWindowListCopyWindowInfo(opts, cg.kCGNullWindowID)) |arr| {
+            defer cf.c.CFRelease(arr);
+            const n = cg.CFArrayGetCount(@ptrCast(arr));
+            var i: cg.CFIndex = 0;
+            while (i < n) : (i += 1) {
+                const dptr = cg.CFArrayGetValueAtIndex(@ptrCast(arr), i) orelse continue;
+                const dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dptr));
+                const wid_n = cf.cfDictGetNumber(dict, "kCGWindowNumber") orelse continue;
+                const layer_n = cf.cfDictGetNumber(dict, "kCGWindowLayer") orelse continue;
+                const wid_i = cf.cfNumberToI64(wid_n) orelse continue;
+                const layer = cf.cfNumberToI64(layer_n) orelse continue;
+                if (wid_i <= 0 or wid_i > std.math.maxInt(u32)) continue;
+                const wid: u32 = @intCast(wid_i);
+                if (!wid_layers.contains(wid)) try wid_layers.put(wid, layer);
+            }
+        }
+    }
+
     // Build Space-ID → 0-based-index map (Mission Control left-to-right
     // ordering). Lifted from the previous CG backend.
     var space_index = std.AutoHashMap(i64, usize).init(allocator);
@@ -202,6 +230,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         .cid = cid,
         .space_index = &space_index,
         .wid_zorder = &wid_zorder,
+        .wid_layers = &wid_layers,
         .emitted_wids = &emitted_wids,
         .handles = &next_handles,
         .pid = 0,
@@ -333,6 +362,7 @@ const EmitCtx = struct {
     cid: cgs.ConnectionID,
     space_index: *std.AutoHashMap(i64, usize),
     wid_zorder: *std.AutoHashMap(u32, u32),
+    wid_layers: *std.AutoHashMap(u32, i64),
     emitted_wids: *std.AutoHashMap(u32, void),
     handles: *std.ArrayListUnmanaged(PlatformHandle),
     pid: i32,
@@ -361,6 +391,12 @@ fn tryEmit(_: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     if (ax._AXUIElementGetWindow(win_elem, &wid) != ax.kAXErrorSuccess) return false;
     if (wid == 0) return false;
     if (ctx.emitted_wids.contains(wid)) return false;
+
+    // Missing CG metadata is not sufficient reason to discard an AX window:
+    // some off-Space windows are discoverable only through Accessibility.
+    // A known non-zero layer, however, is a floating/helper surface rather
+    // than a normal task-switcher window.
+    if (!isSwitchableWindowLayer(ctx.wid_layers.get(wid))) return false;
 
     if (!matchesAnyString(win_elem, ctx.k_subrole, &.{ ctx.v_standard, ctx.v_dialog })) return false;
 
@@ -655,6 +691,10 @@ fn matchesAnyString(
     return false;
 }
 
+fn isSwitchableWindowLayer(layer: ?i64) bool {
+    return layer == null or layer.? == 0;
+}
+
 /// How a window's Space binding decides whether to keep it. sc==0 (no Space)
 /// is only treated as "stale, closed" when the window is off-screen; full-screen
 /// windows can transiently report zero Spaces while still on-screen, and must
@@ -694,6 +734,19 @@ test "classifySpaceBinding resolves a single Space binding" {
 test "classifySpaceBinding keeps sticky multi-Space windows with unknown desktop" {
     const verdict = classifySpaceBinding(3, null, false);
     try std.testing.expectEqual(SpaceBindingVerdict.keep_unknown, verdict);
+}
+
+test "normal CoreGraphics layer is switchable" {
+    try std.testing.expect(isSwitchableWindowLayer(0));
+}
+
+test "non-zero CoreGraphics layers are helper surfaces" {
+    try std.testing.expect(!isSwitchableWindowLayer(2));
+    try std.testing.expect(!isSwitchableWindowLayer(3));
+}
+
+test "missing CoreGraphics layer preserves AX-only windows" {
+    try std.testing.expect(isSwitchableWindowLayer(null));
 }
 
 test "window focus MRU outranks app fallback regardless of Space" {

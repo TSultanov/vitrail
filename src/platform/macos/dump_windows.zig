@@ -4,7 +4,7 @@
 //
 // Mirrors AXWindowBackend.getWindowList: per-pid Phase 0 (AXFocusedWindow /
 // AXMainWindow) → Phase 1 (kAXWindowsAttribute) → Phase 2 (ax_cache walk)
-// → subrole + size filter → CGS Space lookup.
+// → CG layer + subrole + size filter → CGS Space lookup.
 
 const std = @import("std");
 const ax = @import("ax.zig");
@@ -99,6 +99,31 @@ pub fn main() !void {
     }
     print("[zorder] {d} onscreen window(s)\n", .{wid_zorder.count()});
 
+    // All-Space CGWindowID → layer lookup, mirroring production's helper
+    // surface filter.
+    var wid_layers = std.AutoHashMap(u32, i64).init(allocator);
+    defer wid_layers.deinit();
+    {
+        const opts: u32 = cg.kCGWindowListOptionAll | cg.kCGWindowListExcludeDesktopElements;
+        if (cg.CGWindowListCopyWindowInfo(opts, cg.kCGNullWindowID)) |arr| {
+            defer cf.c.CFRelease(arr);
+            const n = cg.CFArrayGetCount(@ptrCast(arr));
+            var i: cg.CFIndex = 0;
+            while (i < n) : (i += 1) {
+                const dptr = cg.CFArrayGetValueAtIndex(@ptrCast(arr), i) orelse continue;
+                const dict: cf.c.CFDictionaryRef = @ptrCast(@constCast(dptr));
+                const wid_n = cf.cfDictGetNumber(dict, "kCGWindowNumber") orelse continue;
+                const layer_n = cf.cfDictGetNumber(dict, "kCGWindowLayer") orelse continue;
+                const wid_i = cf.cfNumberToI64(wid_n) orelse continue;
+                const layer = cf.cfNumberToI64(layer_n) orelse continue;
+                if (wid_i <= 0 or wid_i > std.math.maxInt(u32)) continue;
+                const wid: u32 = @intCast(wid_i);
+                if (!wid_layers.contains(wid)) try wid_layers.put(wid, layer);
+            }
+        }
+    }
+    print("[layers] {d} all-Space window(s)\n", .{wid_layers.count()});
+
     const k_windows = cfStr("AXWindows") orelse return;
     defer cf.c.CFRelease(k_windows);
     const k_focused_window = cfStr("AXFocusedWindow") orelse return;
@@ -160,7 +185,7 @@ pub fn main() !void {
             if (ax.AXUIElementCopyAttributeValue(app_elem, attr.key, &w_ref) == ax.kAXErrorSuccess and w_ref != null) {
                 defer cf.c.CFRelease(w_ref);
                 const win_elem: ax.UIElementRef = @ptrCast(@constCast(w_ref));
-                _ = try printAxWindow(allocator, win_elem, attr.label, k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+                _ = try printAxWindow(allocator, win_elem, attr.label, k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &wid_layers, &emitted_wids, cid);
             }
         }
 
@@ -176,7 +201,7 @@ pub fn main() !void {
             while (wi < wcount) : (wi += 1) {
                 const wptr = cg.CFArrayGetValueAtIndex(@ptrCast(wins_arr), wi) orelse continue;
                 const win_elem: ax.UIElementRef = @ptrCast(@constCast(wptr));
-                _ = try printAxWindow(allocator, win_elem, "AXWindows", k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+                _ = try printAxWindow(allocator, win_elem, "AXWindows", k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &wid_layers, &emitted_wids, cid);
             }
         } else {
             const reason: []const u8 = switch (err) {
@@ -191,7 +216,7 @@ pub fn main() !void {
         // Phase 2: walk the cache. Mirrors production.
         const before = emitted_wids.count();
         for (ax_cache.getForPid(pid)) |cached| {
-            _ = try printAxWindow(allocator, cached, "Cache", k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &emitted_wids, cid);
+            _ = try printAxWindow(allocator, cached, "Cache", k_role, k_subrole, k_title, k_size, k_position, &space_index, &wid_zorder, &wid_layers, &emitted_wids, cid);
         }
         const added = emitted_wids.count() - before;
         if (added > 0) print("  (cache phase 2 added {d} window(s))\n", .{added});
@@ -215,6 +240,7 @@ fn printAxWindow(
     k_position: cf.c.CFStringRef,
     space_index: *std.AutoHashMap(i64, usize),
     wid_zorder: *std.AutoHashMap(u32, u32),
+    wid_layers: *std.AutoHashMap(u32, i64),
     emitted_wids: *std.AutoHashMap(u32, void),
     cid: cgs.ConnectionID,
 ) !bool {
@@ -252,7 +278,9 @@ fn printAxWindow(
     const subrole_ok = std.mem.eql(u8, subrole, "AXStandardWindow") or std.mem.eql(u8, subrole, "AXDialog");
     const size_ok = have_size and size.width >= 100 and size.height >= 50;
     const wid_ok = wid_err == ax.kAXErrorSuccess;
-    const passes = subrole_ok and size_ok and wid_ok;
+    const layer = if (wid_ok) wid_layers.get(wid) else null;
+    const layer_ok = layer == null or layer.? == 0;
+    const passes = subrole_ok and size_ok and wid_ok and layer_ok;
 
     var sid_text: [64]u8 = undefined;
     const sid_str: []const u8 = if (!wid_ok) "?" else blk: {
@@ -284,6 +312,8 @@ fn printAxWindow(
         "drop:subrole"
     else if (!size_ok)
         "drop:size"
+    else if (!layer_ok)
+        "drop:layer"
     else
         "drop:wid";
 
@@ -293,13 +323,20 @@ fn printAxWindow(
         break :blk "-";
     } else "?";
 
-    print("  [{s:<12}] src={s:<12} role={s:<12} subrole={s:<20} wid={d:>6} z={s:<3} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} title=\"{s}\"\n", .{
+    var layer_text: [16]u8 = undefined;
+    const layer_str: []const u8 = if (layer) |value|
+        std.fmt.bufPrint(&layer_text, "{d}", .{value}) catch "?"
+    else
+        "?";
+
+    print("  [{s:<12}] src={s:<12} role={s:<12} subrole={s:<20} wid={d:>6} z={s:<3} layer={s:<2} pos=({d:>5.0},{d:>5.0}) {d:>4.0}x{d:<4.0} space={s:<14} title=\"{s}\"\n", .{
         tag,
         source,
         role,
         subrole,
         wid,
         z_str,
+        layer_str,
         pos.x,
         pos.y,
         size.width,
