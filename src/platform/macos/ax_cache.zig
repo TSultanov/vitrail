@@ -31,6 +31,8 @@ const AppEntry = struct {
 
 var g_allocator: std.mem.Allocator = undefined;
 var g_cache: std.AutoHashMap(i32, AppEntry) = undefined;
+var g_focus_ordinals: std.AutoHashMap(u32, i64) = undefined;
+var g_focus_counter: i64 = 0;
 var g_initialized: bool = false;
 
 // Cached notification CFString constants (avoid re-creating per callback).
@@ -43,6 +45,7 @@ var g_n_window_deminiaturized: cf.c.CFStringRef = null;
 var g_n_moved: cf.c.CFStringRef = null;
 var g_n_enabled_changed: cf.c.CFStringRef = null;
 var g_k_close_button: cf.c.CFStringRef = null;
+var g_k_focused_window: cf.c.CFStringRef = null;
 
 pub const ChangeCallback = *const fn (ctx: *anyopaque) void;
 var g_change_callback: ?ChangeCallback = null;
@@ -76,6 +79,8 @@ pub fn init(allocator: std.mem.Allocator) !void {
 
     g_allocator = allocator;
     g_cache = std.AutoHashMap(i32, AppEntry).init(allocator);
+    g_focus_ordinals = std.AutoHashMap(u32, i64).init(allocator);
+    g_focus_counter = 0;
     g_initialized = true;
 
     // Bound AX call timeouts so unresponsive apps can't wedge the seed scan.
@@ -93,6 +98,7 @@ pub fn init(allocator: std.mem.Allocator) !void {
     g_n_moved = cf.c.CFStringCreateWithCString(null, "AXMoved", cf.c.kCFStringEncodingUTF8);
     g_n_enabled_changed = cf.c.CFStringCreateWithCString(null, "AXEnabledChanged", cf.c.kCFStringEncodingUTF8);
     g_k_close_button = cf.c.CFStringCreateWithCString(null, "AXCloseButton", cf.c.kCFStringEncodingUTF8);
+    g_k_focused_window = cf.c.CFStringCreateWithCString(null, "AXFocusedWindow", cf.c.kCFStringEncodingUTF8);
 
     const seed_start_ns = std.time.nanoTimestamp();
     var seeded_apps: usize = 0;
@@ -143,6 +149,7 @@ pub fn init(allocator: std.mem.Allocator) !void {
                         releaseEntry(&entry);
                         continue;
                     };
+                    recordFocusedWindow(pid, false);
                     seeded_apps += 1;
                     seeded_windows += win_count;
                 }
@@ -189,6 +196,22 @@ pub fn getForPid(pid: i32) []const ax.UIElementRef {
     return entry.windows.items;
 }
 
+/// Returns the global focus ordinal recorded for a window. The initial value
+/// is derived from app activation recency; subsequent AX focus notifications
+/// monotonically promote the actual window, giving us cross-Space window MRU.
+pub fn focusOrdinal(wid: u32) ?i64 {
+    if (!g_initialized) return null;
+    return g_focus_ordinals.get(wid);
+}
+
+/// Refresh the focused-window seed for an app during enumeration. This covers
+/// apps that do not reliably deliver AXFocusedWindowChanged while preserving
+/// any newer ordinal already learned from an observer notification.
+pub fn seedFocusedWindow(pid: i32) void {
+    if (!g_initialized) return;
+    recordFocusedWindow(pid, false);
+}
+
 /// Ensure a window surfaced by ordinary AX enumeration is retained in the
 /// cache and subscribed to lifecycle/metadata notifications. This closes the
 /// gap for high AX-element IDs that a bounded startup scan did not reach.
@@ -221,6 +244,7 @@ pub fn deinit() void {
         if (entry.ax_app) |a| cf.c.CFRelease(a);
     }
     g_cache.deinit();
+    g_focus_ordinals.deinit();
     if (g_n_window_created) |s| cf.c.CFRelease(s);
     if (g_n_destroyed) |s| cf.c.CFRelease(s);
     if (g_n_focused_window_changed) |s| cf.c.CFRelease(s);
@@ -230,6 +254,7 @@ pub fn deinit() void {
     if (g_n_moved) |s| cf.c.CFRelease(s);
     if (g_n_enabled_changed) |s| cf.c.CFRelease(s);
     if (g_k_close_button) |s| cf.c.CFRelease(s);
+    if (g_k_focused_window) |s| cf.c.CFRelease(s);
     g_n_window_created = null;
     g_n_destroyed = null;
     g_n_focused_window_changed = null;
@@ -239,6 +264,8 @@ pub fn deinit() void {
     g_n_moved = null;
     g_n_enabled_changed = null;
     g_k_close_button = null;
+    g_k_focused_window = null;
+    g_focus_counter = 0;
     g_change_callback = null;
     g_change_ctx = null;
     g_initialized = false;
@@ -258,6 +285,7 @@ fn seedPid(pid: i32) !void {
     installObserver(&entry, pid);
 
     try g_cache.put(pid, entry);
+    recordFocusedWindow(pid, false);
 }
 
 /// Create the per-app AXObserver, subscribe it to window-create / focus /
@@ -355,7 +383,13 @@ fn releasePid(pid: i32) void {
         cf.c.CFRelease(obs);
     }
     for (entry.windows.items) |w| {
-        if (w) |ww| cf.c.CFRelease(ww);
+        if (w) |ww| {
+            var wid: u32 = 0;
+            if (ax._AXUIElementGetWindow(ww, &wid) == ax.kAXErrorSuccess and wid != 0) {
+                _ = g_focus_ordinals.remove(wid);
+            }
+            cf.c.CFRelease(ww);
+        }
     }
     entry.windows.deinit(g_allocator);
     if (entry.ax_app) |a| cf.c.CFRelease(a);
@@ -375,7 +409,10 @@ fn observerCallback(
     if (cf.c.CFStringCompare(notification, g_n_window_created, 0) == 0) {
         addWindow(entry, element, pid);
     } else if (cf.c.CFStringCompare(notification, g_n_focused_window_changed, 0) == 0) {
-        addWindow(entry, element, pid);
+        // This notification is registered on the AXApplication, so `element`
+        // is commonly the application rather than the newly focused window.
+        // Read AXFocusedWindow explicitly and promote that concrete CGWindowID.
+        recordFocusedWindow(pid, true);
     } else if (cf.c.CFStringCompare(notification, g_n_destroyed, 0) == 0) {
         removeWindow(entry, element);
     }
@@ -384,6 +421,27 @@ fn observerCallback(
     // addWindow deduped is intentional: focus/metadata can still affect order
     // or rendering.
     notifyChange();
+}
+
+fn recordFocusedWindow(pid: i32, promote: bool) void {
+    const entry = g_cache.getPtr(pid) orelse return;
+    var focused_ref: cf.c.CFTypeRef = null;
+    if (ax.AXUIElementCopyAttributeValue(entry.ax_app, g_k_focused_window, &focused_ref) != ax.kAXErrorSuccess or focused_ref == null) return;
+    defer cf.c.CFRelease(focused_ref);
+    const focused: ax.UIElementRef = @ptrCast(@constCast(focused_ref));
+    addWindow(entry, focused, pid);
+
+    var wid: u32 = 0;
+    if (ax._AXUIElementGetWindow(focused, &wid) != ax.kAXErrorSuccess or wid == 0) return;
+
+    const app_ordinal = bridge.vt_app_activation_ordinal(pid);
+    const seed = app_ordinal * 2 + 1;
+    const ordinal = if (promote)
+        @max(g_focus_counter + 1, seed)
+    else
+        @max(g_focus_ordinals.get(wid) orelse 0, seed);
+    g_focus_ordinals.put(wid, ordinal) catch return;
+    g_focus_counter = @max(g_focus_counter, ordinal);
 }
 
 fn addWindow(entry: *AppEntry, win: ax.UIElementRef, pid: i32) void {
@@ -416,6 +474,10 @@ fn removeWindow(entry: *AppEntry, win: ax.UIElementRef) void {
         if (existing == win or
             (existing != null and cf.c.CFEqual(existing, win) != 0))
         {
+            var wid: u32 = 0;
+            if (ax._AXUIElementGetWindow(existing, &wid) == ax.kAXErrorSuccess and wid != 0) {
+                _ = g_focus_ordinals.remove(wid);
+            }
             const ref = entry.windows.swapRemove(i);
             if (ref) |r| cf.c.CFRelease(r);
             return;

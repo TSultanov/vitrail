@@ -41,8 +41,7 @@ handles: std.ArrayListUnmanaged(PlatformHandle) = .{},
 var ax_warn_logged: bool = false;
 
 const SortInfo = struct {
-    group: u8, // 0 = current-Space (in z-order map), 1 = off-Space
-    rank: i64, // group 0: z-index ascending; group 1: -activation_ordinal
+    rank: i64, // negative global MRU ordinal; lower sorts first
     insertion: u32, // stable tiebreak
 };
 
@@ -105,9 +104,10 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
 
     const cid = cgs.CGSMainConnectionID();
 
-    // Global onscreen z-order map (CGWindowID → front-to-back rank). Off-Space
-    // windows aren't onscreen and so won't have an entry here — they fall
-    // back to per-app activation ordinal in the sort below.
+    // Track which windows are currently onscreen. This is deliberately not a
+    // sort key: doing so groups the current Space ahead of all other Spaces.
+    // It is only used to distinguish stale zero-Space AX entries from live
+    // full-screen windows whose Space binding is transiently unavailable.
     var wid_zorder = std.AutoHashMap(u32, u32).init(allocator);
     defer wid_zorder.deinit();
     {
@@ -229,6 +229,7 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         defer if (app_name_c) |p| bridge.vt_free(@ptrCast(@constCast(p)));
         ctx.pid = pid;
         ctx.app_name = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "Unknown";
+        ax_cache.seedFocusedWindow(pid);
         ctx.app_ordinal = bridge.vt_app_activation_ordinal(pid);
         const list_len_before = ctx.list.items.len;
 
@@ -307,7 +308,6 @@ const SortCtx = struct {
     pub fn lessThan(c: @This(), a: usize, b: usize) bool {
         const ka = c.keys[a];
         const kb = c.keys[b];
-        if (ka.group != kb.group) return ka.group < kb.group;
         if (ka.rank != kb.rank) return ka.rank < kb.rank;
         return ka.insertion < kb.insertion;
     }
@@ -316,6 +316,14 @@ const SortCtx = struct {
         std.mem.swap(SortInfo, &c.keys[a], &c.keys[b]);
     }
 };
+
+/// Use one rank domain for both exact window-focus observations and the
+/// cold-start app-level fallback. App ordinals occupy the even values; the
+/// focused window seeded for that app occupies the following odd value.
+fn mruSortRank(window_ordinal: ?i64, app_ordinal: i64) i64 {
+    const ordinal = window_ordinal orelse app_ordinal * 2;
+    return -ordinal;
+}
 
 const EmitCtx = struct {
     list: *std.array_list.Managed(common.DesktopWindow),
@@ -447,10 +455,10 @@ fn tryEmit(_: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     // sort/map growth fails first, the local errdefers still own every string;
     // once append succeeds this function cannot fail and the list owns them.
     const insertion: u32 = @intCast(ctx.list.items.len);
-    const sort_info: SortInfo = if (ctx.wid_zorder.get(wid)) |z|
-        .{ .group = 0, .rank = @intCast(z), .insertion = insertion }
-    else
-        .{ .group = 1, .rank = -ctx.app_ordinal, .insertion = insertion };
+    const sort_info: SortInfo = .{
+        .rank = mruSortRank(ax_cache.focusOrdinal(wid), ctx.app_ordinal),
+        .insertion = insertion,
+    };
     try ctx.sort_infos.append(ctx.allocator, sort_info);
     try ctx.emitted_wids.put(wid, {});
     try ctx.list.append(.{
@@ -504,8 +512,7 @@ fn emitAppPlaceholder(_: *Self, ctx: *EmitCtx) !void {
 
     const insertion: u32 = @intCast(ctx.list.items.len);
     try ctx.sort_infos.append(ctx.allocator, .{
-        .group = 1,
-        .rank = -ctx.app_ordinal,
+        .rank = mruSortRank(null, ctx.app_ordinal),
         .insertion = insertion,
     });
     try ctx.list.append(.{
@@ -682,4 +689,12 @@ test "classifySpaceBinding resolves a single Space binding" {
 test "classifySpaceBinding keeps sticky multi-Space windows with unknown desktop" {
     const verdict = classifySpaceBinding(3, null, false);
     try std.testing.expectEqual(SpaceBindingVerdict.keep_unknown, verdict);
+}
+
+test "window focus MRU outranks app fallback regardless of Space" {
+    try std.testing.expect(mruSortRank(43, 1) < mruSortRank(null, 20));
+}
+
+test "cold-start fallback follows app activation MRU" {
+    try std.testing.expect(mruSortRank(null, 20) < mruSortRank(null, 10));
 }
