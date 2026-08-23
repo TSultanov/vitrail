@@ -19,6 +19,19 @@ This app is heavily inspired by [XWinMosaic](https://github.com/soulthreads/xwin
 - Open PowerShell in the directory with this repository
 - Run `path\to\zig.exe build`
 
+## Installing
+
+Build and install for the current platform with GNU Make:
+
+- `make install-user` installs for the current user.
+- `sudo make install` installs system-wide on macOS and Linux.
+- On Windows, run `make install` from an elevated terminal for a system-wide installation.
+
+The default destinations are `~/Applications` or `/Applications` on macOS,
+`~/.local/bin` or `/usr/local/bin` on Linux, and LocalAppData or Program Files
+on Windows. Destination variables in the Makefile can be overridden when
+staging packages or using a nonstandard location.
+
 ## Downloading
 You can download recent build from the [releases page](https://github.com/TSultanov/vitrail/releases).
 
