@@ -16,12 +16,14 @@ pub const Driver = struct {
         post_mouse_move: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
         post_mouse_click: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
         post_context_close: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
+        post_context_quit: *const fn (ctx: *anyopaque, x: i32, y: i32) anyerror!void,
         close_external: *const fn (ctx: *anyopaque, app_id: []const u8) anyerror!void,
         selected_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
         visible_count: *const fn (ctx: *anyopaque) usize,
         search_text: *const fn (ctx: *anyopaque) []const u8,
         last_activated_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
         last_closed_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
+        last_quit_app_id: *const fn (ctx: *anyopaque) ?[]const u8,
         window_visible: *const fn (ctx: *anyopaque) bool,
         tile_center: *const fn (ctx: *anyopaque, app_id: []const u8) ?Point,
         snapshot: *const fn (ctx: *anyopaque, name: []const u8) anyerror!void,
@@ -43,6 +45,9 @@ pub const Driver = struct {
     fn postContextClose(self: *Driver, x: i32, y: i32) !void {
         return self.vt.post_context_close(self.ctx, x, y);
     }
+    fn postContextQuit(self: *Driver, x: i32, y: i32) !void {
+        return self.vt.post_context_quit(self.ctx, x, y);
+    }
     fn closeExternal(self: *Driver, app_id: []const u8) !void {
         return self.vt.close_external(self.ctx, app_id);
     }
@@ -60,6 +65,9 @@ pub const Driver = struct {
     }
     fn lastClosedAppId(self: *Driver) ?[]const u8 {
         return self.vt.last_closed_app_id(self.ctx);
+    }
+    fn lastQuitAppId(self: *Driver) ?[]const u8 {
+        return self.vt.last_quit_app_id(self.ctx);
     }
     fn windowVisible(self: *Driver) bool {
         return self.vt.window_visible(self.ctx);
@@ -93,6 +101,7 @@ pub const all = [_]Scenario{
     .{ .name = "10-context-menu-disabled-for-uncloseable-window", .run = scenario10 },
     .{ .name = "11-external-close-refreshes-grid", .run = scenario11 },
     .{ .name = "12-empty-refresh-dismisses-grid", .run = scenario12 },
+    .{ .name = "13-context-menu-quits-application", .run = scenario13 },
 };
 
 /// Returns the number of failed scenarios.
@@ -275,4 +284,18 @@ fn scenario12(d: *Driver) !void {
 
     try expect(!d.windowVisible());
     try expect(d.visibleCount() == 0);
+}
+
+// 13. Quit application is a distinct, always-available context command.
+fn scenario13(d: *Driver) !void {
+    // Obsidian's fixture deliberately has can_close=false: Quit application
+    // must remain available independently of the per-window close capability.
+    const target = d.tileCenter("obsidian") orelse return error.NoTile;
+    try d.postContextQuit(target.x, target.y);
+
+    try expectStrEq("obsidian", d.lastQuitAppId() orelse return error.NoQuit);
+    try expect(d.lastClosedAppId() == null);
+    try expect(d.windowVisible());
+    try expect(d.visibleCount() == 7);
+    try expect(d.tileCenter("obsidian") == null);
 }

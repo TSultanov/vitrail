@@ -53,12 +53,14 @@ pub const Driver = struct {
         .post_mouse_move = postMouseMove,
         .post_mouse_click = postMouseClick,
         .post_context_close = postContextClose,
+        .post_context_quit = postContextQuit,
         .close_external = closeExternal,
         .selected_app_id = selectedAppId,
         .visible_count = visibleCount,
         .search_text = searchText,
         .last_activated_app_id = lastActivatedAppId,
         .last_closed_app_id = lastClosedAppId,
+        .last_quit_app_id = lastQuitAppId,
         .window_visible = windowVisible,
         .tile_center = tileCenter,
         .snapshot = snapshot,
@@ -177,6 +179,16 @@ pub const Driver = struct {
         }
     }
 
+    fn postContextQuit(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
+        const self = cast(ctx);
+        const layout = self.presenter.view.layout;
+        const tile_index = layout.grid.tileAt(x, y) orelse return error.NoTile;
+        const target = layout.grid.tiles.items[tile_index].dw;
+        try self.presenter.view.callbacks.quitApplication(self.presenter.view, target.stable_id);
+        try self.presenter.refreshWindowList();
+        drain();
+    }
+
     fn closeExternal(ctx: *anyopaque, app_id: []const u8) anyerror!void {
         const self = cast(ctx);
         if (!self.presenter.si.closeExternally(app_id)) return error.NoWindow;
@@ -213,6 +225,12 @@ pub const Driver = struct {
     fn lastClosedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const s = self.presenter.si.last_closed_app_id orelse return null;
+        return self.dupe(s);
+    }
+
+    fn lastQuitAppId(ctx: *anyopaque) ?[]const u8 {
+        const self = cast(ctx);
+        const s = self.presenter.si.last_quit_app_id orelse return null;
         return self.dupe(s);
     }
 

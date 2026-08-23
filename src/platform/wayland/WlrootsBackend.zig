@@ -310,6 +310,20 @@ pub fn closeWindow(self: *Self, stable_id: []const u8) void {
     _ = c.wl_display_flush(self.display);
 }
 
+pub fn quitApplication(self: *Self, stable_id: []const u8) void {
+    const selected = self.findEntry(stable_id) orelse return;
+    const app_id = selected.app_id;
+    for (self.state.toplevels.items) |entry| {
+        if (entry.closed or !std.mem.eql(u8, entry.app_id, app_id)) continue;
+        if (entry.handle_wlr) |h| {
+            c.zwlr_foreign_toplevel_handle_v1_close(h);
+        } else if (entry.handle_kde) |h| {
+            c.org_kde_plasma_window_close(h);
+        }
+    }
+    _ = c.wl_display_flush(self.display);
+}
+
 fn findEntry(self: *Self, stable_id: []const u8) ?*ToplevelEntry {
     for (self.state.toplevels.items) |entry| {
         if (entry.closed) continue;

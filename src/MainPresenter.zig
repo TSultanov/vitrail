@@ -18,6 +18,7 @@ refresh_pending: bool = false,
 window_callbacks: MainWindow.Callbacks = .{
     .activateWindow = activateWindow,
     .closeWindow = closeWindow,
+    .quitApplication = quitApplication,
     .refreshWindows = refreshWindows,
     .hide = hide,
     .openSettings = openSettings,
@@ -104,6 +105,19 @@ fn closeWindow(main_window: *MainWindow, stable_id: []const u8) !void {
     // A synchronous Linux backend call can pump and drain its notification
     // connection while issuing the request. Reconcile any generic change it
     // observed instead of waiting for an fd edge that has already been read.
+    if (builtin.target.os.tag == .linux and self.si.hasPendingChanges()) {
+        try self.refreshWindowList();
+    }
+}
+
+fn quitApplication(main_window: *MainWindow, stable_id: []const u8) !void {
+    const self: *Self = @fieldParentPtr("window_callbacks", main_window.callbacks);
+    const dw = self.windowById(stable_id) orelse return;
+    self.si.quitApplication(dw);
+    // Application termination is asynchronous on macOS. Keep the same
+    // reconciliation fallback used by Close window for apps with incomplete
+    // accessibility lifecycle notifications.
+    if (builtin.target.os.tag == .macos) main_window.scheduleRefresh();
     if (builtin.target.os.tag == .linux and self.si.hasPendingChanges()) {
         try self.refreshWindowList();
     }

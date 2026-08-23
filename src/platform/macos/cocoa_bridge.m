@@ -117,7 +117,7 @@
 // on_close.
 @property (nonatomic, assign) BOOL close_on_resign;
 @property (nonatomic, assign) BOOL menu_tracking;
-@property (nonatomic, assign) BOOL context_close_selected;
+@property (nonatomic, assign) NSInteger context_command_selected;
 @property (nonatomic, strong) NSTimer *refresh_timer;
 @end
 
@@ -155,7 +155,12 @@
 }
 
 - (void)selectContextClose:(id)sender {
-    self.context_close_selected = YES;
+    self.context_command_selected = 1;
+    (void)sender;
+}
+
+- (void)selectContextQuit:(id)sender {
+    self.context_command_selected = 2;
     (void)sender;
 }
 
@@ -487,15 +492,22 @@ int vt_window_show_context_menu(vt_window *w,
     close_item.target = owner;
     close_item.enabled = close_enabled != 0;
     [menu addItem:close_item];
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *quit_item =
+        [[NSMenuItem alloc] initWithTitle:@"Quit application"
+                                  action:@selector(selectContextQuit:)
+                           keyEquivalent:@""];
+    quit_item.target = owner;
+    [menu addItem:quit_item];
 
-    owner.context_close_selected = NO;
+    owner.context_command_selected = 0;
     owner.menu_tracking = YES;
     [menu popUpMenuPositioningItem:nil
                        atLocation:NSMakePoint((CGFloat)x, (CGFloat)y)
                            inView:owner.view];
     owner.menu_tracking = NO;
     [owner.window makeKeyWindow];
-    return owner.context_close_selected ? 1 : 0;
+    return (int)owner.context_command_selected;
 }
 
 int vt_window_mouse_position(vt_window *w, double *out_x, double *out_y) {
@@ -605,6 +617,13 @@ int vt_reopen_pid(int pid) {
                                           configuration:cfg
                                       completionHandler:nil];
     return 1;
+}
+
+int vt_quit_pid(int pid) {
+    NSRunningApplication *app =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+    if (!app) return 0;
+    return [app terminate] ? 1 : 0;
 }
 
 // ─── Icons & names ──────────────────────────────────────────────────────────

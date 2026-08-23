@@ -28,6 +28,7 @@ pub const PlatformArgs = struct {};
 pub const Callbacks = struct {
     activateWindow: *const fn (*Self, common.DesktopWindow) anyerror!void,
     closeWindow: *const fn (*Self, stable_id: []const u8) anyerror!void,
+    quitApplication: *const fn (*Self, stable_id: []const u8) anyerror!void,
     refreshWindows: *const fn (*Self) anyerror!void,
     hide: *const fn (*Self) anyerror!void,
     openSettings: *const fn (*Self) anyerror!void,
@@ -490,12 +491,12 @@ fn openContextMenu(self: *Self, x: i32, y: i32) void {
     defer self.allocator.free(stable_id);
 
     self.menu_tracking = true;
-    const selected = bridge.vt_window_show_context_menu(
+    const command = bridge.vt_window_show_context_menu(
         self.window,
         @floatFromInt(x),
         @floatFromInt(y),
         @intFromBool(target.can_close),
-    ) != 0;
+    );
     self.menu_tracking = false;
 
     // NSMenu consumes movement while its nested tracking loop is active.
@@ -504,10 +505,18 @@ fn openContextMenu(self: *Self, x: i32, y: i32) void {
         self.repaint() catch {};
     }
 
-    if (selected and target.can_close) {
-        self.callbacks.closeWindow(self, stable_id) catch |err| {
-            std.log.warn("close-window command failed: {s}", .{@errorName(err)});
-        };
+    switch (command) {
+        @intFromEnum(input.ContextCommand.close_window) => if (target.can_close) {
+            self.callbacks.closeWindow(self, stable_id) catch |err| {
+                std.log.warn("close-window command failed: {s}", .{@errorName(err)});
+            };
+        },
+        @intFromEnum(input.ContextCommand.quit_application) => {
+            self.callbacks.quitApplication(self, stable_id) catch |err| {
+                std.log.warn("quit-application command failed: {s}", .{@errorName(err)});
+            };
+        },
+        else => {},
     }
     // A timer can fire inside AppKit's nested menu-tracking loop. Its refresh
     // is deliberately deferred until the copied menu target has been handled.

@@ -575,6 +575,11 @@ pub fn close(self: *Self, dw: common.DesktopWindow) void {
     _ = ax.AXUIElementPerformAction(close_button, k_press);
 }
 
+pub fn quitApplication(self: *Self, dw: common.DesktopWindow) void {
+    const h = self.resolve(dw) orelse return;
+    _ = bridge.vt_quit_pid(h.pid);
+}
+
 fn resolve(self: *const Self, dw: common.DesktopWindow) ?PlatformHandle {
     if (dw.platform_handle < self.handles.items.len) {
         const candidate = self.handles.items[dw.platform_handle];

@@ -207,6 +207,26 @@ pub fn closeWindow(self: *Self, stable_id: []const u8) void {
     };
 }
 
+pub fn quitApplication(self: *Self, stable_id: []const u8) void {
+    const entry = self.findEntry(stable_id) orelse return;
+
+    var script_buf: [1024]u8 = undefined;
+    const script = std.fmt.bufPrint(&script_buf,
+        \\const target = "{s}";
+        \\const selected = workspace.windowList().find(w => w.internalId.toString() === target);
+        \\if (selected) {{
+        \\  workspace.windowList()
+        \\    .filter(w => w.normalWindow && !w.skipSwitcher && w.resourceClass === selected.resourceClass)
+        \\    .forEach(w => {{ if (w.closeable) w.closeWindow(); }});
+        \\}}
+        \\
+    , .{entry.uuid}) catch return;
+
+    self.runScript(script, "vitrail-quit-application") catch |e| {
+        std.log.err("KdeBackend.quitApplication: {t}", .{e});
+    };
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────────
 
 fn clearEntries(self: *Self) void {

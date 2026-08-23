@@ -102,6 +102,30 @@ pub fn closeWindow(self: *Self, dw: common.DesktopWindow) void {
     _ = w.PostMessageW(hwnd, w.WM_CLOSE, 0, 0);
 }
 
+const QuitApplicationCtx = struct {
+    pid: w.DWORD,
+};
+
+fn quitApplicationWindowProc(hwnd: w.HWND, lParam: w.LPARAM) callconv(.c) c_int {
+    const ctx: *const QuitApplicationCtx = @ptrFromInt(@as(usize, @intCast(lParam)));
+    if (applicationPidForWindow(hwnd) == ctx.pid) {
+        _ = w.PostMessageW(hwnd, w.WM_CLOSE, 0, 0);
+    }
+    return 1;
+}
+
+/// Request the normal close path for every top-level window owned by the
+/// target application. This preserves save prompts and avoids forcibly
+/// terminating the process.
+pub fn quitApplication(self: *Self, dw: common.DesktopWindow) void {
+    const hwnd = self.resolveStableId(dw.stable_id) orelse return;
+    if (@intFromPtr(hwnd) != dw.platform_handle) return;
+    const pid = applicationPidForWindow(hwnd);
+    if (pid == 0 or pid == w.GetCurrentProcessId()) return;
+    var ctx = QuitApplicationCtx{ .pid = pid };
+    _ = w.EnumWindows(@ptrCast(&quitApplicationWindowProc), @intCast(@intFromPtr(&ctx)));
+}
+
 pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.Managed(common.DesktopWindow) {
     var desktopsNullable: ?*com.IObjectArray = null;
     _ = self.desktopManagerInternal.GetDesktops(&desktopsNullable);
@@ -325,6 +349,13 @@ fn getUwpContentWindow(hwnd: w.HWND) ?w.HWND {
     var ctx = FindUwpCtx{ .host_pid = host_pid, .found = null };
     _ = w.EnumChildWindows(hwnd, @ptrCast(&findUwpChildProc), @intCast(@intFromPtr(&ctx)));
     return ctx.found;
+}
+
+fn applicationPidForWindow(hwnd: w.HWND) w.DWORD {
+    const process_window = if (isUwpFrame(hwnd)) getUwpContentWindow(hwnd) orelse hwnd else hwnd;
+    var pid: w.DWORD = 0;
+    _ = w.GetWindowThreadProcessId(process_window, &pid);
+    return pid;
 }
 
 fn isUwpFrame(hwnd: w.HWND) bool {

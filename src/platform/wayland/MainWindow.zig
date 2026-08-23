@@ -20,6 +20,7 @@ pub const PlatformArgs = struct {};
 pub const Callbacks = struct {
     activateWindow: *const fn (*Self, common.DesktopWindow) anyerror!void,
     closeWindow: *const fn (*Self, stable_id: []const u8) anyerror!void,
+    quitApplication: *const fn (*Self, stable_id: []const u8) anyerror!void,
     refreshWindows: *const fn (*Self) anyerror!void,
     hide: *const fn (*Self) anyerror!void,
     openSettings: *const fn (*Self) anyerror!void,
@@ -41,15 +42,16 @@ const LOGICAL_FONT_TILE: u32 = 12;
 const LOGICAL_FONT_SEARCH: u32 = 12;
 const LOGICAL_FONT_DESKTOP: u32 = 32;
 const REFRESH_DEBOUNCE_MS: i64 = 100;
-const MENU_W: i32 = 120;
-const MENU_H: i32 = 28;
+const MENU_W: i32 = 144;
+pub const MENU_ROW_H: i32 = 28;
+const MENU_H: i32 = MENU_ROW_H * 2;
 const MENU_PAD: i32 = 8;
-const MENU_LABEL = "Close window";
 
 const ContextMenu = struct {
     stable_id: []u8,
     rect: Grid.Rect,
-    enabled: bool,
+    close_enabled: bool,
+    selected: input.ContextCommand,
 };
 
 const SelectionAuthority = enum {
@@ -244,7 +246,7 @@ pub fn refreshDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !vo
         var found = false;
         for (dws) |dw| {
             if (!std.mem.eql(u8, dw.stable_id, menu.stable_id)) continue;
-            menu.enabled = dw.can_close;
+            menu.close_enabled = dw.can_close;
             found = true;
             break;
         }
@@ -489,18 +491,35 @@ fn renderContextMenu(self: *Self, pixels: []u32, width: u32, height: u32, scale_
     Renderer.fillRect(pixels, width, x, y, w, h, 0xFFF7F7F7);
     Renderer.drawRect(pixels, width, x, y, w, h, 0xFF505050);
 
-    const color: u32 = if (menu.enabled) 0xFF111111 else 0xFF888888;
-    const label_x = x + scale.apply(MENU_PAD);
-    const baseline = y + h - @divFloor(h - self.tile_text.ascent, 2);
-    _ = self.tile_text.draw(
-        pixels,
-        width,
-        label_x,
-        baseline,
-        MENU_LABEL,
-        color,
-        .{ .x0 = x + 1, .y0 = y + 1, .x1 = @as(i32, @intCast(width)), .y1 = @as(i32, @intCast(height)) },
-    ) catch 0;
+    for ([_]input.ContextCommand{ .close_window, .quit_application }, 0..) |command, row| {
+        const row_y = y + scale.apply(@as(i32, @intCast(row)) * MENU_ROW_H);
+        const row_h = scale.apply(MENU_ROW_H);
+        if (menu.selected == command) {
+            Renderer.fillRect(pixels, width, x + 1, row_y + 1, w - 2, row_h - 1, 0xFFE1E8F0);
+        }
+        const enabled = command != .close_window or menu.close_enabled;
+        const color: u32 = if (enabled) 0xFF111111 else 0xFF888888;
+        const label = switch (command) {
+            .close_window => "Close window",
+            .quit_application => "Quit application",
+            .none => unreachable,
+        };
+        const baseline = row_y + row_h - @divFloor(row_h - self.tile_text.ascent, 2);
+        _ = self.tile_text.draw(
+            pixels,
+            width,
+            x + scale.apply(MENU_PAD),
+            baseline,
+            label,
+            color,
+            .{
+                .x0 = x + 1,
+                .y0 = row_y + 1,
+                .x1 = x + w - 1,
+                .y1 = @min(row_y + row_h, @as(i32, @intCast(height))),
+            },
+        ) catch 0;
+    }
 }
 
 fn refreshPollTimeout(self: *const Self) i32 {
@@ -543,7 +562,8 @@ fn openContextMenu(self: *Self, x: i32, y: i32) void {
     self.context_menu = .{
         .stable_id = stable_id,
         .rect = .{ .x = menu_x, .y = menu_y, .w = MENU_W, .h = MENU_H },
-        .enabled = tile.dw.can_close,
+        .close_enabled = tile.dw.can_close,
+        .selected = if (tile.dw.can_close) .close_window else .quit_application,
     };
 }
 
@@ -577,18 +597,28 @@ fn rehitPointerSelection(self: *Self) bool {
     return self.grid.selectAt(self.pointer_x, self.pointer_y);
 }
 
-fn invokeContextClose(self: *Self) void {
+fn contextCommandAt(menu: ContextMenu, x: i32, y: i32) ?input.ContextCommand {
+    if (!pointInside(menu.rect, x, y)) return null;
+    return if (y < menu.rect.y + MENU_ROW_H) .close_window else .quit_application;
+}
+
+fn invokeContextCommand(self: *Self, command: input.ContextCommand) void {
     const menu = self.context_menu orelse return;
-    if (!menu.enabled) return;
+    if (command == .none or (command == .close_window and !menu.close_enabled)) return;
 
     // Take ownership out of the field before invoking the presenter. A
     // synchronous refresh may update or dismiss menu state.
     self.context_menu = null;
     defer self.allocator.free(menu.stable_id);
-    self.callbacks.closeWindow(self, menu.stable_id) catch |err| {
-        std.log.err("Wayland close request failed: {t}", .{err});
-        return;
-    };
+    switch (command) {
+        .close_window => self.callbacks.closeWindow(self, menu.stable_id) catch |err| {
+            std.log.err("Wayland close request failed: {t}", .{err});
+        },
+        .quit_application => self.callbacks.quitApplication(self, menu.stable_id) catch |err| {
+            std.log.err("Wayland quit-application request failed: {t}", .{err});
+        },
+        .none => unreachable,
+    }
 }
 
 fn rebuildForScale(self: *Self) !void {
@@ -680,7 +710,11 @@ fn onKeyboardAction(ctx: *anyopaque, action: input.KeyAction) void {
     if (self.context_menu != null) {
         switch (action) {
             .quit => self.dismissContextMenu(),
-            .activate => self.invokeContextClose(),
+            .activate => self.invokeContextCommand(self.context_menu.?.selected),
+            .next, .prev, .move => {
+                const menu = &self.context_menu.?;
+                menu.selected = if (menu.selected == .close_window) .quit_application else .close_window;
+            },
             else => {}, // Menu tracking suppresses navigation/search underneath.
         }
     } else {
@@ -725,10 +759,17 @@ fn handleMouseAction(self: *Self, action: input.MouseAction, pointer_inside: boo
         switch (action) {
             // Keep the latest pointer coordinates, but do not retarget or
             // repaint the underlying grid while tracking the popup.
-            .move => {},
+            .move => |m| {
+                if (contextCommandAt(menu, m.x, m.y)) |command| {
+                    if (self.context_menu.?.selected != command) {
+                        self.context_menu.?.selected = command;
+                        repaint_needed = true;
+                    }
+                }
+            },
             .click => |m| {
-                if (pointInside(menu.rect, m.x, m.y)) {
-                    self.invokeContextClose();
+                if (contextCommandAt(menu, m.x, m.y)) |command| {
+                    self.invokeContextCommand(command);
                 } else {
                     self.dismissContextMenu();
                 }

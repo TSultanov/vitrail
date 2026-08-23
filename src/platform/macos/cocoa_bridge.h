@@ -53,9 +53,9 @@ void vt_window_show(vt_window *w);
 void vt_window_hide(vt_window *w);
 void vt_window_destroy(vt_window *w);
 
-// Shows a native one-item context menu at the view-local point. The return
-// value is 1 when the enabled "Close window" command was selected, otherwise
-// 0. Menu tracking is synchronous.
+// Shows the native window context menu at the view-local point. Returns 1 for
+// "Close window", 2 for "Quit application", and 0 when dismissed. Menu
+// tracking is synchronous.
 int vt_window_show_context_menu(vt_window *w,
                                 double x,
                                 double y,
@@ -128,6 +128,10 @@ int vt_activate_pid(int pid);
 // alone only swaps the menubar — it doesn't fire reopen. Returns 1 on
 // success, 0 if the pid is unknown or has no bundleURL.
 int vt_reopen_pid(int pid);
+
+// Asks a running application to terminate normally, allowing it to present
+// save-confirmation UI. Returns 1 when the request was delivered.
+int vt_quit_pid(int pid);
 
 // ─── Icons ───────────────────────────────────────────────────────────────────
 

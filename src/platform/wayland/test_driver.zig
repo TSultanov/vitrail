@@ -57,12 +57,14 @@ pub const Driver = struct {
         .post_mouse_move = postMouseMove,
         .post_mouse_click = postMouseClick,
         .post_context_close = postContextClose,
+        .post_context_quit = postContextQuit,
         .close_external = closeExternal,
         .selected_app_id = selectedAppId,
         .visible_count = visibleCount,
         .search_text = searchText,
         .last_activated_app_id = lastActivatedAppId,
         .last_closed_app_id = lastClosedAppId,
+        .last_quit_app_id = lastQuitAppId,
         .window_visible = windowVisible,
         .tile_center = tileCenter,
         .snapshot = snapshot,
@@ -121,12 +123,12 @@ pub const Driver = struct {
         // then dismissal must immediately re-hit-test the stored pointer.
         self.presenter.view.synthesizeMouse(.{ .context = .{ .x = x, .y = y } });
         const menu = view.context_menu orelse return error.NoContextMenu;
-        if (!menu.enabled) {
+        if (!menu.close_enabled) {
             // A disabled native-style menu row does not invoke or dismiss on
             // click. Exercise that behavior, then cancel the popup so the
             // shared scenario can continue without closing the overlay.
             const command_x = menu.rect.x + @divFloor(menu.rect.w, 2);
-            const command_y = menu.rect.y + @divFloor(menu.rect.h, 2);
+            const command_y = menu.rect.y + @divFloor(MainWindow.MENU_ROW_H, 2);
             view.synthesizeMouse(.{ .move = .{ .x = command_x, .y = command_y } });
             view.synthesizeMouse(.{ .click = .{ .x = command_x, .y = command_y } });
             if (view.context_menu == null) return error.DisabledContextMenuDismissed;
@@ -165,7 +167,7 @@ pub const Driver = struct {
         const positioned_menu = view.context_menu orelse return error.NoContextMenu;
         const command = ts.Point{
             .x = positioned_menu.rect.x + @divFloor(positioned_menu.rect.w, 2),
-            .y = positioned_menu.rect.y + @divFloor(positioned_menu.rect.h, 2),
+            .y = positioned_menu.rect.y + @divFloor(MainWindow.MENU_ROW_H, 2),
         };
         const command_tile_idx = view.grid.tileAt(command.x, command.y) orelse
             return error.ContextMenuNotOverSurvivor;
@@ -199,6 +201,20 @@ pub const Driver = struct {
         if (!std.mem.eql(u8, expected_stable_id, selected_after_refresh.stable_id)) {
             return error.RefreshOverwrotePointerSelection;
         }
+    }
+
+    fn postContextQuit(ctx: *anyopaque, x: i32, y: i32) anyerror!void {
+        const self = cast(ctx);
+        const view = self.presenter.view;
+        view.synthesizeMouse(.{ .context = .{ .x = x, .y = y } });
+        const menu = view.context_menu orelse return error.NoContextMenu;
+        const command_x = menu.rect.x + @divFloor(menu.rect.w, 2);
+        const command_y = menu.rect.y + MainWindow.MENU_ROW_H + @divFloor(MainWindow.MENU_ROW_H, 2);
+        view.synthesizeMouse(.{ .move = .{ .x = command_x, .y = command_y } });
+        view.synthesizeMouse(.{ .click = .{ .x = command_x, .y = command_y } });
+        if (view.context_menu != null) return error.ContextMenuStillOpen;
+        try self.presenter.refreshWindowList();
+        view.refresh_due_ms = null;
     }
 
     fn closeExternal(ctx: *anyopaque, app_id: []const u8) anyerror!void {
@@ -236,6 +252,12 @@ pub const Driver = struct {
     fn lastClosedAppId(ctx: *anyopaque) ?[]const u8 {
         const self = cast(ctx);
         const s = self.presenter.si.last_closed_app_id orelse return null;
+        return self.dupe(s);
+    }
+
+    fn lastQuitAppId(ctx: *anyopaque) ?[]const u8 {
+        const self = cast(ctx);
+        const s = self.presenter.si.last_quit_app_id orelse return null;
         return self.dupe(s);
     }
 

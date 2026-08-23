@@ -2,6 +2,7 @@ const std = @import("std");
 const wh = @import("windows.zig");
 const w = wh.c;
 const sys = @import("SystemInteraction.zig");
+const input = @import("../../common/InputAction.zig");
 const common = @import("../../common/DesktopWindow.zig");
 const Grid = @import("../../common/Grid.zig");
 pub const Window = @import("Window.zig");
@@ -12,7 +13,8 @@ const Self = @This();
 const WM_VITRAIL_WINDOWS_CHANGED: w.UINT = @as(w.UINT, @intCast(w.WM_APP)) + 2;
 const REFRESH_TIMER_ID: usize = 0x56545246; // "VTRF"
 const REFRESH_DEBOUNCE_MS: w.UINT = 100;
-const CONTEXT_CLOSE_COMMAND: usize = 1;
+const CONTEXT_CLOSE_COMMAND: usize = @intFromEnum(input.ContextCommand.close_window);
+const CONTEXT_QUIT_COMMAND: usize = @intFromEnum(input.ContextCommand.quit_application);
 
 // SetWinEventHook's callback has no context pointer. Only one resident Vitrail
 // overlay exists, so its HWND is the narrow bridge used to post a private
@@ -26,6 +28,7 @@ pub const PlatformArgs = struct {
 pub const Callbacks = struct {
     activateWindow: *const fn (main_window: *Self, dw: common.DesktopWindow) anyerror!void,
     closeWindow: *const fn (main_window: *Self, stable_id: []const u8) anyerror!void,
+    quitApplication: *const fn (main_window: *Self, stable_id: []const u8) anyerror!void,
     refreshWindows: *const fn (main_window: *Self) anyerror!void,
     hide: *const fn (main_window: *Self) anyerror!void,
     openSettings: *const fn (main_window: *Self) anyerror!void,
@@ -492,6 +495,13 @@ fn showContextMenu(
         CONTEXT_CLOSE_COMMAND,
         sys.toUtf16const("Close window"),
     ) == 0) return error.AppendMenuFailed;
+    if (w.AppendMenuW(menu, w.MF_SEPARATOR, 0, null) == 0) return error.AppendMenuFailed;
+    if (w.AppendMenuW(
+        menu,
+        w.MF_STRING,
+        CONTEXT_QUIT_COMMAND,
+        sys.toUtf16const("Quit application"),
+    ) == 0) return error.AppendMenuFailed;
 
     self.menu_tracking = true;
     defer self.finishMenuTracking();
@@ -517,6 +527,8 @@ fn showContextMenu(
 
     if (can_close and command == CONTEXT_CLOSE_COMMAND) {
         try self.callbacks.closeWindow(self, stable_id);
+    } else if (command == CONTEXT_QUIT_COMMAND) {
+        try self.callbacks.quitApplication(self, stable_id);
     }
 }
 

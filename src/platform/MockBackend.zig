@@ -30,6 +30,8 @@ activated_count: usize = 0,
 last_activated_app_id: ?[]const u8 = null,
 closed_count: usize = 0,
 last_closed_app_id: ?[]const u8 = null,
+quit_count: usize = 0,
+last_quit_app_id: ?[]const u8 = null,
 closed: [fixtures.len]bool = .{false} ** fixtures.len,
 
 pub fn init(allocator: std.mem.Allocator) !Self {
@@ -96,6 +98,21 @@ pub fn closeWindow(self: *Self, dw: common.DesktopWindow) void {
     std.log.info("MockBackend.closeWindow: {s}", .{fixtures[dw.platform_handle].app_id});
 }
 
+pub fn quitApplication(self: *Self, dw: common.DesktopWindow) void {
+    if (dw.platform_handle >= fixtures.len or self.closed[dw.platform_handle]) return;
+    const app_id = fixtures[dw.platform_handle].app_id;
+    var closed_any = false;
+    for (fixtures, 0..) |fixture, idx| {
+        if (!std.mem.eql(u8, fixture.app_id, app_id) or self.closed[idx]) continue;
+        self.closed[idx] = true;
+        closed_any = true;
+    }
+    if (!closed_any) return;
+    self.quit_count += 1;
+    self.last_quit_app_id = app_id;
+    std.log.info("MockBackend.quitApplication: {s}", .{app_id});
+}
+
 pub fn closeExternally(self: *Self, app_id: []const u8) bool {
     for (fixtures, 0..) |fixture, idx| {
         if (!std.mem.eql(u8, fixture.app_id, app_id) or self.closed[idx]) continue;
@@ -115,6 +132,8 @@ pub fn resetActions(self: *Self) void {
     self.last_activated_app_id = null;
     self.closed_count = 0;
     self.last_closed_app_id = null;
+    self.quit_count = 0;
+    self.last_quit_app_id = null;
     @memset(self.closed[0..], false);
 }
 

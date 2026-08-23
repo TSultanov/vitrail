@@ -72,6 +72,13 @@ pub fn closeWindow(self: *Self, dw: common.DesktopWindow) void {
     }
 }
 
+pub fn quitApplication(self: *Self, dw: common.DesktopWindow) void {
+    switch (self.backend) {
+        .kde => |*b| b.quitApplication(dw.stable_id),
+        .wlroots => |*b| b.quitApplication(dw.stable_id),
+    }
+}
+
 /// File descriptor carrying push-driven window-list notifications. MainWindow
 /// polls it beside the overlay's own Wayland display and asks MainPresenter to
 /// refresh after a short debounce.

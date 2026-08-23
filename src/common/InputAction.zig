@@ -24,8 +24,10 @@ pub const MouseAction = union(enum) {
     context: struct { x: i32, y: i32 },
 };
 
-pub const ContextCommand = enum {
+pub const ContextCommand = enum(c_int) {
+    none = 0,
     close_window,
+    quit_application,
 };
 
 pub const KeyCallbacks = struct {

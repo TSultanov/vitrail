@@ -56,3 +56,7 @@ pub fn activateWindow(self: *Self, dw: common.DesktopWindow) void {
 pub fn closeWindow(self: *Self, dw: common.DesktopWindow) void {
     self.backend.close(dw);
 }
+
+pub fn quitApplication(self: *Self, dw: common.DesktopWindow) void {
+    self.backend.quitApplication(dw);
+}
