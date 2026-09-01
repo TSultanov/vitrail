@@ -221,10 +221,9 @@ pub fn main() !void {
         const added = emitted_wids.count() - before;
         if (added > 0) print("  (cache phase 2 added {d} window(s))\n", .{added});
 
-        // Mirror production: pids that contributed zero kept windows would
-        // surface as a synthetic windowless-app placeholder.
+        // Production omits apps that contributed zero switchable windows.
         if (emitted_wids.count() == pid_kept_before) {
-            print("  [placeholder] pid={d} app=\"{s}\" mru={d}\n", .{ pid, app_name, app_ordinal });
+            print("  [skipped] pid={d} app=\"{s}\" mru={d} (no switchable windows)\n", .{ pid, app_name, app_ordinal });
         }
     }
 }

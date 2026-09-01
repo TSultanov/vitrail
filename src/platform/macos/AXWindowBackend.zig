@@ -30,9 +30,8 @@ const Self = @This();
 
 const PlatformHandle = struct {
     pid: i32,
-    wid: u32, // CGWindowID; 0 for windowless-app placeholders.
-    ax_window: ax.UIElementRef, // CFRetain'd. Null only for windowless-app
-    // placeholders (running apps with zero windows that survived AX filters).
+    wid: u32, // CGWindowID of a switchable AX window
+    ax_window: ax.UIElementRef, // CFRetain'd AX window; never null
 };
 
 allocator: std.mem.Allocator,
@@ -260,7 +259,6 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         ctx.app_name = if (app_name_c) |p| std.mem.sliceTo(p, 0) else "Unknown";
         ax_cache.seedFocusedWindow(pid);
         ctx.app_ordinal = bridge.vt_app_activation_ordinal(pid);
-        const list_len_before = ctx.list.items.len;
 
         // Phase 0: AXFocusedWindow + AXMainWindow on the AXApplication.
         // Two cheap O(1) attribute reads that surface the app's most
@@ -304,13 +302,6 @@ pub fn getWindowList(self: *Self, allocator: std.mem.Allocator) !std.array_list.
         // To-Do, KeePassXC).
         for (ax_cache.getForPid(pid)) |cached| {
             _ = try self.tryEmit(&ctx, cached);
-        }
-
-        // Windowless-app placeholder. macOS apps routinely outlive their
-        // last window (Cmd-W keeps the app running); without this, such
-        // apps would silently drop out of the switcher.
-        if (ctx.list.items.len == list_len_before) {
-            try self.emitAppPlaceholder(&ctx);
         }
     }
 
@@ -512,80 +503,20 @@ fn tryEmit(_: *Self, ctx: *EmitCtx, win_elem: ax.UIElementRef) !bool {
     return true;
 }
 
-/// Emit a synthetic entry representing a running app with no surviving
-/// windows. Activation routes through `vt_activate_pid`, which lets the
-/// OS deliver `applicationShouldHandleReopen:hasVisibleWindows:NO` so
-/// the target app reopens its main window per its own conventions.
-fn emitAppPlaceholder(_: *Self, ctx: *EmitCtx) !void {
-    const title_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
-    errdefer ctx.allocator.free(title_z);
-
-    const title_lower = try ctx.allocator.allocSentinel(u8, title_z.len, 0);
-    errdefer ctx.allocator.free(title_lower);
-    for (title_z, 0..) |ch, i| title_lower[i] = std.ascii.toLower(ch);
-
-    const app_id_z = try ctx.allocator.dupeZ(u8, ctx.app_name);
-    errdefer ctx.allocator.free(app_id_z);
-
-    const app_id_lower = try ctx.allocator.allocSentinel(u8, app_id_z.len, 0);
-    errdefer ctx.allocator.free(app_id_lower);
-    for (app_id_z, 0..) |ch, i| app_id_lower[i] = std.ascii.toLower(ch);
-
-    const stable_id = try std.fmt.allocPrintSentinel(
-        ctx.allocator,
-        "mac-app:{d}",
-        .{ctx.pid},
-        0,
-    );
-    errdefer ctx.allocator.free(stable_id);
-
-    const idx = ctx.handles.items.len;
-    try ctx.handles.append(ctx.handles_allocator, .{
-        .pid = ctx.pid,
-        .wid = 0,
-        .ax_window = null,
-    });
-
-    const insertion: u32 = @intCast(ctx.list.items.len);
-    try ctx.sort_infos.append(ctx.allocator, .{
-        .rank = mruSortRank(null, ctx.app_ordinal),
-        .insertion = insertion,
-    });
-    try ctx.list.append(.{
-        .stable_id = stable_id,
-        .platform_handle = idx,
-        .title = title_z,
-        .title_lower = title_lower,
-        .app_id = app_id_z,
-        .app_id_lower = app_id_lower,
-        .icon = null,
-        .desktopNumber = null,
-        .can_close = false,
-        .allocator = ctx.allocator,
-    });
-}
-
 pub fn activate(self: *Self, dw: common.DesktopWindow) void {
     const h = self.resolve(dw) orelse return;
-    if (h.ax_window) |w| {
-        var current_wid: u32 = 0;
-        if (ax._AXUIElementGetWindow(w, &current_wid) != ax.kAXErrorSuccess or current_wid != h.wid) return;
-        if (cfStr("AXMain")) |k_main| {
-            defer cf.c.CFRelease(k_main);
-            _ = ax.AXUIElementSetAttributeValue(w, k_main, cf.c.kCFBooleanTrue);
-        }
-        if (cfStr("AXRaise")) |k_raise| {
-            defer cf.c.CFRelease(k_raise);
-            _ = ax.AXUIElementPerformAction(w, k_raise);
-        }
-        _ = bridge.vt_activate_pid(h.pid);
-    } else {
-        // Windowless-app placeholder. Plain activate* APIs only swap the
-        // menubar; the app's reopen handler (which is what spawns a new
-        // window for Mail/Calendar/Preview) only fires when the OS routes
-        // through Launch Services. vt_reopen_pid does that.
-        _ = bridge.vt_reopen_pid(h.pid);
+    const w = h.ax_window orelse return;
+    var current_wid: u32 = 0;
+    if (ax._AXUIElementGetWindow(w, &current_wid) != ax.kAXErrorSuccess or current_wid != h.wid) return;
+    if (cfStr("AXMain")) |k_main| {
+        defer cf.c.CFRelease(k_main);
+        _ = ax.AXUIElementSetAttributeValue(w, k_main, cf.c.kCFBooleanTrue);
     }
+    if (cfStr("AXRaise")) |k_raise| {
+        defer cf.c.CFRelease(k_raise);
+        _ = ax.AXUIElementPerformAction(w, k_raise);
+    }
+    _ = bridge.vt_activate_pid(h.pid);
 }
 
 /// Gracefully close the exact current window identified by the descriptor.
@@ -629,10 +560,7 @@ fn resolve(self: *const Self, dw: common.DesktopWindow) ?PlatformHandle {
 
 fn handleMatchesStableId(handle: PlatformHandle, stable_id: []const u8) bool {
     var buf: [96]u8 = undefined;
-    const expected = if (handle.wid == 0)
-        std.fmt.bufPrint(&buf, "mac-app:{d}", .{handle.pid}) catch return false
-    else
-        std.fmt.bufPrint(&buf, "mac-window:{d}:{d}", .{ handle.pid, handle.wid }) catch return false;
+    const expected = std.fmt.bufPrint(&buf, "mac-window:{d}:{d}", .{ handle.pid, handle.wid }) catch return false;
     return std.mem.eql(u8, expected, stable_id);
 }
 

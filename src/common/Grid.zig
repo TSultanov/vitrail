@@ -28,14 +28,6 @@ pub const Tile = struct {
     visible: bool,
 };
 
-pub const RefreshOptions = struct {
-    /// Preserve selection across a platform-specific identity transition when
-    /// a replacement represents the same non-empty app as the selected tile.
-    /// Disabled by default: on most platforms this could treat an unrelated
-    /// new window from the same app as the vanished window.
-    select_same_app_replacement: bool = false,
-};
-
 allocator: std.mem.Allocator,
 // Borrowed; the caller (MainPresenter) owns the underlying allocations and
 // is responsible for destroying the DesktopWindows.
@@ -91,14 +83,6 @@ pub fn setDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
 /// Grid so removals compact the layout and an allocation failure leaves this
 /// instance untouched.
 pub fn refreshDesktopWindows(self: *Self, dws: []const common.DesktopWindow) !void {
-    try self.refreshDesktopWindowsWithOptions(dws, .{});
-}
-
-pub fn refreshDesktopWindowsWithOptions(
-    self: *Self,
-    dws: []const common.DesktopWindow,
-    options: RefreshOptions,
-) !void {
     const selected_tile: ?Tile = if (self.selected) |idx|
         if (idx < self.tiles.items.len and self.tiles.items[idx].visible)
             self.tiles.items[idx]
@@ -139,28 +123,7 @@ pub fn refreshDesktopWindowsWithOptions(
             }
         }
     }
-    var selected_same_app: ?usize = null;
-    if (selected_by_id == null and options.select_same_app_replacement) {
-        // macOS replaces an app's last real-window entry with a windowless-app
-        // placeholder. Its stable identity necessarily changes, but it still
-        // represents the same app. Preserve that semantic selection before
-        // falling back to list rank.
-        if (selected_tile) |old| {
-            // Empty app identifiers carry no identity and must never make two
-            // otherwise-unrelated entries equivalent.
-            if (old.dw.app_id.len != 0) {
-                for (staged.tiles.items, 0..) |tile, idx| {
-                    if (!tile.visible) continue;
-                    if (!std.mem.eql(u8, tile.dw.app_id, old.dw.app_id)) continue;
-                    selected_same_app = idx;
-                    break;
-                }
-            }
-        }
-    }
     if (selected_by_id) |idx| {
-        staged.selected = idx;
-    } else if (selected_same_app) |idx| {
         staged.selected = idx;
     } else {
         staged.selected = visibleIndexAtRank(staged.tiles.items, selected_visible_rank);
@@ -696,53 +659,6 @@ test "live refresh selects the same visible rank when selected window disappears
     try std.testing.expectEqualStrings("gamma", g.selectedWindowId().?);
 }
 
-test "live refresh selects a same-app replacement after compact relayout" {
-    var g = Self.init(std.testing.allocator);
-    defer g.deinit();
-    g.setViewport(1000, 800);
-
-    const initial = [_]common.DesktopWindow{
-        testDw("alpha"),
-        testDwWithMetadata(
-            "mac-window:42:7",
-            "Notes",
-            "notes",
-            "Notes",
-            "notes",
-            null,
-            null,
-            true,
-        ),
-        testDw("gamma"),
-    };
-    try g.setDesktopWindows(&initial);
-    const selected_cell = g.tileCenter("Notes").?;
-    _ = g.selectAt(selected_cell.x, selected_cell.y);
-
-    const refreshed = [_]common.DesktopWindow{
-        testDw("alpha"),
-        testDw("gamma"),
-        testDwWithMetadata(
-            "mac-app:42",
-            "Notes",
-            "notes",
-            "Notes",
-            "notes",
-            null,
-            null,
-            false,
-        ),
-    };
-    try g.refreshDesktopWindowsWithOptions(&refreshed, .{
-        .select_same_app_replacement = true,
-    });
-
-    try std.testing.expectEqualStrings("mac-app:42", g.selectedWindowId().?);
-    try std.testing.expectEqual(selected_cell, g.tileCenter("gamma").?);
-    const replacement_cell = g.tileCenter("Notes").?;
-    try std.testing.expect(selected_cell.x != replacement_cell.x or selected_cell.y != replacement_cell.y);
-}
-
 test "live refresh does not select a same-app newcomer by default" {
     var g = Self.init(std.testing.allocator);
     defer g.deinit();
@@ -786,53 +702,6 @@ test "live refresh does not select a same-app newcomer by default" {
     // the next ranked survivor wins and compacts into the removed tile's cell.
     try std.testing.expectEqualStrings("gamma", g.selectedWindowId().?);
     try std.testing.expectEqual(selected_cell, g.tileCenter("gamma").?);
-}
-
-test "same-app replacement continuity does not match empty app identifiers" {
-    var g = Self.init(std.testing.allocator);
-    defer g.deinit();
-    g.setViewport(1000, 800);
-
-    const initial = [_]common.DesktopWindow{
-        testDw("alpha"),
-        testDwWithMetadata(
-            "old-window",
-            "Untitled",
-            "untitled",
-            "",
-            "",
-            null,
-            null,
-            true,
-        ),
-        testDw("gamma"),
-    };
-    try g.setDesktopWindows(&initial);
-    const selected_cell = .{
-        .x = g.tiles.items[1].x + @divFloor(TILE_W, 2),
-        .y = g.tiles.items[1].y + @divFloor(TILE_H, 2),
-    };
-    _ = g.selectAt(selected_cell.x, selected_cell.y);
-
-    const refreshed = [_]common.DesktopWindow{
-        testDw("alpha"),
-        testDw("gamma"),
-        testDwWithMetadata(
-            "new-window",
-            "Other untitled",
-            "other untitled",
-            "",
-            "",
-            null,
-            null,
-            true,
-        ),
-    };
-    try g.refreshDesktopWindowsWithOptions(&refreshed, .{
-        .select_same_app_replacement = true,
-    });
-
-    try std.testing.expectEqualStrings("gamma", g.selectedWindowId().?);
 }
 
 test "live refresh compacts surviving tiles after a removal" {
